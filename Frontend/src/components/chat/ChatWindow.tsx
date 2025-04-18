@@ -4,11 +4,16 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Bot, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import Markdown from 'react-markdown';
+import ChatMessage from './ChatMessage';
+import { Message } from '@/types';
+import { useToast } from '@/components/ui/use-toast';
 
 const ChatWindow: React.FC = () => {
-  const { getCurrentSession, isLoading } = useChat();
+  const { getCurrentSession, isLoading, sendMessage, setChatState, messagesWithErrors, editMessage } = useChat();
   const { user } = useAuth();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
+  
   const currentSession = getCurrentSession();
 
   const scrollToBottom = () => {
@@ -27,6 +32,114 @@ const ChatWindow: React.FC = () => {
     );
   }
 
+  // Find the last user message
+  const lastUserMessageIndex = [...currentSession.messages]
+    .reverse()
+    .findIndex(msg => msg.role === 'user');
+    
+  const lastUserMessageId = lastUserMessageIndex !== -1 
+    ? currentSession.messages[currentSession.messages.length - 1 - lastUserMessageIndex].id 
+    : null;
+
+  // Handle editing a message (just updates the message content without resending)
+  const handleEditMessage = async (messageId: string, newContent: string) => {
+    if (!currentSession) return;
+    
+    try {
+      await editMessage(messageId, newContent);
+      
+      toast({
+        title: "Success",
+        description: "Message updated successfully",
+      });
+    } catch (error) {
+      console.error('Error editing message:', error);
+      toast({
+        title: "Error",
+        description: "Failed to edit message",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Handle resending a message after editing
+  const handleResendMessage = async (messageId: string) => {
+    if (!currentSession) return;
+    
+    try {
+      // Find the message
+      const message = currentSession.messages.find(m => m.id === messageId);
+      if (!message) return;
+      
+      // Find the message index
+      const messageIndex = currentSession.messages.findIndex(m => m.id === messageId);
+      
+      // Remove all bot messages that came after this message
+      const messagesToKeep = currentSession.messages.slice(0, messageIndex + 1);
+      
+      // Update the state
+      setChatState(prev => ({
+        ...prev,
+        sessions: prev.sessions.map(s => 
+          s.id === currentSession.id 
+            ? { ...s, messages: messagesToKeep }
+            : s
+        )
+      }));
+      
+      // Resend the message to get a new response
+      await sendMessage(message.content);
+      
+      toast({
+        title: "Success",
+        description: "Message resent successfully",
+      });
+    } catch (error) {
+      console.error('Error resending message:', error);
+      toast({
+        title: "Error",
+        description: "Failed to resend message",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Handle deleting a message
+  const handleDeleteMessage = async (messageId: string) => {
+    if (!currentSession) return;
+    
+    try {
+      // Find the message index
+      const messageIndex = currentSession.messages.findIndex(m => m.id === messageId);
+      if (messageIndex === -1) return;
+      
+      // Remove this message and all messages that came after it
+      const messagesToKeep = currentSession.messages.slice(0, messageIndex);
+      
+      // Update the state
+      setChatState(prev => ({
+        ...prev,
+        sessions: prev.sessions.map(s => 
+          s.id === currentSession.id 
+            ? { ...s, messages: messagesToKeep }
+            : s
+        )
+      }));
+      
+      toast({
+        title: "Success",
+        description: "Message deleted",
+      });
+    } catch (error) {
+      console.error('Error deleting message:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete message",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <div className="h-full flex flex-col overflow-y-auto p-4">
       {currentSession.messages.length === 0 ? (
@@ -39,77 +152,29 @@ const ChatWindow: React.FC = () => {
           </p>
         </div>
       ) : (
-        <>
-          <div className="flex-1 space-y-4">
-            {currentSession.messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${
-                  message.role === 'user' ? 'justify-end' : 'justify-start'
-                }`}
-              >
-                <div
-                  className={`flex gap-3 max-w-[80%] ${
-                    message.role === 'user' ? 'flex-row-reverse' : ''
-                  }`}
-                >
-                  {message.role === 'user' ? (
-                    <Avatar className="h-8 w-8">
-                      <AvatarFallback>
-                        {user?.name?.charAt(0) || 'U'}
-                      </AvatarFallback>
-                      {/* If the user has an avatar image, it would go here */}
-                    </Avatar>
-                  ) : (
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src="/logo.png" />
-                      <AvatarFallback>AI</AvatarFallback>
-                    </Avatar>
-                  )}
-                  <div
-                    className={`rounded-lg p-3 ${
-                      message.role === 'user'
-                        ? 'bg-brand-100 text-brand-900'
-                        : message.role === 'system'
-                        ? 'bg-gray-100 text-gray-600'
-                        : 'bg-secondary'
-                    }`}
-                  >
-                    <div className="prose dark:prose-invert max-w-none">
-                      <Markdown components={{
-                        a: ({node, ...props}) => (
-                          <a 
-                            {...props} 
-                            className="text-brand-600 hover:text-brand-800 underline" 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
-                          />
-                        )
-                      }}>
-                        {message.content}
-                      </Markdown>
-                    </div>
-                  </div>
-                </div>
+        <div className="flex-1 divide-y">
+          {currentSession.messages.map((message) => (
+            <ChatMessage
+              key={message.id}
+              message={message}
+              isLastUserMessage={message.id === lastUserMessageId}
+              hasError={messagesWithErrors.includes(message.id)}
+              onResendMessage={handleResendMessage}
+              onDeleteMessage={handleDeleteMessage}
+            />
+          ))}
+          
+          {isLoading && (
+            <div className="p-4 bg-chat-bot-light">
+              <div className="flex items-center">
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                <span>Thinking...</span>
               </div>
-            ))}
-            {isLoading && (
-              <div className="flex justify-start">
-                <div className="flex gap-3 max-w-[80%]">
-                  <Avatar className="h-8 w-8">
-                    <AvatarImage src="/logo.png" />
-                    <AvatarFallback>AI</AvatarFallback>
-                  </Avatar>
-                  <div className="bg-secondary rounded-lg p-3 flex items-center">
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    <span>Thinking...</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
+          
           <div ref={messagesEndRef} />
-        </>
+        </div>
       )}
     </div>
   );

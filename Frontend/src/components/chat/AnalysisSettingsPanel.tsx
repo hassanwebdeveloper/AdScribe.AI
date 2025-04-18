@@ -52,70 +52,19 @@ const AnalysisSettingsPanel: React.FC<AnalysisSettingsPanelProps> = ({ isOpen, t
     };
   }, [isOpen, togglePanel]);
 
-  // Fix for empty object in localStorage - force setting the values directly
-  const forceSetDateRange = (start: string, end: string) => {
-    // 1. Update React state
-    updateDateRange({
-      startDate: start,
-      endDate: end
-    });
-    
-    // 2. Set directly to localStorage to bypass any potential state issues
-    try {
-      // Get the user ID from localStorage
-      const authData = localStorage.getItem('auth');
-      if (authData) {
-        const parsedAuth = JSON.parse(authData);
-        const userId = parsedAuth?.user?._id;
-        
-        if (userId) {
-          console.log(`Forcing date range in localStorage for user ${userId}:`, { startDate: start, endDate: end });
-          const dateRangeData = {
-            startDate: start,
-            endDate: end
-          };
-          
-          localStorage.setItem(`dateRange_${userId}`, JSON.stringify(dateRangeData));
-          localStorage.setItem('debug_dateRange', JSON.stringify(dateRangeData));
-          
-          // Also set to window global for debugging
-          (window as any).forcedDateRange = dateRangeData;
-          (window as any).CURRENT_DATE_RANGE = dateRangeData;
-        }
-      }
-    } catch (e) {
-      console.error('Error setting direct localStorage:', e);
-    }
-  };
-
   const handleApply = () => {
     if (startDate && endDate) {
       // Format dates in 'yyyy-MM-dd' format
       const formattedStart = format(startDate, 'yyyy-MM-dd');
       const formattedEnd = format(endDate, 'yyyy-MM-dd');
       
-      console.log('Setting date range (before update):', { startDate: formattedStart, endDate: formattedEnd });
+      console.log('Setting date range:', { startDate: formattedStart, endDate: formattedEnd });
       
-      // Force set the date range values directly
-      forceSetDateRange(formattedStart, formattedEnd);
-      
-      // Store directly in localStorage as well for debugging
-      localStorage.setItem('debug_dateRange', JSON.stringify({
+      // Update date range in context which will save to API
+      updateDateRange({
         startDate: formattedStart,
         endDate: formattedEnd
-      }));
-      
-      // Add a timeout to verify the state was updated
-      setTimeout(() => {
-        console.log('Current date range in context (after update):', JSON.stringify(dateRange));
-        
-        // Try to read what was saved to localStorage
-        const userId = JSON.parse(localStorage.getItem('auth') || '{}')?.user?._id;
-        if (userId) {
-          const savedRange = localStorage.getItem(`dateRange_${userId}`);
-          console.log('Saved in localStorage:', savedRange);
-        }
-      }, 100);
+      });
       
       togglePanel();
     }
@@ -147,7 +96,8 @@ const AnalysisSettingsPanel: React.FC<AnalysisSettingsPanelProps> = ({ isOpen, t
         <CardHeader>
           <CardTitle>Analysis Settings</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4 overflow-y-auto flex-grow">
+        
+        <CardContent className="flex-1 overflow-y-auto space-y-4">
           <div className="space-y-2">
             <h3 className="text-sm font-medium">Date Range</h3>
             <div className="space-y-2">

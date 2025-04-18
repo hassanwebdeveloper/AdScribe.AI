@@ -6,6 +6,7 @@ from app.core.security import get_current_user_email
 from app.services.user_service import get_user_by_email
 import httpx
 import os
+import re
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -61,9 +62,27 @@ async def process_webhook(
             detail="User not found"
         )
     
+    # Clean the user message from any existing date range information
+    # This pattern will match formats like (Analysis date range: YYYY-MM-DD to YYYY-MM-DD) or (Analysis period: YYYY-MM-DD to YYYY-MM-DD)
+    cleaned_message = re.sub(r'\s*\(Analysis (?:date range|period): \d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}\)\s*', '', request.userMessage)
+    
+    # Debug logging
+    print(f"Original user message: '{request.userMessage}'")
+    print(f"Cleaned user message: '{cleaned_message}'")
+    
+    if request.dateRange and request.dateRange.startDate and request.dateRange.endDate:
+        print(f"Date range: {request.dateRange.startDate} to {request.dateRange.endDate}")
+    else:
+        print("No date range provided")
+    
+    # Get the date range information to include it with the message
+    date_range_info = ""
+    if request.dateRange and request.dateRange.startDate and request.dateRange.endDate:
+        date_range_info = f"(Analysis date range: {request.dateRange.startDate} to {request.dateRange.endDate})"
+    
     # Create the payload for the N8N webhook
     payload = {
-        "userMessage": request.userMessage,
+        "userMessage": cleaned_message,  # Use the cleaned message without the date range
         "previousMessages": [
             {"role": msg.role, "content": msg.content}
             for msg in request.previousMessages
@@ -72,7 +91,8 @@ async def process_webhook(
         "userInfo": {
             "fbGraphApiKey": user.fb_graph_api_key,
             "fbAdAccountId": user.fb_ad_account_id,
-        }
+        },
+        "analysisContext": date_range_info  # Add date range as separate field
     }
     
     try:
@@ -90,8 +110,25 @@ async def process_webhook(
                     detail=f"N8N webhook returned error: {response.text}"
                 )
             
-            # Return the response from N8N
-            return response.json()
+            # Get the response data
+            try:
+                response_data = response.json()
+                print(f"N8N response: {response_data}")
+                
+                # If the response is already properly formatted, return it
+                if isinstance(response_data, dict) and ("output" in response_data or "result" in response_data or "message" in response_data):
+                    return response_data
+                
+                # If the response is an array with objects containing output property, format it
+                if isinstance(response_data, list) and len(response_data) > 0 and isinstance(response_data[0], dict) and "output" in response_data[0]:
+                    return {"output": response_data[0]["output"]}
+                
+                # Otherwise, wrap the entire response in an output field
+                return {"output": response_data}
+            except Exception as e:
+                print(f"Error processing N8N response: {str(e)}")
+                # If we can't parse the JSON or encounter another error, return the raw text
+                return {"output": response.text}
     
     except httpx.RequestError as e:
         raise HTTPException(

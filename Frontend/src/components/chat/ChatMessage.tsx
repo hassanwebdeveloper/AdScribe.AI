@@ -1,38 +1,100 @@
-
-import React from 'react';
+import React, { useState } from 'react';
+import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 import { Message } from '@/types';
 import { Avatar } from '@/components/ui/avatar';
-import { User, Bot } from 'lucide-react';
+import { User, Bot, Edit, RotateCw, Trash } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { useChat } from '@/contexts/ChatContext';
+import { Button } from '@/components/ui/button';
 
 interface ChatMessageProps {
   message: Message;
+  hasError?: boolean;
+  isLastUserMessage?: boolean;
+  onResendMessage?: (messageId: string) => void;
+  onDeleteMessage?: (messageId: string) => void;
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
-  const isUser = message.role === 'user';
+const ChatMessage: React.FC<ChatMessageProps> = ({
+  message,
+  hasError = false,
+  isLastUserMessage = false,
+  onResendMessage,
+  onDeleteMessage,
+}) => {
+  const [isHovered, setIsHovered] = useState(false);
+  const isUserMessage = message.role === 'user';
+  const { setEditingMessageId } = useChat();
   
+  // Only show controls for:
+  // 1. Messages with errors (always show delete)
+  // 2. The last user message (always show edit and delete)
+  const shouldShowControls = isUserMessage && (isHovered || hasError) && (isLastUserMessage || hasError);
+
   return (
-    <div
-      className={`flex items-start gap-4 py-4 px-4 ${
-        isUser ? 'bg-white' : 'bg-chat-bot-light'
-      }`}
+    <div 
+      className={cn(
+        "relative py-3 px-4 my-2 rounded-lg",
+        isUserMessage 
+          ? "bg-blue-50 border border-blue-100 ml-auto" 
+          : "bg-gray-50 border border-gray-100 mr-auto",
+        message.role === 'user' ? 'max-w-[85%]' : 'max-w-[90%]',
+        hasError && "border-red-300 bg-red-50"
+      )}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
-      <Avatar className={`h-8 w-8 ${isUser ? 'bg-gray-300' : 'bg-chat-bot'}`}>
-        {isUser ? (
-          <User className="h-5 w-5 text-white" />
-        ) : (
-          <Bot className="h-5 w-5 text-white" />
-        )}
-      </Avatar>
-      <div className="flex-1 space-y-2">
+      <div className="flex flex-col gap-1">
         <div className="text-sm font-medium">
-          {isUser ? 'You' : 'AdScribe AI'}
+          {message.role === 'user' ? 'You' : 'AI Assistant'}
         </div>
-        <div className="prose prose-sm max-w-none">
-          <ReactMarkdown>{message.content}</ReactMarkdown>
+        <div className="text-gray-700 whitespace-pre-wrap">{message.content}</div>
+        <div className="text-xs text-gray-400">
+          {message.timestamp && format(new Date(message.timestamp), 'MMM d, h:mm a')}
         </div>
       </div>
+      
+      {shouldShowControls && (
+        <div className="absolute top-2 right-2 flex gap-1">
+          {isLastUserMessage && (
+            <Button 
+              variant="outline" 
+              size="icon" 
+              onClick={() => setEditingMessageId(message.id)} 
+              title="Edit and resend message"
+              className="h-6 w-6 p-0"
+            >
+              <Edit className="h-3 w-3" />
+              <span className="sr-only">Edit</span>
+            </Button>
+          )}
+          
+          {hasError && !isLastUserMessage && (
+            <Button 
+              variant="outline" 
+              size="icon" 
+              onClick={() => onResendMessage?.(message.id)} 
+              title="Resend message"
+              className="h-6 w-6 p-0"
+            >
+              <RotateCw className="h-3 w-3" />
+              <span className="sr-only">Resend</span>
+            </Button>
+          )}
+          
+          <Button 
+            variant="outline" 
+            size="icon" 
+            onClick={() => onDeleteMessage?.(message.id)} 
+            title="Delete message"
+            className="h-6 w-6 p-0"
+          >
+            <Trash className="h-3 w-3" />
+            <span className="sr-only">Delete</span>
+          </Button>
+        </div>
+      )}
     </div>
   );
 };

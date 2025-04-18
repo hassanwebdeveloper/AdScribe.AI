@@ -4,17 +4,25 @@ import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from './AuthContext';
 import api from '@/utils/api';
 
-// Backend API endpoint for chat messages
+// Backend API endpoints
 const BACKEND_CHAT_ENDPOINT = '/webhook/chat';
+const CHAT_API_ENDPOINT = '/chat';
 
 interface ChatContextType extends ChatState {
   sendMessage: (content: string) => Promise<void>;
   createNewSession: () => void;
   selectSession: (sessionId: string) => void;
+  deleteSession: (sessionId: string) => void;
   getCurrentSession: () => ChatSession | undefined;
   dateRange: DateRange;
   updateDateRange: (data: DateRange) => void;
   setChatState: React.Dispatch<React.SetStateAction<ChatState>>;
+  messagesWithErrors: string[]; // Array of message IDs with errors
+  clearMessageError: (messageId: string) => void;
+  editMessage: (messageId: string, newContent: string) => Promise<void>;
+  editingMessageId: string | null;
+  setEditingMessageId: (messageId: string | null) => void;
+  setMessagesWithErrors: React.Dispatch<React.SetStateAction<string[]>>;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -23,6 +31,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { toast } = useToast();
   const { user, isAuthenticated } = useAuth();
   const [dateRange, setDateRange] = useState<DateRange>({});
+  const [messagesWithErrors, setMessagesWithErrors] = useState<string[]>([]);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   
   const [chatState, setChatState] = useState<ChatState>({
     sessions: [],
@@ -34,31 +44,25 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Initialize and check auth data on mount
   useEffect(() => {
     // Ensure we have user data available
-    const initAuthData = () => {
+    const initAuthData = async () => {
       if (user && user._id) {
         console.log('Auth initialized with user:', user._id);
         
-        // Try to read date range for this user
+        // Fetch analysis settings from the API
         try {
-          const savedDateRange = localStorage.getItem(`dateRange_${user._id}`);
-          if (savedDateRange) {
-            try {
-              const parsed = JSON.parse(savedDateRange);
-              if (parsed) {
-                console.log('Found saved date range for user:', parsed);
-                setDateRange(parsed);
-                
-                // Also store in window global for emergency access
-                (window as any).forcedDateRange = parsed;
-              }
-            } catch (e) {
-              console.error('Error parsing date range from localStorage:', e);
-            }
+          const response = await api.get(`${CHAT_API_ENDPOINT}/settings`);
+          if (response.data && response.data.date_range) {
+            const apiDateRange = {
+              startDate: response.data.date_range.start_date,
+              endDate: response.data.date_range.end_date
+            };
+            console.log('Found saved date range for user:', apiDateRange);
+            setDateRange(apiDateRange);
           } else {
             console.log('No saved date range found for user');
           }
         } catch (e) {
-          console.error('Error accessing localStorage:', e);
+          console.error('Error fetching analysis settings:', e);
         }
       } else {
         console.warn('No user data available');
@@ -68,75 +72,124 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAuthData();
   }, [user]);
 
-  // Load chat sessions from local storage on component mount
+  // Load chat sessions from API on component mount
   useEffect(() => {
-    if (user && user._id) {
-      const savedSessions = localStorage.getItem(`chatSessions_${user._id}`);
-      
-      if (savedSessions) {
-        const sessions = JSON.parse(savedSessions);
-        // Convert string dates back to Date objects
-        sessions.forEach((session: ChatSession) => {
-          session.createdAt = new Date(session.createdAt);
-          session.updatedAt = new Date(session.updatedAt);
-          session.messages.forEach((msg: Message) => {
-            msg.timestamp = new Date(msg.timestamp);
-          });
-        });
-        
-        setChatState({
-          ...chatState,
-          sessions,
-          currentSessionId: sessions.length > 0 ? sessions[0].id : null,
-        });
-      } else if (chatState.sessions.length === 0) {
-        // Create a new session if there are no sessions
-        createNewSession();
-      }
-
-      // Load date range from local storage
-      const savedDateRange = localStorage.getItem(`dateRange_${user._id}`);
-      if (savedDateRange) {
+    const fetchSessions = async () => {
+      if (user && user._id) {
         try {
-          const parsedDateRange = JSON.parse(savedDateRange);
-          console.log('Loading date range from localStorage:', parsedDateRange);
-          setDateRange(parsedDateRange);
-        } catch (e) {
-          console.error('Error parsing date range from localStorage:', e);
+          setChatState(prev => ({
+            ...prev,
+            isLoading: true
+          }));
+          
+          const response = await api.get(`${CHAT_API_ENDPOINT}/sessions`);
+          const sessions = response.data;
+          
+          // Convert string dates to Date objects and ensure id field
+          sessions.forEach((session: ChatSession) => {
+            // MongoDB returns _id, but our frontend uses id, so map it if needed
+            if (session._id && !session.id) {
+              session.id = session._id;
+            }
+            session.createdAt = new Date(session.createdAt);
+            session.updatedAt = new Date(session.updatedAt);
+            session.messages.forEach((msg: Message) => {
+              msg.timestamp = new Date(msg.timestamp);
+            });
+          });
+          
+          setChatState({
+            ...chatState,
+            sessions,
+            currentSessionId: sessions.length > 0 ? sessions[0].id : null,
+            isLoading: false
+          });
+        } catch (error) {
+          console.error('Error fetching chat sessions:', error);
+          setChatState({
+            ...chatState,
+            isLoading: false,
+            error: 'Failed to load chat sessions'
+          });
         }
       }
-    }
+    };
+    
+    fetchSessions();
   }, [user]);
 
-  // Save chat sessions to local storage whenever they change
-  useEffect(() => {
-    if (user && user._id && chatState.sessions.length > 0) {
-      localStorage.setItem(`chatSessions_${user._id}`, JSON.stringify(chatState.sessions));
+  const createNewSession = async () => {
+    if (!user || !user._id) {
+      toast({
+        title: "Error",
+        description: "You must be logged in to create a new chat",
+        variant: "destructive",
+      });
+      return;
     }
-  }, [chatState.sessions, user]);
-
-  // Save date range to local storage whenever it changes
-  useEffect(() => {
-    if (user && user._id) {
-      console.log('useEffect: Saving date range to localStorage:', dateRange);
-      localStorage.setItem(`dateRange_${user._id}`, JSON.stringify(dateRange));
+    
+    try {
+      setChatState(prev => ({
+        ...prev,
+        isLoading: true
+      }));
+      
+      console.log('Creating new chat session, API endpoint:', `${CHAT_API_ENDPOINT}/sessions`);
+      
+      const response = await api.post(`${CHAT_API_ENDPOINT}/sessions`, {
+        title: `New Chat ${chatState.sessions.length + 1}`
+      });
+      
+      console.log('Chat session created, response:', response.data);
+      
+      const newSession = response.data;
+      // MongoDB returns _id, but our frontend uses id
+      if (newSession._id && !newSession.id) {
+        newSession.id = newSession._id;
+      }
+      // Handle date format conversion
+      if (newSession.created_at && !newSession.createdAt) {
+        newSession.createdAt = new Date(newSession.created_at);
+      } else if (newSession.createdAt && typeof newSession.createdAt === 'string') {
+        newSession.createdAt = new Date(newSession.createdAt);
+      } else {
+        newSession.createdAt = new Date(newSession.createdAt || new Date());
+      }
+      
+      if (newSession.updated_at && !newSession.updatedAt) {
+        newSession.updatedAt = new Date(newSession.updated_at);
+      } else if (newSession.updatedAt && typeof newSession.updatedAt === 'string') {
+        newSession.updatedAt = new Date(newSession.updatedAt);
+      } else {
+        newSession.updatedAt = new Date(newSession.updatedAt || new Date());
+      }
+      
+      setChatState(prev => ({
+        ...prev,
+        sessions: [newSession, ...prev.sessions],
+        currentSessionId: newSession.id,
+        isLoading: false
+      }));
+    } catch (error: any) {
+      console.error('Error creating new chat session:', error);
+      // Log details about the error for debugging
+      if (error.response) {
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
+      }
+      
+      setChatState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: 'Failed to create new chat session'
+      }));
+      
+      toast({
+        title: "Error",
+        description: error.response?.data?.detail || "Failed to create new chat session",
+        variant: "destructive",
+      });
     }
-  }, [dateRange, user]);
-
-  const createNewSession = () => {
-    const newSession: ChatSession = {
-      id: `session_${Math.random().toString(36).substring(2, 11)}`,
-      title: `New Chat ${chatState.sessions.length + 1}`,
-      messages: [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    setChatState(prev => ({
-      ...prev,
-      sessions: [newSession, ...prev.sessions],
-      currentSessionId: newSession.id,
-    }));
   };
 
   const selectSession = (sessionId: string) => {
@@ -145,25 +198,180 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       currentSessionId: sessionId,
     }));
   };
+  
+  const deleteSession = async (sessionId: string) => {
+    if (!user || !user._id) {
+      toast({
+        title: "Error",
+        description: "You must be logged in to delete a chat",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    try {
+      setChatState(prev => ({
+        ...prev,
+        isLoading: true
+      }));
+      
+      // Use the correct session ID format for the backend
+      const session = chatState.sessions.find(s => s.id === sessionId);
+      if (!session) {
+        throw new Error("Session not found");
+      }
+
+      // We should use the _id field if available, otherwise use the id field
+      const backendSessionId = session._id || session.id;
+      
+      console.log('Deleting chat session, API endpoint:', `${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`);
+      
+      await api.delete(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`);
+      
+      console.log('Chat session deleted successfully');
+      
+      // Check if we're deleting the current session
+      const isCurrentSession = sessionId === chatState.currentSessionId;
+      
+      // Filter out the deleted session
+      const updatedSessions = chatState.sessions.filter(s => s.id !== sessionId);
+      
+      setChatState(prev => ({
+        ...prev,
+        sessions: updatedSessions,
+        // If we deleted the current session, select the first available one or null
+        currentSessionId: isCurrentSession 
+          ? (updatedSessions.length > 0 ? updatedSessions[0].id : null) 
+          : prev.currentSessionId,
+        isLoading: false
+      }));
+      
+      toast({
+        title: "Success",
+        description: "Chat deleted successfully",
+        variant: "default",
+      });
+    } catch (error: any) {
+      console.error('Error deleting chat session:', error);
+      
+      // Log details about the error for debugging
+      if (error.response) {
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
+      }
+      
+      setChatState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: 'Failed to delete chat session'
+      }));
+      
+      toast({
+        title: "Error",
+        description: error.response?.data?.detail || "Failed to delete chat session",
+        variant: "destructive",
+      });
+    }
+  };
 
   const getCurrentSession = () => {
     return chatState.sessions.find(s => s.id === chatState.currentSessionId);
   };
 
-  const updateDateRange = (data: DateRange) => {
+  const updateDateRange = async (data: DateRange) => {
     console.log('Updating date range with:', data);
+    
+    if (!user || !user._id) {
+      console.error('Cannot update date range: user not logged in');
+      return;
+    }
     
     // Create a new object to ensure state update
     const newDateRange = { ...dateRange, ...data };
     console.log('New date range will be:', newDateRange);
     
+    // Update local state
     setDateRange(newDateRange);
     
-    // Debug direct access to localStorage
-    if (user && user._id && window.localStorage) {
-      // Store directly to localStorage for immediate use
-      localStorage.setItem(`dateRange_${user._id}`, JSON.stringify(newDateRange));
-      console.log('Saved date range to localStorage:', newDateRange);
+    try {
+      // Update in API
+      await api.put(`${CHAT_API_ENDPOINT}/settings`, {
+        start_date: newDateRange.startDate,
+        end_date: newDateRange.endDate
+      });
+      
+      console.log('Saved date range to API:', newDateRange);
+    } catch (error) {
+      console.error('Error updating date range:', error);
+      toast({
+        title: "Error",
+        description: "Failed to save analysis settings",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Clear a message error
+  const clearMessageError = (messageId: string) => {
+    setMessagesWithErrors(prev => prev.filter(id => id !== messageId));
+  };
+
+  // Edit a message without sending it
+  const editMessage = async (messageId: string, newContent: string) => {
+    const currentSession = getCurrentSession();
+    if (!currentSession) return;
+    
+    try {
+      // Find the message index
+      const messageIndex = currentSession.messages.findIndex(m => m.id === messageId);
+      if (messageIndex === -1) return;
+      
+      // Update the message
+      const updatedMessage = {
+        ...currentSession.messages[messageIndex],
+        content: newContent
+      };
+      
+      // Create a new array with the updated message
+      const updatedMessages = [...currentSession.messages];
+      updatedMessages[messageIndex] = updatedMessage;
+      
+      // Update the state
+      const currentSessions = [...chatState.sessions];
+      const sessionIndex = currentSessions.findIndex(s => s.id === currentSession.id);
+      
+      if (sessionIndex !== -1) {
+        // Create a new session object with the updated messages
+        const updatedSession = {
+          ...currentSessions[sessionIndex],
+          messages: updatedMessages,
+          updatedAt: new Date(),
+        };
+        
+        // Update the session in the array
+        currentSessions[sessionIndex] = updatedSession;
+        
+        // Update the state with the new array
+        setChatState(prev => ({
+          ...prev,
+          sessions: currentSessions,
+        }));
+        
+        // Update the session in the API
+        try {
+          const backendSessionId = updatedSession._id || updatedSession.id;
+          
+          await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
+            messages: updatedSession.messages
+          });
+        } catch (error) {
+          console.error('Error updating session in API:', error);
+          throw error;
+        }
+      }
+    } catch (error) {
+      console.error('Error editing message:', error);
+      throw error;
     }
   };
 
@@ -180,93 +388,27 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
+      // Find the last user message
+      const lastUserMessage = session.messages.filter(msg => msg.role === 'user').pop();
+      if (!lastUserMessage) {
+        console.error('No user message found to respond to');
+        return false;
+      }
+
       // Prepare context from previous messages (exclude the latest user message)
-      const contextMessages = session.messages.slice(-5);
+      const contextMessages = session.messages
+        .filter(msg => msg.id !== lastUserMessage.id)
+        .slice(-5);
       
       console.log('Current date range state:', JSON.stringify(dateRange));
       
-      // Try multiple sources for date range
+      // Get date range from React state
       let effectiveDateRange = {
-        startDate: null as string | null,
-        endDate: null as string | null
+        startDate: dateRange.startDate || null,
+        endDate: dateRange.endDate || null
       };
       
-      // 1. Check React state
-      if (dateRange.startDate && dateRange.endDate) {
-        effectiveDateRange = {
-          startDate: dateRange.startDate,
-          endDate: dateRange.endDate
-        };
-        console.log('Using date range from React state:', effectiveDateRange);
-      } 
-      // 2. Check localStorage
-      else {
-        try {
-          const savedDateRange = localStorage.getItem(`dateRange_${user._id}`);
-          if (savedDateRange) {
-            const parsed = JSON.parse(savedDateRange);
-            if (parsed.startDate && parsed.endDate) {
-              effectiveDateRange = {
-                startDate: parsed.startDate,
-                endDate: parsed.endDate
-              };
-              console.log('Using date range from localStorage:', effectiveDateRange);
-            }
-          }
-        } catch (e) {
-          console.error('Error reading from localStorage:', e);
-        }
-      }
-      
-      // 3. Check debug localStorage
-      if (!effectiveDateRange.startDate || !effectiveDateRange.endDate) {
-        try {
-          const debugRange = localStorage.getItem('debug_dateRange');
-          if (debugRange) {
-            const parsed = JSON.parse(debugRange);
-            if (parsed.startDate && parsed.endDate) {
-              effectiveDateRange = {
-                startDate: parsed.startDate,
-                endDate: parsed.endDate
-              };
-              console.log('Using date range from debug localStorage:', effectiveDateRange);
-            }
-          }
-        } catch (e) {
-          console.error('Error reading from debug localStorage:', e);
-        }
-      }
-      
-      // 4. Check global window variable (set by force function)
-      if (!effectiveDateRange.startDate || !effectiveDateRange.endDate) {
-        if ((window as any).forcedDateRange?.startDate && (window as any).forcedDateRange?.endDate) {
-          effectiveDateRange = {
-            startDate: (window as any).forcedDateRange.startDate,
-            endDate: (window as any).forcedDateRange.endDate
-          };
-          console.log('Using date range from window global:', effectiveDateRange);
-        }
-      }
-      
-      // 5. Extract from message content as last resort
-      if ((!effectiveDateRange.startDate || !effectiveDateRange.endDate) && content.includes('date range:')) {
-        try {
-          const match = content.match(/date range: (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})/);
-          if (match && match[1] && match[2]) {
-            effectiveDateRange = {
-              startDate: match[1],
-              endDate: match[2]
-            };
-            console.log('Extracted date range from message:', effectiveDateRange);
-          }
-        } catch (e) {
-          console.error('Error extracting date from message:', e);
-        }
-      }
-      
-      console.log('Effective date range to use:', effectiveDateRange);
-      
-      // Calculate days if date range is set
+      // Calculate days to analyze
       let daysToAnalyze = null;
       
       if (effectiveDateRange.startDate && effectiveDateRange.endDate) {
@@ -274,13 +416,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const start = new Date(effectiveDateRange.startDate);
         const end = new Date(effectiveDateRange.endDate);
         daysToAnalyze = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)).toString();
-        
         console.log('Calculated days to analyze:', daysToAnalyze);
       } else {
         console.log('Date range not set or incomplete');
       }
       
-      // Create payload for backend API
+      // Create payload for backend API - don't modify the original user message
       const payload = {
         userMessage: content,
         previousMessages: contextMessages.map(msg => ({
@@ -292,7 +433,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           endDate: effectiveDateRange.endDate,
           daysToAnalyze
         },
-        // Don't include API keys in payload - backend will add them
       };
       
       console.log('Sending to backend API:', payload);
@@ -301,35 +441,71 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const response = await api.post(BACKEND_CHAT_ENDPOINT, payload);
       console.log('Backend API response:', response.data);
       
+      // Process the response to extract the output
+      const responseContent = extractOutputFromResponse(response.data);
+      console.log('Processed response content:', responseContent);
+      
       // Add bot response from webhook
       const botMessage: Message = {
         id: `msg_${Math.random().toString(36).substring(2, 11)}`,
-        content: extractOutputFromResponse(response.data),
+        content: responseContent,
         role: 'bot',
         timestamp: new Date(),
       };
       
-      setChatState(prev => ({
-        ...prev,
-        sessions: prev.sessions.map(s => 
-          s.id === session.id 
-            ? { 
-                ...s, 
-                messages: [...s.messages, botMessage],
-                updatedAt: new Date(),
-                // Update title based on first user message if it's still the default
-                title: s.title === `New Chat ${prev.sessions.indexOf(s) + 1}` 
-                  ? content.slice(0, 30) + (content.length > 30 ? '...' : '') 
-                  : s.title
-              } 
-            : s
-        ),
-        isLoading: false,
-      }));
+      // Get the current session with updated messages
+      const currentSessions = [...chatState.sessions];
+      const sessionIndex = currentSessions.findIndex(s => s.id === session.id);
+      
+      if (sessionIndex !== -1) {
+        // Create a new session object with the updated messages
+        const updatedSession = {
+          ...currentSessions[sessionIndex],
+          messages: [...session.messages, botMessage],
+          updatedAt: new Date(),
+        };
+        
+        // If it's still using the default title, update it based on the first message
+        if (updatedSession.title.startsWith('New Chat')) {
+          updatedSession.title = content.slice(0, 30) + (content.length > 30 ? '...' : '');
+        }
+        
+        // Update the session in the array
+        currentSessions[sessionIndex] = updatedSession;
+        
+        // Update the state with the new array
+        setChatState(prev => ({
+          ...prev,
+          sessions: currentSessions,
+          isLoading: false,
+        }));
+        
+        // Clear any errors for the last user message
+        clearMessageError(lastUserMessage.id);
+        
+        // Save updated session to API
+        try {
+          // Use the correct session ID format for the backend
+          const backendSessionId = updatedSession._id || updatedSession.id;
+          
+          await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
+            messages: updatedSession.messages,
+            title: updatedSession.title
+          });
+        } catch (error) {
+          console.error('Error updating session in API:', error);
+        }
+      }
       
       return true;
     } catch (error) {
       console.error('Error calling backend API:', error);
+      
+      // Find the last user message to mark as having an error
+      const lastUserMessage = session.messages.filter(msg => msg.role === 'user').pop();
+      if (lastUserMessage) {
+        setMessagesWithErrors(prev => [...prev, lastUserMessage.id]);
+      }
       
       setChatState(prev => ({
         ...prev,
@@ -339,7 +515,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'Failed to get response',
+        description: "Failed to get a response. You can edit, resend, or delete your message.",
         variant: "destructive",
       });
       
@@ -347,54 +523,72 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Helper function to extract output from response
-  const extractOutputFromResponse = (responseData: any): string => {
-    try {
-      // If it's an array with objects containing output property
-      if (Array.isArray(responseData) && responseData.length > 0 && responseData[0]?.output) {
-        return responseData[0].output;
-      }
-      
-      // Check if the response is a string that needs to be parsed
-      if (typeof responseData === 'string') {
-        try {
-          const parsedData = JSON.parse(responseData);
+  // Helper function to extract output from webhook response
+  const extractOutputFromResponse = (response: any): string => {
+    console.log('Extracting output from response:', response);
+    
+    // Check for different response formats
+    if (typeof response === 'string') {
+      try {
+        // Try to parse the string as JSON
+        const parsedResponse = JSON.parse(response);
+        
+        // Handle array format
+        if (Array.isArray(parsedResponse) && parsedResponse.length > 0) {
+          const firstItem = parsedResponse[0];
           
-          // Check again if it's an array after parsing
-          if (Array.isArray(parsedData) && parsedData.length > 0 && parsedData[0]?.output) {
-            return parsedData[0].output;
+          // Check if the first item has an output property
+          if (firstItem && firstItem.output) {
+            console.log('Extracted output from array:', firstItem.output);
+            return firstItem.output;
           }
-          
-          // Check if it's an object with output property
-          if (parsedData && typeof parsedData === 'object' && 'output' in parsedData) {
-            return parsedData.output;
-          }
-          
-          // Fallback to message property
-          if (parsedData && typeof parsedData === 'object' && 'message' in parsedData) {
-            return parsedData.message;
-          }
-          
-          // Return the parsed data as string if we couldn't extract output
-          return typeof parsedData === 'string' ? parsedData : JSON.stringify(parsedData);
-        } catch (e) {
-          // If parsing fails, return the original string
-          return responseData;
         }
+        
+        // Handle object format 
+        if (parsedResponse && parsedResponse.output) {
+          console.log('Extracted output from parsed object:', parsedResponse.output);
+          return parsedResponse.output;
+        }
+        
+        // If we got here, just stringify the parsed response
+        return JSON.stringify(parsedResponse);
+      } catch (e) {
+        // Not valid JSON, return the string as is
+        console.log('Response is a string but not valid JSON, returning as is');
+        return response;
       }
-      
-      // If it's an object with output or message property
-      if (responseData && typeof responseData === 'object') {
-        if ('output' in responseData) return responseData.output;
-        if ('message' in responseData) return responseData.message;
-      }
-      
-      // Fallback to original response
-      return typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
-    } catch (e) {
-      console.error('Error extracting output from backend API response:', e);
-      return typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
     }
+    
+    // Handle array format directly
+    if (Array.isArray(response) && response.length > 0) {
+      const firstItem = response[0];
+      
+      // Check if the first item has an output property
+      if (firstItem && firstItem.output) {
+        console.log('Extracted output from array object:', firstItem.output);
+        return firstItem.output;
+      }
+    }
+    
+    // Handle object formats
+    if (response && response.output) {
+      console.log('Extracted output from object:', response.output);
+      return response.output;
+    }
+    
+    if (response && response.result) {
+      console.log('Extracted result from object:', response.result);
+      return response.result;
+    }
+    
+    if (response && response.message) {
+      console.log('Extracted message from object:', response.message);
+      return response.message;
+    }
+    
+    // Fallback
+    console.log('No structured output found, returning stringified response');
+    return JSON.stringify(response);
   };
 
   const sendMessage = async (content: string) => {
@@ -425,21 +619,42 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       timestamp: new Date(),
     };
     
-    setChatState(prev => ({
-      ...prev,
-      sessions: prev.sessions.map(s => 
-        s.id === currentSession.id 
-          ? { 
-              ...s, 
-              messages: [...s.messages, userMessage],
-              updatedAt: new Date(),
-            } 
-          : s
-      ),
-    }));
+    // Get the current sessions array
+    const currentSessions = [...chatState.sessions];
+    const sessionIndex = currentSessions.findIndex(s => s.id === currentSession.id);
     
-    // Use the helper function to send message to webhook
-    await sendMessageToWebhook(content, currentSession);
+    if (sessionIndex !== -1) {
+      // Create a new session object with the updated messages
+      const updatedSession = {
+        ...currentSessions[sessionIndex],
+        messages: [...currentSessions[sessionIndex].messages, userMessage],
+        updatedAt: new Date(),
+      };
+      
+      // Update the session in the array
+      currentSessions[sessionIndex] = updatedSession;
+      
+      // Update the state with the new array
+      setChatState(prev => ({
+        ...prev,
+        sessions: currentSessions,
+      }));
+      
+      // Update the session in the API
+      try {
+        // Use the correct session ID format for the backend
+        const backendSessionId = currentSession._id || currentSession.id;
+        
+        await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
+          messages: updatedSession.messages
+        });
+      } catch (error) {
+        console.error('Error updating session in API:', error);
+      }
+      
+      // Use the helper function to send message to webhook
+      await sendMessageToWebhook(content, updatedSession);
+    }
   };
 
   return (
@@ -449,10 +664,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sendMessage,
         createNewSession,
         selectSession,
+        deleteSession,
         getCurrentSession,
         dateRange,
         updateDateRange,
         setChatState,
+        messagesWithErrors,
+        clearMessageError,
+        editMessage,
+        editingMessageId,
+        setEditingMessageId,
+        setMessagesWithErrors,
       }}
     >
       {children}

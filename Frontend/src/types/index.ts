@@ -27,10 +27,14 @@ export interface Message {
 
 export interface ChatSession {
   id: string;
+  _id?: string;
+  user_id?: string;
   title: string;
   messages: Message[];
   createdAt: Date;
   updatedAt: Date;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ChatState {
@@ -38,6 +42,7 @@ export interface ChatState {
   currentSessionId: string | null;
   isLoading: boolean;
   error: string | null;
+  messagesWithErrors?: string[];
 }
 
 export interface DateRange {
