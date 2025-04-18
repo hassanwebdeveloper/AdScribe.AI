@@ -13,17 +13,18 @@ import {
   DialogFooter 
 } from '@/components/ui/dialog';
 import { Link } from 'react-router-dom';
-import axios from 'axios';
 import { AlertCircle } from 'lucide-react';
+import api from '@/utils/api';
+import { Message } from '@/types';
 
-// The webhook URL (copied from ChatContext)
-const WEBHOOK_URL = 'https://n8n.srv764032.hstgr.cloud/webhook-test/6dcbdc6c-9bcd-4e9a-a4b1-60faa0219e72';
+// Backend API endpoint for chat messages
+const BACKEND_CHAT_ENDPOINT = '/webhook/chat';
 
 const ChatInput: React.FC = () => {
   const [message, setMessage] = useState('');
   const [showSettingsAlert, setShowSettingsAlert] = useState(false);
-  const { sendMessage, isLoading, getCurrentSession, dateRange } = useChat();
-  const { user } = useAuth();
+  const { sendMessage, isLoading, getCurrentSession, dateRange, setChatState } = useChat();
+  const { user, isAuthenticated } = useAuth();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   
   // Check for global date range values
@@ -71,9 +72,8 @@ const ChatInput: React.FC = () => {
         }
         
         // Try user-specific storage
-        const userId = JSON.parse(localStorage.getItem('auth') || '{}')?.user?._id;
-        if (userId) {
-          const userData = localStorage.getItem(`dateRange_${userId}`);
+        if (user?._id) {
+          const userData = localStorage.getItem(`dateRange_${user._id}`);
           if (userData) {
             const parsed = JSON.parse(userData);
             if (parsed.startDate && parsed.endDate) {
@@ -97,7 +97,7 @@ const ChatInput: React.FC = () => {
     const newRange = updateEffectiveDateRange();
     setEffectiveDateRange(newRange);
     console.log('ChatInput - Effective date range:', newRange);
-  }, [dateRange]);
+  }, [dateRange, user]);
 
   // Extract output from webhook response
   const extractOutputFromResponse = (responseData: any): string => {
@@ -177,27 +177,47 @@ const ChatInput: React.FC = () => {
   // Direct API call with date range info
   const sendDirectMessage = async (content: string) => {
     try {
-      // Get auth data
-      const authData = localStorage.getItem('auth');
-      if (!authData) {
-        console.error('No auth data found!');
-        // Fall back to regular send
-        sendMessage(content);
+      console.debug('Starting direct message send for:', content);
+      
+      // Ensure we're authenticated
+      if (!isAuthenticated || !user) {
+        console.error('Not authenticated!');
         return;
       }
       
-      const parsedAuth = JSON.parse(authData);
-      const user = parsedAuth?.user;
+      // Add user message to UI ONLY - do not use sendMessage as it will trigger another API call
+      // Instead, manually create the user message in the UI
+      const userMessage: Message = {
+        id: `msg_${Math.random().toString(36).substring(2, 11)}`,
+        content,
+        role: 'user',
+        timestamp: new Date(),
+      };
       
-      if (!user) {
-        console.error('Invalid auth data!');
-        // Fall back to regular send
-        sendMessage(content);
+      // Update chat state with the user message
+      const currentSession = getCurrentSession();
+      if (!currentSession) {
+        console.error('No active chat session!');
         return;
       }
       
-      // Add user message to UI (this will show in the chat)
-      sendMessage(content);
+      console.debug('Adding user message to UI:', userMessage.id);
+      
+      // Start loading state
+      setChatState?.(prev => ({
+        ...prev,
+        isLoading: true,
+        error: null,
+        sessions: prev.sessions.map(s => 
+          s.id === currentSession.id 
+            ? { 
+                ...s, 
+                messages: [...s.messages, userMessage],
+                updatedAt: new Date(),
+              } 
+            : s
+        ),
+      }));
       
       // Now gather all date range sources again
       const finalDateRange = updateEffectiveDateRange();
@@ -211,19 +231,19 @@ const ChatInput: React.FC = () => {
         daysToAnalyze = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)).toString();
       }
       
-      const currentSession = getCurrentSession();
-      if (!currentSession) {
-        console.error('No active chat session!');
-        return;
-      }
+      // Important: We need to get the context messages BEFORE we added our new message
+      // to avoid including the message we just sent in the context
+      const contextMessages = currentSession.messages
+        .filter(msg => msg.id !== userMessage.id)  // Ensure our new message isn't included
+        .slice(-5)
+        .map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }));
       
-      // Get previous messages for context
-      const contextMessages = currentSession.messages.slice(-5).map(msg => ({
-        role: msg.role,
-        content: msg.content
-      }));
+      console.debug('Context messages count:', contextMessages.length);
       
-      // Create the payload with date range explicitly included
+      // Create the payload for the backend API
       const payload = {
         userMessage: content,
         previousMessages: contextMessages,
@@ -231,51 +251,87 @@ const ChatInput: React.FC = () => {
           startDate: finalDateRange.startDate,
           endDate: finalDateRange.endDate,
           daysToAnalyze
-        },
-        userInfo: {
-          fbGraphApiKey: user?.fbGraphApiKey || user?.fb_graph_api_key || '',
-          fbAdAccountId: user?.fbAdAccountId || user?.fb_ad_account_id || ''
         }
+        // Don't include API keys - these will be retrieved on the backend
       };
       
-      console.log('Sending direct payload to webhook:', payload);
+      console.log('Sending direct payload to backend API:', payload);
       
-      // Make the direct API call
-      const response = await axios.post(WEBHOOK_URL, payload);
-      console.log('Webhook direct response (raw):', response.data);
-
-      // Log the exact response structure to debug
-      console.log('Response is array?', Array.isArray(response.data));
-      if (Array.isArray(response.data) && response.data.length > 0) {
-        console.log('First element:', response.data[0]);
-        console.log('Has output property?', 'output' in response.data[0]);
-        if ('output' in response.data[0]) {
-          console.log('Output content preview:', response.data[0].output.substring(0, 50) + '...');
-        }
-      }
-
+      // Make the direct API call to our backend (which will forward to n8n)
+      const response = await api.post(BACKEND_CHAT_ENDPOINT, payload);
+      console.log('Backend API response:', response.data);
+      
       // Extract the output from the response
       const extractedOutput = extractOutputFromResponse(response.data);
-      console.log('Extracted output (first 50 chars):', extractedOutput.substring(0, 50) + '...');
+      console.log('Extracted output:', extractedOutput);
       
-      // Add the bot response to the UI
-      if (extractedOutput) {
-        sendMessage(extractedOutput);
-      } else {
-        sendMessage("Sorry, I couldn't process the response correctly. Please try again.");
+      // Add the bot response directly to the UI
+      const botMessage: Message = {
+        id: `msg_${Math.random().toString(36).substring(2, 11)}`,
+        content: extractedOutput,
+        role: 'bot',
+        timestamp: new Date(),
+      };
+      
+      console.debug('Adding bot response to UI:', botMessage.id);
+      
+      // Get current session again in case it changed
+      const updatedSession = getCurrentSession();
+      if (!updatedSession) {
+        console.error('Session lost during API call');
+        return;
       }
       
+      // Update chat state with bot message and stop loading
+      setChatState?.(prev => ({
+        ...prev,
+        isLoading: false,
+        error: null,
+        sessions: prev.sessions.map(s => 
+          s.id === updatedSession.id 
+            ? { 
+                ...s, 
+                messages: [...s.messages, botMessage],
+                updatedAt: new Date(),
+              } 
+            : s
+        ),
+      }));
+      
       // Log the successful API call
-      console.log('Successfully added response from webhook with date range:', finalDateRange);
+      console.log('Successfully added response from backend with date range:', finalDateRange);
       
     } catch (error) {
-      console.error('Error sending direct message to webhook:', error);
+      console.error('Error sending direct message to backend:', error);
       // Show error message
       const errorMsg = error instanceof Error ? error.message : 'Failed to send message';
-      console.error('Webhook error:', errorMsg);
+      console.error('Backend error:', errorMsg);
       
-      // Add error message to chat
-      sendMessage(`Error: ${errorMsg}`);
+      // Add error message as bot response
+      const errorBotMessage: Message = {
+        id: `msg_${Math.random().toString(36).substring(2, 11)}`,
+        content: `Error: ${errorMsg}`,
+        role: 'bot',
+        timestamp: new Date(),
+      };
+      
+      const currentSession = getCurrentSession();
+      if (currentSession) {
+        setChatState?.(prev => ({
+          ...prev,
+          isLoading: false,
+          error: errorMsg,
+          sessions: prev.sessions.map(s => 
+            s.id === currentSession.id 
+              ? { 
+                  ...s, 
+                  messages: [...s.messages, errorBotMessage],
+                  updatedAt: new Date(),
+                } 
+              : s
+          ),
+        }));
+      }
     }
   };
 
@@ -287,12 +343,16 @@ const ChatInput: React.FC = () => {
       return;
     }
 
+    // Don't process empty messages or when already loading
     if (!message.trim() || isLoading) return;
     
-    // Use the direct send function instead
+    // Use the direct send function only - don't call sendMessage which would create duplicate calls
     sendDirectMessage(message);
+    
+    // Clear the input field
     setMessage('');
     
+    // Restore focus to the textarea
     if (textareaRef.current) {
       textareaRef.current.focus();
     }

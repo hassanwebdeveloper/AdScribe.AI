@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
+    
+    # N8N Configuration
+    N8N_WEBHOOK_URL: str
 
     class Config:
         env_file = ".env"

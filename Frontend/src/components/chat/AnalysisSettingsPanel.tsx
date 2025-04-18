@@ -7,10 +7,6 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { format } from 'date-fns';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useChat } from '@/contexts/ChatContext';
-import axios from 'axios';
-
-// The webhook URL (copied from ChatContext)
-const WEBHOOK_URL = 'https://n8n.srv764032.hstgr.cloud/webhook-test/6dcbdc6c-9bcd-4e9a-a4b1-60faa0219e72';
 
 interface AnalysisSettingsPanelProps {
   isOpen: boolean;

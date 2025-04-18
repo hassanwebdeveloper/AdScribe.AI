@@ -2,10 +2,10 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Message, ChatSession, ChatState, DateRange } from '@/types';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from './AuthContext';
-import axios from 'axios';
+import api from '@/utils/api';
 
-// Webhook URL
-const WEBHOOK_URL = 'https://n8n.srv764032.hstgr.cloud/webhook-test/6dcbdc6c-9bcd-4e9a-a4b1-60faa0219e72';
+// Backend API endpoint for chat messages
+const BACKEND_CHAT_ENDPOINT = '/webhook/chat';
 
 interface ChatContextType extends ChatState {
   sendMessage: (content: string) => Promise<void>;
@@ -14,13 +14,14 @@ interface ChatContextType extends ChatState {
   getCurrentSession: () => ChatSession | undefined;
   dateRange: DateRange;
   updateDateRange: (data: DateRange) => void;
+  setChatState: React.Dispatch<React.SetStateAction<ChatState>>;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
 
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const [dateRange, setDateRange] = useState<DateRange>({});
   
   const [chatState, setChatState] = useState<ChatState>({
@@ -69,7 +70,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Load chat sessions from local storage on component mount
   useEffect(() => {
-    if (user) {
+    if (user && user._id) {
       const savedSessions = localStorage.getItem(`chatSessions_${user._id}`);
       
       if (savedSessions) {
@@ -109,14 +110,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Save chat sessions to local storage whenever they change
   useEffect(() => {
-    if (user && chatState.sessions.length > 0) {
+    if (user && user._id && chatState.sessions.length > 0) {
       localStorage.setItem(`chatSessions_${user._id}`, JSON.stringify(chatState.sessions));
     }
   }, [chatState.sessions, user]);
 
   // Save date range to local storage whenever it changes
   useEffect(() => {
-    if (user) {
+    if (user && user._id) {
       console.log('useEffect: Saving date range to localStorage:', dateRange);
       localStorage.setItem(`dateRange_${user._id}`, JSON.stringify(dateRange));
     }
@@ -159,7 +160,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setDateRange(newDateRange);
     
     // Debug direct access to localStorage
-    if (user && window.localStorage) {
+    if (user && user._id && window.localStorage) {
       // Store directly to localStorage for immediate use
       localStorage.setItem(`dateRange_${user._id}`, JSON.stringify(newDateRange));
       console.log('Saved date range to localStorage:', newDateRange);
@@ -169,6 +170,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Helper function to send messages to webhook
   const sendMessageToWebhook = async (content: string, session: ChatSession) => {
     try {
+      // Ensure we're authenticated
+      if (!isAuthenticated || !user) {
+        toast({
+          title: "Error",
+          description: "You must be logged in to send messages",
+          variant: "destructive",
+        });
+        return false;
+      }
+
       // Prepare context from previous messages (exclude the latest user message)
       const contextMessages = session.messages.slice(-5);
       
@@ -191,7 +202,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 2. Check localStorage
       else {
         try {
-          const savedDateRange = localStorage.getItem(`dateRange_${user?._id}`);
+          const savedDateRange = localStorage.getItem(`dateRange_${user._id}`);
           if (savedDateRange) {
             const parsed = JSON.parse(savedDateRange);
             if (parsed.startDate && parsed.endDate) {
@@ -269,7 +280,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('Date range not set or incomplete');
       }
       
-      // Create payload for webhook with date range data
+      // Create payload for backend API
       const payload = {
         userMessage: content,
         previousMessages: contextMessages.map(msg => ({
@@ -281,17 +292,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           endDate: effectiveDateRange.endDate,
           daysToAnalyze
         },
-        userInfo: {
-          fbGraphApiKey: user?.fbGraphApiKey || user?.fb_graph_api_key,
-          fbAdAccountId: user?.fbAdAccountId || user?.fb_ad_account_id,
-        }
+        // Don't include API keys in payload - backend will add them
       };
       
-      console.log('Sending to webhook:', payload);
+      console.log('Sending to backend API:', payload);
       
-      // Send request to webhook
-      const response = await axios.post(WEBHOOK_URL, payload);
-      console.log('Webhook response:', response.data);
+      // Send request to backend (not directly to n8n) with auth
+      const response = await api.post(BACKEND_CHAT_ENDPOINT, payload);
+      console.log('Backend API response:', response.data);
       
       // Add bot response from webhook
       const botMessage: Message = {
@@ -321,7 +329,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       return true;
     } catch (error) {
-      console.error('Error calling webhook:', error);
+      console.error('Error calling backend API:', error);
       
       setChatState(prev => ({
         ...prev,
@@ -384,7 +392,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Fallback to original response
       return typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
     } catch (e) {
-      console.error('Error extracting output from webhook response:', e);
+      console.error('Error extracting output from backend API response:', e);
       return typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
     }
   };
@@ -444,6 +452,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         getCurrentSession,
         dateRange,
         updateDateRange,
+        setChatState,
       }}
     >
       {children}
