@@ -1,13 +1,18 @@
-
 import React from 'react';
 import { useChat } from '@/contexts/ChatContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
-import { PlusCircle, MessageSquare, Settings, LogOut } from 'lucide-react';
+import { PlusCircle, MessageSquare, Settings, LogOut, Trash2 } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const ChatSidebar: React.FC = () => {
-  const { sessions, currentSessionId, createNewSession, selectSession } = useChat();
+  const { sessions, currentSessionId, createNewSession, selectSession, deleteSession } = useChat();
   const { logout, user } = useAuth();
 
   return (
@@ -28,15 +33,36 @@ const ChatSidebar: React.FC = () => {
       <div className="flex-1 overflow-y-auto space-y-2 mb-6">
         {sessions.length > 0 ? (
           sessions.map((session) => (
-            <Button
-              key={session.id}
-              variant={currentSessionId === session.id ? "default" : "ghost"}
-              className="w-full justify-start overflow-hidden text-ellipsis whitespace-nowrap"
-              onClick={() => selectSession(session.id)}
-            >
-              <MessageSquare className="h-4 w-4 mr-2 shrink-0" />
-              <span className="truncate">{session.title}</span>
-            </Button>
+            <div key={session.id} className="flex items-center group">
+              <Button
+                variant={currentSessionId === session.id ? "default" : "ghost"}
+                className="w-full justify-start overflow-hidden text-ellipsis whitespace-nowrap pr-2"
+                onClick={() => selectSession(session.id)}
+              >
+                <MessageSquare className="h-4 w-4 mr-2 shrink-0" />
+                <span className="truncate">{session.title}</span>
+              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteSession(session.id);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Delete chat</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
           ))
         ) : (
           <div className="text-center text-muted-foreground">
@@ -54,7 +80,7 @@ const ChatSidebar: React.FC = () => {
             {user?.email || 'user@example.com'}
           </p>
         </div>
-        <Link to="/settings" className="w-full">
+        <Link to="/settings">
           <Button
             variant="ghost"
             className="w-full justify-start"

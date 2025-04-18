@@ -1,11 +1,9 @@
-
-import React, { useRef, useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useChat } from '@/contexts/ChatContext';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Bot, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import ChatMessage from './ChatMessage';
-import { Bot, AlertCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Link } from 'react-router-dom';
+import Markdown from 'react-markdown';
 
 const ChatWindow: React.FC = () => {
   const { getCurrentSession, isLoading } = useChat();
@@ -13,69 +11,108 @@ const ChatWindow: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentSession = getCurrentSession();
 
-  const isSettingsComplete = user?.fbGraphApiKey && user?.fbAdAccountId;
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
-  // Scroll to bottom when messages change
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [currentSession?.messages]);
+    scrollToBottom();
+  }, [currentSession?.messages, isLoading]);
 
-  if (!isSettingsComplete) {
+  if (!currentSession) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-center p-4">
-        <div className="bg-yellow-100 p-6 rounded-full mb-4">
-          <AlertCircle className="h-8 w-8 text-yellow-600" />
-        </div>
-        <h3 className="text-lg font-semibold mb-2">Complete Your Settings</h3>
-        <p className="text-muted-foreground max-w-sm mb-4">
-          Please set up your Facebook Graph API key and Ad Account ID to start using AdScribe AI.
-        </p>
-        <Link to="/settings">
-          <Button>Go to Settings</Button>
-        </Link>
+      <div className="h-full flex items-center justify-center">
+        <p className="text-muted-foreground">No active chat session.</p>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 overflow-y-auto chat-container p-4">
-      {currentSession && currentSession.messages.length > 0 ? (
-        <>
-          {currentSession.messages.map((message) => (
-            <ChatMessage key={message.id} message={message} />
-          ))}
-        </>
-      ) : (
-        <div className="h-full flex flex-col items-center justify-center text-center">
-          <div className="bg-brand-100 p-6 rounded-full mb-4">
-            <Bot className="h-8 w-8 text-brand-600" />
-          </div>
-          <h3 className="text-lg font-semibold mb-2">Welcome to AdScribe AI</h3>
-          <p className="text-muted-foreground max-w-sm">
-            I'm here to help you analyze and generate Facebook ads. Start by sending a message.
+    <div className="h-full flex flex-col overflow-y-auto p-4">
+      {currentSession.messages.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center space-y-4 p-8 text-center">
+          <Bot className="h-12 w-12 text-brand-500" />
+          <h3 className="text-xl font-medium">Welcome to AdScribe AI</h3>
+          <p className="text-muted-foreground max-w-md">
+            I can help you analyze your Facebook ads and create optimized ad copy.
+            Let's start by asking about your ad campaign goals.
           </p>
         </div>
-      )}
-      
-      {isLoading && (
-        <div className="flex items-start gap-4 py-4 px-4 bg-chat-bot-light animate-fade-in">
-          <div className="h-8 w-8 rounded-full bg-chat-bot flex items-center justify-center">
-            <Bot className="h-5 w-5 text-white" />
+      ) : (
+        <>
+          <div className="flex-1 space-y-4">
+            {currentSession.messages.map((message) => (
+              <div
+                key={message.id}
+                className={`flex ${
+                  message.role === 'user' ? 'justify-end' : 'justify-start'
+                }`}
+              >
+                <div
+                  className={`flex gap-3 max-w-[80%] ${
+                    message.role === 'user' ? 'flex-row-reverse' : ''
+                  }`}
+                >
+                  {message.role === 'user' ? (
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback>
+                        {user?.name?.charAt(0) || 'U'}
+                      </AvatarFallback>
+                      {/* If the user has an avatar image, it would go here */}
+                    </Avatar>
+                  ) : (
+                    <Avatar className="h-8 w-8">
+                      <AvatarImage src="/logo.png" />
+                      <AvatarFallback>AI</AvatarFallback>
+                    </Avatar>
+                  )}
+                  <div
+                    className={`rounded-lg p-3 ${
+                      message.role === 'user'
+                        ? 'bg-brand-100 text-brand-900'
+                        : message.role === 'system'
+                        ? 'bg-gray-100 text-gray-600'
+                        : 'bg-secondary'
+                    }`}
+                  >
+                    <div className="prose dark:prose-invert max-w-none">
+                      <Markdown components={{
+                        a: ({node, ...props}) => (
+                          <a 
+                            {...props} 
+                            className="text-brand-600 hover:text-brand-800 underline" 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                          />
+                        )
+                      }}>
+                        {message.content}
+                      </Markdown>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="flex gap-3 max-w-[80%]">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src="/logo.png" />
+                    <AvatarFallback>AI</AvatarFallback>
+                  </Avatar>
+                  <div className="bg-secondary rounded-lg p-3 flex items-center">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    <span>Thinking...</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="typing-indicator">
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-        </div>
+          <div ref={messagesEndRef} />
+        </>
       )}
-      
-      <div ref={messagesEndRef} />
     </div>
   );
 };
 
 export default ChatWindow;
-

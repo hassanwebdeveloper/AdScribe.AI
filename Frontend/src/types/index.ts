@@ -1,10 +1,13 @@
-
 export interface User {
-  id: string;
+  _id: string;
   name: string;
   email: string;
-  fbGraphApiKey: string;
-  fbAdAccountId: string;
+  fb_graph_api_key?: string;
+  fb_ad_account_id?: string;
+  created_at: string;
+  updated_at: string;
+  fbGraphApiKey?: string;
+  fbAdAccountId?: string;
 }
 
 export interface AuthState {
@@ -18,7 +21,7 @@ export interface AuthState {
 export interface Message {
   id: string;
   content: string;
-  role: 'user' | 'bot';
+  role: 'user' | 'bot' | 'system';
   timestamp: Date;
 }
 
@@ -37,10 +40,7 @@ export interface ChatState {
   error: string | null;
 }
 
-export interface InitialQuestionnaire {
-  adObjective?: string;
-  targetAudience?: string;
-  adBudget?: string;
-  productFeatures?: string;
-  competitorInfo?: string;
+export interface DateRange {
+  startDate?: string;
+  endDate?: string;
 }

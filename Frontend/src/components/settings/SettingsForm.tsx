@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,8 +9,16 @@ import { Loader2 } from 'lucide-react';
 const SettingsForm: React.FC = () => {
   const { user, updateUserSettings, isLoading } = useAuth();
   
-  const [fbGraphApiKey, setFbGraphApiKey] = useState(user?.fbGraphApiKey || '');
-  const [fbAdAccountId, setFbAdAccountId] = useState(user?.fbAdAccountId || '');
+  const [fbGraphApiKey, setFbGraphApiKey] = useState('');
+  const [fbAdAccountId, setFbAdAccountId] = useState('');
+  
+  // When user data changes, update the form fields
+  useEffect(() => {
+    if (user) {
+      setFbGraphApiKey(user.fbGraphApiKey || '');
+      setFbAdAccountId(user.fbAdAccountId || '');
+    }
+  }, [user]);
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

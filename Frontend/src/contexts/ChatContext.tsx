@@ -1,19 +1,19 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Message, ChatSession, ChatState, InitialQuestionnaire } from '@/types';
+import { Message, ChatSession, ChatState, DateRange } from '@/types';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from './AuthContext';
+import axios from 'axios';
+
+// Webhook URL
+const WEBHOOK_URL = 'https://n8n.srv764032.hstgr.cloud/webhook-test/6dcbdc6c-9bcd-4e9a-a4b1-60faa0219e72';
 
 interface ChatContextType extends ChatState {
   sendMessage: (content: string) => Promise<void>;
   createNewSession: () => void;
   selectSession: (sessionId: string) => void;
   getCurrentSession: () => ChatSession | undefined;
-  isFirstPrompt: boolean;
-  questionnaire: InitialQuestionnaire;
-  updateQuestionnaire: (data: Partial<InitialQuestionnaire>) => void;
-  submitQuestionnaire: () => Promise<void>;
-  processingQuestionnaire: boolean;
+  dateRange: DateRange;
+  updateDateRange: (data: DateRange) => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -21,9 +21,7 @@ const ChatContext = createContext<ChatContextType | undefined>(undefined);
 export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [isFirstPrompt, setIsFirstPrompt] = useState(true);
-  const [questionnaire, setQuestionnaire] = useState<InitialQuestionnaire>({});
-  const [processingQuestionnaire, setProcessingQuestionnaire] = useState(false);
+  const [dateRange, setDateRange] = useState<DateRange>({});
   
   const [chatState, setChatState] = useState<ChatState>({
     sessions: [],
@@ -32,10 +30,47 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     error: null,
   });
 
+  // Initialize and check auth data on mount
+  useEffect(() => {
+    // Ensure we have user data available
+    const initAuthData = () => {
+      if (user && user._id) {
+        console.log('Auth initialized with user:', user._id);
+        
+        // Try to read date range for this user
+        try {
+          const savedDateRange = localStorage.getItem(`dateRange_${user._id}`);
+          if (savedDateRange) {
+            try {
+              const parsed = JSON.parse(savedDateRange);
+              if (parsed) {
+                console.log('Found saved date range for user:', parsed);
+                setDateRange(parsed);
+                
+                // Also store in window global for emergency access
+                (window as any).forcedDateRange = parsed;
+              }
+            } catch (e) {
+              console.error('Error parsing date range from localStorage:', e);
+            }
+          } else {
+            console.log('No saved date range found for user');
+          }
+        } catch (e) {
+          console.error('Error accessing localStorage:', e);
+        }
+      } else {
+        console.warn('No user data available');
+      }
+    };
+    
+    initAuthData();
+  }, [user]);
+
   // Load chat sessions from local storage on component mount
   useEffect(() => {
     if (user) {
-      const savedSessions = localStorage.getItem(`chatSessions_${user.id}`);
+      const savedSessions = localStorage.getItem(`chatSessions_${user._id}`);
       
       if (savedSessions) {
         const sessions = JSON.parse(savedSessions);
@@ -57,15 +92,35 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Create a new session if there are no sessions
         createNewSession();
       }
+
+      // Load date range from local storage
+      const savedDateRange = localStorage.getItem(`dateRange_${user._id}`);
+      if (savedDateRange) {
+        try {
+          const parsedDateRange = JSON.parse(savedDateRange);
+          console.log('Loading date range from localStorage:', parsedDateRange);
+          setDateRange(parsedDateRange);
+        } catch (e) {
+          console.error('Error parsing date range from localStorage:', e);
+        }
+      }
     }
   }, [user]);
 
   // Save chat sessions to local storage whenever they change
   useEffect(() => {
     if (user && chatState.sessions.length > 0) {
-      localStorage.setItem(`chatSessions_${user.id}`, JSON.stringify(chatState.sessions));
+      localStorage.setItem(`chatSessions_${user._id}`, JSON.stringify(chatState.sessions));
     }
   }, [chatState.sessions, user]);
+
+  // Save date range to local storage whenever it changes
+  useEffect(() => {
+    if (user) {
+      console.log('useEffect: Saving date range to localStorage:', dateRange);
+      localStorage.setItem(`dateRange_${user._id}`, JSON.stringify(dateRange));
+    }
+  }, [dateRange, user]);
 
   const createNewSession = () => {
     const newSession: ChatSession = {
@@ -81,9 +136,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       sessions: [newSession, ...prev.sessions],
       currentSessionId: newSession.id,
     }));
-    
-    setIsFirstPrompt(true);
-    setQuestionnaire({});
   };
 
   const selectSession = (sessionId: string) => {
@@ -91,84 +143,249 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...prev,
       currentSessionId: sessionId,
     }));
-    
-    // Check if the selected session has any messages
-    const session = chatState.sessions.find(s => s.id === sessionId);
-    setIsFirstPrompt(session?.messages.length === 0);
   };
 
   const getCurrentSession = () => {
     return chatState.sessions.find(s => s.id === chatState.currentSessionId);
   };
 
-  const updateQuestionnaire = (data: Partial<InitialQuestionnaire>) => {
-    setQuestionnaire(prev => ({ ...prev, ...data }));
+  const updateDateRange = (data: DateRange) => {
+    console.log('Updating date range with:', data);
+    
+    // Create a new object to ensure state update
+    const newDateRange = { ...dateRange, ...data };
+    console.log('New date range will be:', newDateRange);
+    
+    setDateRange(newDateRange);
+    
+    // Debug direct access to localStorage
+    if (user && window.localStorage) {
+      // Store directly to localStorage for immediate use
+      localStorage.setItem(`dateRange_${user._id}`, JSON.stringify(newDateRange));
+      console.log('Saved date range to localStorage:', newDateRange);
+    }
   };
 
-  const submitQuestionnaire = async () => {
-    setProcessingQuestionnaire(true);
-    
+  // Helper function to send messages to webhook
+  const sendMessageToWebhook = async (content: string, session: ChatSession) => {
     try {
-      // Simulate API call to n8n workflow
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Prepare context from previous messages (exclude the latest user message)
+      const contextMessages = session.messages.slice(-5);
       
-      const response = {
-        success: true,
-        message: "Based on your inputs, I've analyzed your requirements for Facebook ads. Here's a suggested ad script tailored to your target audience:\n\n**Headline**: Unleash Your Brand's Potential\n\n**Primary Text**: Looking to boost engagement? Our AI-powered platform helps you create compelling Facebook ads that convert. With smart targeting and proven copy techniques, you'll see results fast.\n\nOur clients typically see a 30% increase in CTR within the first month. Ready to elevate your Facebook ad strategy?\n\n**Call to Action**: Get Started Today"
+      console.log('Current date range state:', JSON.stringify(dateRange));
+      
+      // Try multiple sources for date range
+      let effectiveDateRange = {
+        startDate: null as string | null,
+        endDate: null as string | null
       };
       
-      if (!response.success) {
-        throw new Error('Failed to process questionnaire');
+      // 1. Check React state
+      if (dateRange.startDate && dateRange.endDate) {
+        effectiveDateRange = {
+          startDate: dateRange.startDate,
+          endDate: dateRange.endDate
+        };
+        console.log('Using date range from React state:', effectiveDateRange);
+      } 
+      // 2. Check localStorage
+      else {
+        try {
+          const savedDateRange = localStorage.getItem(`dateRange_${user?._id}`);
+          if (savedDateRange) {
+            const parsed = JSON.parse(savedDateRange);
+            if (parsed.startDate && parsed.endDate) {
+              effectiveDateRange = {
+                startDate: parsed.startDate,
+                endDate: parsed.endDate
+              };
+              console.log('Using date range from localStorage:', effectiveDateRange);
+            }
+          }
+        } catch (e) {
+          console.error('Error reading from localStorage:', e);
+        }
       }
       
-      // Add bot response
-      const currentSession = getCurrentSession();
-      if (currentSession) {
-        const updatedMessages = [
-          ...currentSession.messages,
-          {
-            id: `msg_${Math.random().toString(36).substring(2, 11)}`,
-            content: response.message,
-            role: 'bot' as const,
-            timestamp: new Date(),
-          },
-        ];
-        
-        // Update session
-        setChatState(prev => ({
-          ...prev,
-          sessions: prev.sessions.map(s => 
-            s.id === currentSession.id 
-              ? { 
-                  ...s, 
-                  messages: updatedMessages,
-                  updatedAt: new Date(),
-                  // Update title based on first user message
-                  title: s.title === `New Chat ${prev.sessions.indexOf(s) + 1}` && updatedMessages.length > 1 
-                    ? updatedMessages[0].content.slice(0, 30) + (updatedMessages[0].content.length > 30 ? '...' : '') 
-                    : s.title
-                } 
-              : s
-          ),
-          isLoading: false,
-        }));
-        
-        setIsFirstPrompt(false);
+      // 3. Check debug localStorage
+      if (!effectiveDateRange.startDate || !effectiveDateRange.endDate) {
+        try {
+          const debugRange = localStorage.getItem('debug_dateRange');
+          if (debugRange) {
+            const parsed = JSON.parse(debugRange);
+            if (parsed.startDate && parsed.endDate) {
+              effectiveDateRange = {
+                startDate: parsed.startDate,
+                endDate: parsed.endDate
+              };
+              console.log('Using date range from debug localStorage:', effectiveDateRange);
+            }
+          }
+        } catch (e) {
+          console.error('Error reading from debug localStorage:', e);
+        }
       }
+      
+      // 4. Check global window variable (set by force function)
+      if (!effectiveDateRange.startDate || !effectiveDateRange.endDate) {
+        if ((window as any).forcedDateRange?.startDate && (window as any).forcedDateRange?.endDate) {
+          effectiveDateRange = {
+            startDate: (window as any).forcedDateRange.startDate,
+            endDate: (window as any).forcedDateRange.endDate
+          };
+          console.log('Using date range from window global:', effectiveDateRange);
+        }
+      }
+      
+      // 5. Extract from message content as last resort
+      if ((!effectiveDateRange.startDate || !effectiveDateRange.endDate) && content.includes('date range:')) {
+        try {
+          const match = content.match(/date range: (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})/);
+          if (match && match[1] && match[2]) {
+            effectiveDateRange = {
+              startDate: match[1],
+              endDate: match[2]
+            };
+            console.log('Extracted date range from message:', effectiveDateRange);
+          }
+        } catch (e) {
+          console.error('Error extracting date from message:', e);
+        }
+      }
+      
+      console.log('Effective date range to use:', effectiveDateRange);
+      
+      // Calculate days if date range is set
+      let daysToAnalyze = null;
+      
+      if (effectiveDateRange.startDate && effectiveDateRange.endDate) {
+        // Parse date strings in format 'yyyy-MM-dd'
+        const start = new Date(effectiveDateRange.startDate);
+        const end = new Date(effectiveDateRange.endDate);
+        daysToAnalyze = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)).toString();
+        
+        console.log('Calculated days to analyze:', daysToAnalyze);
+      } else {
+        console.log('Date range not set or incomplete');
+      }
+      
+      // Create payload for webhook with date range data
+      const payload = {
+        userMessage: content,
+        previousMessages: contextMessages.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        })),
+        dateRange: {
+          startDate: effectiveDateRange.startDate,
+          endDate: effectiveDateRange.endDate,
+          daysToAnalyze
+        },
+        userInfo: {
+          fbGraphApiKey: user?.fbGraphApiKey || user?.fb_graph_api_key,
+          fbAdAccountId: user?.fbAdAccountId || user?.fb_ad_account_id,
+        }
+      };
+      
+      console.log('Sending to webhook:', payload);
+      
+      // Send request to webhook
+      const response = await axios.post(WEBHOOK_URL, payload);
+      console.log('Webhook response:', response.data);
+      
+      // Add bot response from webhook
+      const botMessage: Message = {
+        id: `msg_${Math.random().toString(36).substring(2, 11)}`,
+        content: extractOutputFromResponse(response.data),
+        role: 'bot',
+        timestamp: new Date(),
+      };
+      
+      setChatState(prev => ({
+        ...prev,
+        sessions: prev.sessions.map(s => 
+          s.id === session.id 
+            ? { 
+                ...s, 
+                messages: [...s.messages, botMessage],
+                updatedAt: new Date(),
+                // Update title based on first user message if it's still the default
+                title: s.title === `New Chat ${prev.sessions.indexOf(s) + 1}` 
+                  ? content.slice(0, 30) + (content.length > 30 ? '...' : '') 
+                  : s.title
+              } 
+            : s
+        ),
+        isLoading: false,
+      }));
+      
+      return true;
     } catch (error) {
+      console.error('Error calling webhook:', error);
+      
       setChatState(prev => ({
         ...prev,
         isLoading: false,
-        error: error instanceof Error ? error.message : 'Failed to process questionnaire',
+        error: error instanceof Error ? error.message : 'Failed to get response',
       }));
       
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'Failed to process questionnaire',
+        description: error instanceof Error ? error.message : 'Failed to get response',
         variant: "destructive",
       });
-    } finally {
-      setProcessingQuestionnaire(false);
+      
+      return false;
+    }
+  };
+
+  // Helper function to extract output from response
+  const extractOutputFromResponse = (responseData: any): string => {
+    try {
+      // If it's an array with objects containing output property
+      if (Array.isArray(responseData) && responseData.length > 0 && responseData[0]?.output) {
+        return responseData[0].output;
+      }
+      
+      // Check if the response is a string that needs to be parsed
+      if (typeof responseData === 'string') {
+        try {
+          const parsedData = JSON.parse(responseData);
+          
+          // Check again if it's an array after parsing
+          if (Array.isArray(parsedData) && parsedData.length > 0 && parsedData[0]?.output) {
+            return parsedData[0].output;
+          }
+          
+          // Check if it's an object with output property
+          if (parsedData && typeof parsedData === 'object' && 'output' in parsedData) {
+            return parsedData.output;
+          }
+          
+          // Fallback to message property
+          if (parsedData && typeof parsedData === 'object' && 'message' in parsedData) {
+            return parsedData.message;
+          }
+          
+          // Return the parsed data as string if we couldn't extract output
+          return typeof parsedData === 'string' ? parsedData : JSON.stringify(parsedData);
+        } catch (e) {
+          // If parsing fails, return the original string
+          return responseData;
+        }
+      }
+      
+      // If it's an object with output or message property
+      if (responseData && typeof responseData === 'object') {
+        if ('output' in responseData) return responseData.output;
+        if ('message' in responseData) return responseData.message;
+      }
+      
+      // Fallback to original response
+      return typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
+    } catch (e) {
+      console.error('Error extracting output from webhook response:', e);
+      return typeof responseData === 'string' ? responseData : JSON.stringify(responseData);
     }
   };
 
@@ -213,75 +430,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ),
     }));
     
-    // For first prompt, we don't add a bot response yet - we'll wait for the questionnaire
-    if (isFirstPrompt) {
-      setChatState(prev => ({
-        ...prev,
-        isLoading: false,
-      }));
-      return;
-    }
-    
-    try {
-      // Simulate API call to n8n workflow
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Prepare context from previous messages (exclude the latest user message)
-      const contextMessages = currentSession.messages.slice(-4);
-      
-      // Create payload for n8n
-      const payload = {
-        userMessage: content,
-        context: contextMessages.map(msg => ({
-          role: msg.role,
-          content: msg.content,
-        })),
-        questionnaire: questionnaire,
-      };
-      
-      console.log('Sending to n8n:', payload);
-      
-      // Simulate n8n response
-      const responseText = "I've analyzed your request and here's my suggestion for improving your ad:\n\n**Updated Headline**: \"Transform Your Facebook Ad Performance\"\n\n**Primary Text**: \"Looking to stand out in crowded feeds? Our data-driven approach combines AI insights with proven copywriting techniques tailored specifically for your target audience demographics.\n\nClients using our ad scripts have reported up to 42% higher engagement rates and 25% lower cost-per-click compared to their previous campaigns.\n\nWhat specific metrics would you like to focus on improving next?\"";
-      
-      // Add bot response
-      const botMessage: Message = {
-        id: `msg_${Math.random().toString(36).substring(2, 11)}`,
-        content: responseText,
-        role: 'bot',
-        timestamp: new Date(),
-      };
-      
-      setChatState(prev => ({
-        ...prev,
-        sessions: prev.sessions.map(s => 
-          s.id === currentSession.id 
-            ? { 
-                ...s, 
-                messages: [...s.messages, botMessage],
-                updatedAt: new Date(),
-                // Update title based on first user message
-                title: s.title === `New Chat ${prev.sessions.indexOf(s) + 1}` 
-                  ? userMessage.content.slice(0, 30) + (userMessage.content.length > 30 ? '...' : '') 
-                  : s.title
-              } 
-            : s
-        ),
-        isLoading: false,
-      }));
-    } catch (error) {
-      setChatState(prev => ({
-        ...prev,
-        isLoading: false,
-        error: error instanceof Error ? error.message : 'Failed to get response',
-      }));
-      
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : 'Failed to get response',
-        variant: "destructive",
-      });
-    }
+    // Use the helper function to send message to webhook
+    await sendMessageToWebhook(content, currentSession);
   };
 
   return (
@@ -292,11 +442,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createNewSession,
         selectSession,
         getCurrentSession,
-        isFirstPrompt,
-        questionnaire,
-        updateQuestionnaire,
-        submitQuestionnaire,
-        processingQuestionnaire,
+        dateRange,
+        updateDateRange,
       }}
     >
       {children}
