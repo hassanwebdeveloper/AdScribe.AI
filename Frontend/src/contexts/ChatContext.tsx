@@ -483,21 +483,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Clear any errors for the last user message
         clearMessageError(lastUserMessage.id);
         
-        // Save updated session to API
-        try {
-          // Use the correct session ID format for the backend
-          const backendSessionId = updatedSession._id || updatedSession.id;
-          
-          await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
-            messages: updatedSession.messages,
-            title: updatedSession.title
-          });
-        } catch (error) {
-          console.error('Error updating session in API:', error);
-        }
+        return true; // Explicitly return true for success
       }
       
-      return true;
+      return false; // Return false if session was not found
     } catch (error) {
       console.error('Error calling backend API:', error);
       
@@ -519,7 +508,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         variant: "destructive",
       });
       
-      return false;
+      return false; // Explicitly return false for error
     }
   };
 
@@ -640,20 +629,37 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sessions: currentSessions,
       }));
       
-      // Update the session in the API
+      // Try to get a response from the webhook
+      let webhookSuccess = false;
       try {
-        // Use the correct session ID format for the backend
-        const backendSessionId = currentSession._id || currentSession.id;
-        
-        await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
-          messages: updatedSession.messages
-        });
+        // Use the helper function to send message to webhook
+        webhookSuccess = await sendMessageToWebhook(content, updatedSession);
       } catch (error) {
-        console.error('Error updating session in API:', error);
+        console.error('Error sending message to webhook:', error);
+        webhookSuccess = false;
       }
       
-      // Use the helper function to send message to webhook
-      await sendMessageToWebhook(content, updatedSession);
+      // Only update the session in the API if the webhook call was successful
+      if (webhookSuccess) {
+        try {
+          // Use the correct session ID format for the backend
+          const backendSessionId = currentSession._id || currentSession.id;
+          
+          // Get the current state of the session after webhook response was added
+          const currentSessionAfterWebhook = chatState.sessions.find(s => s.id === currentSession.id);
+          if (currentSessionAfterWebhook) {
+            await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
+              messages: currentSessionAfterWebhook.messages
+            });
+          }
+        } catch (error) {
+          console.error('Error updating session in API:', error);
+        }
+      } else {
+        // Add the message to the errors list
+        setMessagesWithErrors(prev => [...prev, userMessage.id]);
+        console.log('Webhook call failed, not saving to database');
+      }
     }
   };
 

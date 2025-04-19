@@ -27,10 +27,14 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   const isUserMessage = message.role === 'user';
   const { setEditingMessageId } = useChat();
   
-  // Only show controls for:
-  // 1. Messages with errors (always show delete)
-  // 2. The last user message (always show edit and delete)
-  const shouldShowControls = isUserMessage && (isHovered || hasError) && (isLastUserMessage || hasError);
+  // Controls visibility logic:
+  // 1. Edit button: Only on the last user message
+  // 2. Resend button: Only on messages with errors that aren't the last message
+  // 3. Delete button: Only on messages with errors
+  const shouldShowControls = isUserMessage && (
+    (isHovered && isLastUserMessage) || // Show controls when hovering over last user message
+    hasError // Always show controls for messages with errors
+  );
 
   return (
     <div 
@@ -83,16 +87,18 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             </Button>
           )}
           
-          <Button 
-            variant="outline" 
-            size="icon" 
-            onClick={() => onDeleteMessage?.(message.id)} 
-            title="Delete message"
-            className="h-6 w-6 p-0"
-          >
-            <Trash className="h-3 w-3" />
-            <span className="sr-only">Delete</span>
-          </Button>
+          {hasError && (
+            <Button 
+              variant="outline" 
+              size="icon" 
+              onClick={() => onDeleteMessage?.(message.id)} 
+              title="Delete message"
+              className="h-6 w-6 p-0"
+            >
+              <Trash className="h-3 w-3" />
+              <span className="sr-only">Delete</span>
+            </Button>
+          )}
         </div>
       )}
     </div>

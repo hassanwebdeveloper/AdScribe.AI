@@ -218,6 +218,11 @@ const ChatInput: React.FC = () => {
             };
           });
           
+          // Clear any error flags
+          if (messagesWithErrors.includes(updatedMessage.id)) {
+            setMessagesWithErrors(prev => prev.filter(id => id !== updatedMessage.id));
+          }
+          
           // Save the updated session with new bot response to the API
           try {
             console.log('Saving new response to database');
