@@ -7,6 +7,40 @@ interface AdCardProps {
   ad: Ad | any;
 }
 
+// Function to convert URLs in text to hyperlinks
+const linkifyText = (text: string): JSX.Element => {
+  // URL regex pattern
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  
+  // Split the text by URLs
+  const parts = text.split(urlRegex);
+  
+  // Match all URLs
+  const matches = text.match(urlRegex) || [];
+  
+  // Combine parts and matched URLs
+  const elements: JSX.Element[] = [];
+  
+  parts.forEach((part, i) => {
+    elements.push(<span key={`part-${i}`}>{part}</span>);
+    if (matches[i]) {
+      elements.push(
+        <a 
+          key={`link-${i}`} 
+          href={matches[i]} 
+          target="_blank" 
+          rel="noopener noreferrer" 
+          className="text-blue-600 hover:underline"
+        >
+          {matches[i]}
+        </a>
+      );
+    }
+  });
+  
+  return <>{elements}</>;
+};
+
 const AdCard: React.FC<AdCardProps> = ({ ad }) => {
   const [parsedAd, setParsedAd] = useState<Ad>({
     title: '',
@@ -90,32 +124,50 @@ const AdCard: React.FC<AdCardProps> = ({ ad }) => {
   }, [ad]);
 
   return (
-    <Card className="w-full mt-3 mb-3 border-green-200 shadow-sm">
-      <CardHeader className="pb-2">
+    <Card className="mt-3 mb-3 border-green-200 shadow-sm max-w-md mx-auto">
+      <CardHeader className="pb-2 py-3">
         <div className="flex justify-between items-start">
-          <CardTitle className="text-green-800 text-base">{parsedAd.title}</CardTitle>
-          <Badge variant="outline" className="bg-green-50 text-green-700 ml-2">
-            Sponsored
-          </Badge>
+          <div>
+            <CardTitle className="text-green-800 text-base">{parsedAd.title}</CardTitle>
+            {parsedAd.purchases > 0 && (
+              <span className="text-sm font-medium text-gray-600 mt-1 block">
+                {parsedAd.purchases} purchases
+              </span>
+            )}
+          </div>
+          <div className="flex flex-col gap-1 items-end">
+            <Badge variant="outline" className="bg-green-50 text-green-700">
+              Highest Sold
+            </Badge>
+            {parsedAd.is_active ? (
+              <Badge className="bg-green-500 text-white font-medium rounded-full px-3 py-0.5 text-xs">
+                Active
+              </Badge>
+            ) : (
+              <Badge className="bg-gray-500 text-white font-medium rounded-full px-3 py-0.5 text-xs">
+                Not Active
+              </Badge>
+            )}
+          </div>
         </div>
       </CardHeader>
-      <CardContent className="pb-2">
-        <CardDescription className="whitespace-pre-line text-sm">{parsedAd.description}</CardDescription>
+      <CardContent className="pb-2 pt-0 px-3">
+        <div className="whitespace-pre-line text-sm mb-3">
+          {linkifyText(parsedAd.description)}
+        </div>
         
         {parsedAd.video_url && (
-          <div className="mt-3">
+          <div className="mt-3 flex justify-center">
             <video 
               controls 
               src={parsedAd.video_url} 
-              className="w-full rounded-md shadow-sm"
+              className="rounded-md shadow-sm w-[372px] aspect-[4/3]" 
               preload="metadata"
             />
           </div>
         )}
       </CardContent>
-      <CardFooter className="text-xs text-gray-500 flex justify-between pt-1">
-        <span>{parsedAd.purchases} purchases</span>
-        {parsedAd.is_active && <span className="text-green-600">Available Now</span>}
+      <CardFooter className="text-xs text-gray-500 flex justify-between pt-1 py-2 px-3">
       </CardFooter>
     </Card>
   );
