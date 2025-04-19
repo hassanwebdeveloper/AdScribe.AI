@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
-from typing import List, Optional, Any, Annotated
+from typing import List, Optional, Any, Annotated, Dict
 from bson import ObjectId
 from pydantic_core import core_schema
 
@@ -13,11 +13,34 @@ class PyObjectId(str):
         return core_schema.string_schema()
 
 
+class Ad(BaseModel):
+    title: str
+    description: str
+    video_url: str
+    is_active: bool
+    purchases: int
+
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_schema_extra": {
+            "example": {
+                "title": "Product Title",
+                "description": "Product Description",
+                "video_url": "https://example.com/video.mp4",
+                "is_active": True,
+                "purchases": 100
+            }
+        }
+    }
+
+
 class Message(BaseModel):
     id: str
     content: str
     role: str
     timestamp: datetime
+    ad: Optional[Ad] = None
     
     model_config = {
         "populate_by_name": True,
@@ -28,7 +51,8 @@ class Message(BaseModel):
                 "id": "msg_123456",
                 "content": "Hello, how can I help you?",
                 "role": "bot",
-                "timestamp": "2023-01-01T12:00:00"
+                "timestamp": "2023-01-01T12:00:00",
+                "ad": None
             }
         }
     }
@@ -39,6 +63,7 @@ class ChatSession(BaseModel):
     user_id: str
     title: str
     messages: List[Message]
+    ads: List[Ad] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
@@ -52,6 +77,7 @@ class ChatSession(BaseModel):
                 "user_id": "60d21b4967d0d8992e610c85",
                 "title": "New Chat 1",
                 "messages": [],
+                "ads": [],
                 "created_at": "2023-01-01T12:00:00",
                 "updated_at": "2023-01-01T12:00:00"
             }

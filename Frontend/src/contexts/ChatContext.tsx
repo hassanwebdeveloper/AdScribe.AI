@@ -457,18 +457,64 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         typeof response.data === 'string' ? response.data.substring(0, 200) + '...' : response.data);
       
       // Process the response to extract the output
-      const responseContent = extractOutputFromResponse(response.data);
+      const responseData = extractOutputFromResponse(response.data);
       console.log('🔍 [DEBUG] Processed response content:', 
-        typeof responseContent === 'string' ? responseContent.substring(0, 200) + '...' : responseContent);
+        typeof responseData.content === 'string' 
+          ? responseData.content.substring(0, 200) + '...' 
+          : responseData.content);
+      
+      // Process ad data if present
+      let processedAd = undefined;
+      if (responseData.ad) {
+        console.log('🔍 [DEBUG] Found ad data in response');
+        
+        try {
+          // Ensure ad is in the correct format
+          if (typeof responseData.ad === 'string') {
+            console.log('🔍 [DEBUG] Ad is a string:', responseData.ad.substring(0, 100));
+
+            // Check if this is the specific malformed JSON format we're seeing
+            // Example: {"title": Cash refund if not satisfied, "description":100% Pure White...}
+            if (responseData.ad.startsWith('{') && responseData.ad.includes('"title":') && 
+                !responseData.ad.includes(':"')) {
+              console.log('🔍 [DEBUG] Found malformed JSON-like string, keeping as is');
+              // Keep the string format for the AdCard component to handle
+              processedAd = responseData.ad;
+            } else {
+              // Try to parse it as JSON if it's not the specific malformed format
+              try {
+                processedAd = JSON.parse(responseData.ad);
+                console.log('🔍 [DEBUG] Successfully parsed ad JSON string');
+              } catch (e) {
+                console.error('🚫 [ERROR] Failed to parse ad JSON string:', e);
+                console.log('🔍 [DEBUG] Using string ad data as is');
+                processedAd = responseData.ad;
+              }
+            }
+          } else {
+            // It's already an object
+            processedAd = responseData.ad;
+            console.log('🔍 [DEBUG] Using ad object as is');
+          }
+        } catch (e) {
+          console.error('🚫 [ERROR] Error processing ad data:', e);
+          // Keep the original ad data
+          processedAd = responseData.ad;
+        }
+      }
       
       // Add bot response from webhook
       const botMessage: Message = {
         id: `msg_${Math.random().toString(36).substring(2, 11)}`,
-        content: responseContent,
+        content: responseData.content,
         role: 'bot',
         timestamp: new Date(),
+        ad: processedAd
       };
       console.log('🔍 [DEBUG] Created bot message with ID:', botMessage.id);
+      if (botMessage.ad) {
+        console.log('🔍 [DEBUG] Message includes ad data of type:', typeof botMessage.ad);
+      }
       
       // Get the current session with updated messages - IMPORTANT: include both user message and bot response
       const updatedMessages = [...session.messages, botMessage];
@@ -544,9 +590,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Helper function to extract output from webhook response
-  const extractOutputFromResponse = (response: any): string => {
+  const extractOutputFromResponse = (response: any): { content: string; ad?: any } => {
     console.log('Extracting output from response:', response);
     
+    // Initialize the result object
+    let result = {
+      content: '',
+      ad: undefined
+    };
+    
+    try {
     // Check for different response formats
     if (typeof response === 'string') {
       try {
@@ -560,22 +613,48 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Check if the first item has an output property
           if (firstItem && firstItem.output) {
             console.log('Extracted output from array:', firstItem.output);
-            return firstItem.output;
+              result.content = firstItem.output;
+              
+              // Check for ad property
+              if (firstItem.ad) {
+                console.log('Found ad data in array response:', firstItem.ad);
+                try {
+                  result.ad = typeof firstItem.ad === 'string' ? JSON.parse(firstItem.ad) : firstItem.ad;
+                } catch (err) {
+                  console.error('Error parsing ad data:', err);
+                }
+              }
+              
+              return result;
           }
         }
         
         // Handle object format 
         if (parsedResponse && parsedResponse.output) {
           console.log('Extracted output from parsed object:', parsedResponse.output);
-          return parsedResponse.output;
+            result.content = parsedResponse.output;
+            
+            // Check for ad property
+            if (parsedResponse.ad) {
+              console.log('Found ad data in object response:', parsedResponse.ad);
+              try {
+                result.ad = typeof parsedResponse.ad === 'string' ? JSON.parse(parsedResponse.ad) : parsedResponse.ad;
+              } catch (err) {
+                console.error('Error parsing ad data:', err);
+              }
+            }
+            
+            return result;
         }
         
         // If we got here, just stringify the parsed response
-        return JSON.stringify(parsedResponse);
+          result.content = JSON.stringify(parsedResponse);
+          return result;
       } catch (e) {
         // Not valid JSON, return the string as is
         console.log('Response is a string but not valid JSON, returning as is');
-        return response;
+          result.content = response;
+          return result;
       }
     }
     
@@ -586,29 +665,132 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Check if the first item has an output property
       if (firstItem && firstItem.output) {
         console.log('Extracted output from array object:', firstItem.output);
-        return firstItem.output;
+          result.content = firstItem.output;
+          
+          // Check for ad property
+          if (firstItem.ad) {
+            console.log('Found ad data in array object response:', firstItem.ad);
+            try {
+              result.ad = typeof firstItem.ad === 'string' ? JSON.parse(firstItem.ad) : firstItem.ad;
+            } catch (err) {
+              console.error('Error parsing ad data:', err);
+            }
+          }
+          
+          return result;
       }
     }
     
     // Handle object formats
     if (response && response.output) {
       console.log('Extracted output from object:', response.output);
-      return response.output;
+        result.content = response.output;
+        
+        // Check for ad property
+        if (response.ad) {
+          console.log('Found ad data in response:', response.ad);
+          try {
+            // Handle different ad data formats
+            if (typeof response.ad === 'string') {
+              // Try to parse as JSON if it's a string
+              console.log('Ad is a string, trying to parse as JSON');
+              try {
+                // First try to parse as is
+                result.ad = JSON.parse(response.ad);
+              } catch (innerErr) {
+                console.error('Error parsing ad string as JSON:', innerErr);
+                
+                // If direct parsing fails, try to clean the string and parse again
+                const cleanedAd = response.ad.trim().replace(/^["']|["']$/g, '');
+                if (cleanedAd.startsWith('{') && cleanedAd.endsWith('}')) {
+                  try {
+                    console.log('Trying to parse cleaned JSON:', cleanedAd.substring(0, 100));
+                    result.ad = JSON.parse(cleanedAd);
+                  } catch (cleanErr) {
+                    console.error('Error parsing cleaned ad string:', cleanErr);
+                    // Just use the string as is
+                    result.ad = response.ad;
+                  }
+                } else {
+                  // Not JSON, use as is
+                  result.ad = response.ad;
+                }
+              }
+            } else {
+              // Object, already parsed
+              result.ad = response.ad;
+            }
+            
+            // Validate the ad object has all required fields
+            if (result.ad && typeof result.ad === 'object') {
+              console.log('Ad parsed successfully:', result.ad);
+              const requiredFields = ['title', 'description', 'video_url', 'is_active', 'purchases'];
+              const hasAllFields = requiredFields.every(field => Object.prototype.hasOwnProperty.call(result.ad, field));
+              
+              if (!hasAllFields) {
+                console.warn('Ad missing required fields, adding defaults', result.ad);
+                // Add missing fields with defaults
+                const adObj = result.ad as any;
+                result.ad = {
+                  title: adObj.title || 'Ad',
+                  description: adObj.description || 'Ad content',
+                  video_url: adObj.video_url || '',
+                  is_active: adObj.is_active !== undefined ? adObj.is_active : true,
+                  purchases: adObj.purchases !== undefined ? adObj.purchases : 0
+                };
+              }
+            }
+          } catch (err) {
+            console.error('Error processing ad data:', err);
+          }
+        }
+        
+        return result;
     }
     
     if (response && response.result) {
       console.log('Extracted result from object:', response.result);
-      return response.result;
+        result.content = response.result;
+        
+        // Check for ad property
+        if (response.ad) {
+          console.log('Found ad data in result response:', response.ad);
+          try {
+            result.ad = typeof response.ad === 'string' ? JSON.parse(response.ad) : response.ad;
+          } catch (err) {
+            console.error('Error parsing ad data:', err);
+          }
+        }
+        
+        return result;
     }
     
     if (response && response.message) {
       console.log('Extracted message from object:', response.message);
-      return response.message;
+        result.content = response.message;
+        
+        // Check for ad property
+        if (response.ad) {
+          console.log('Found ad data in message response:', response.ad);
+          try {
+            result.ad = typeof response.ad === 'string' ? JSON.parse(response.ad) : response.ad;
+          } catch (err) {
+            console.error('Error parsing ad data:', err);
+          }
+        }
+        
+        return result;
     }
     
     // Fallback
     console.log('No structured output found, returning stringified response');
-    return JSON.stringify(response);
+      result.content = typeof response === 'string' ? response : JSON.stringify(response);
+    } catch (error) {
+      console.error('Error in extractOutputFromResponse:', error);
+      result.content = typeof response === 'string' ? response : JSON.stringify(response);
+    }
+    
+    return result;
   };
 
   const sendMessage = async (content: string) => {

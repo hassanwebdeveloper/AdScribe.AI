@@ -18,11 +18,20 @@ export interface AuthState {
   error: string | null;
 }
 
+export interface Ad {
+  title: string;
+  description: string;
+  video_url: string;
+  is_active: boolean;
+  purchases: number;
+}
+
 export interface Message {
   id: string;
   content: string;
   role: 'user' | 'bot' | 'system';
   timestamp: Date;
+  ad?: Ad;
 }
 
 export interface ChatSession {
@@ -31,6 +40,7 @@ export interface ChatSession {
   user_id?: string;
   title: string;
   messages: Message[];
+  ads?: Ad[];
   createdAt: Date;
   updatedAt: Date;
   created_at?: string;

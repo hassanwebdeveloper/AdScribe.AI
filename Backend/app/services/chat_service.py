@@ -1,10 +1,11 @@
 import logging
 from datetime import datetime
+import json
 from bson import ObjectId
 from fastapi import HTTPException, status
 from app.core.database import get_database
-from app.models.chat import ChatSession, Message, AnalysisSettings, DateRange
-from typing import List, Optional
+from app.models.chat import ChatSession, Message, AnalysisSettings, DateRange, Ad
+from typing import List, Optional, Dict, Any
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -139,6 +140,9 @@ async def update_chat_session(session_id: str, user_id: str, messages: List[Mess
     
     # Convert messages to dictionary format for MongoDB
     message_dicts = []
+    ads_list = session.get("ads", [])  # Get existing ads list or create empty one
+    logger.info("🔍 [DEBUG] Initial ads list from DB has %d items", len(ads_list))
+    
     for i, msg in enumerate(messages):
         # Handle both direct model instances and dict-like objects
         if hasattr(msg, 'model_dump'):
@@ -149,18 +153,76 @@ async def update_chat_session(session_id: str, user_id: str, messages: List[Mess
             logger.info("🔍 [DEBUG] Converting message %d using dict()", i)
             message_dict = dict(msg)
         
+        # Log whether message has ad field
+        if 'ad' in message_dict:
+            logger.info("🔍 [DEBUG] Message %d has 'ad' field: %s", i, 
+                      "None" if message_dict['ad'] is None else "with value")
+            # Log the ad content for debugging
+            if message_dict['ad']:
+                logger.info("🔍 [DEBUG] Ad content type: %s", type(message_dict['ad']))
+                logger.info("🔍 [DEBUG] Ad content preview: %s", 
+                          str(message_dict['ad'])[:100] if isinstance(message_dict['ad'], str) else message_dict['ad'])
+        else:
+            logger.info("🔍 [DEBUG] Message %d does NOT have 'ad' field", i)
+        
         # Validate message format
         if 'id' not in message_dict or 'content' not in message_dict or 'role' not in message_dict:
             logger.warning("⚠️ [WARNING] Message %d is missing required fields: %s", i, message_dict)
+        
+        # Process ad if present in the message
+        if 'ad' in message_dict and message_dict['ad']:
+            try:
+                # If ad is a JSON string, parse it into a dictionary
+                if isinstance(message_dict['ad'], str):
+                    logger.info("🔍 [DEBUG] Converting ad string to dictionary for message %d", i)
+                    ad_data = json.loads(message_dict['ad'])
+                    logger.info("🔍 [DEBUG] Successfully parsed ad JSON: %s", str(ad_data)[:100])
+                else:
+                    logger.info("🔍 [DEBUG] Ad is already a dictionary/object for message %d", i)
+                    ad_data = message_dict['ad']
+                
+                # Log the ad data schema
+                logger.info("🔍 [DEBUG] Ad data keys: %s", str(ad_data.keys()) if hasattr(ad_data, 'keys') else "Not a dict")
+                
+                # Create Ad model and add to ads list
+                try:
+                    logger.info("🔍 [DEBUG] Creating Ad model from data")
+                    ad = Ad(**ad_data)
+                    ad_dict = ad.model_dump()
+                    logger.info("✅ [DEBUG] Successfully created Ad model: %s", ad.title)
+                    
+                    # Check if this ad already exists in the list (by title)
+                    ad_exists = False
+                    for existing_ad in ads_list:
+                        if existing_ad.get('title') == ad.title:
+                            ad_exists = True
+                            break
+                    
+                    if not ad_exists:
+                        ads_list.append(ad_dict)
+                        logger.info("✅ [DEBUG] Added ad to ads list: %s", ad.title)
+                    else:
+                        logger.info("🔍 [DEBUG] Ad already exists in list, skipping: %s", ad.title)
+                except Exception as e:
+                    logger.error("🚫 [ERROR] Error creating Ad model: %s", str(e), exc_info=True)
+            except json.JSONDecodeError as e:
+                logger.error("🚫 [ERROR] JSON decode error processing ad data: %s", str(e), exc_info=True)
+                logger.error("🚫 [ERROR] Invalid JSON in ad data: %s", message_dict['ad'][:100])
+            except Exception as e:
+                logger.error("🚫 [ERROR] Error processing ad data: %s", str(e), exc_info=True)
         
         message_dicts.append(message_dict)
     
     # Debug the message array we're about to save
     logger.info("🔍 [DEBUG] Updating messages for session %s, message count: %d", session_id, len(message_dicts))
+    logger.info("🔍 [DEBUG] Final ads list count: %d", len(ads_list))
+    if ads_list:
+        logger.info("🔍 [DEBUG] First ad title: %s", ads_list[0].get('title', 'No title'))
     
     # Prepare update data
     update_data = {
         "messages": message_dicts,
+        "ads": ads_list,
         "updated_at": datetime.utcnow()
     }
     
@@ -204,6 +266,15 @@ async def update_chat_session(session_id: str, user_id: str, messages: List[Mess
     # Verify the updated session has the correct message count
     if updated_session and "messages" in updated_session:
         logger.info("✅ [DEBUG] Session after update has %d messages", len(updated_session["messages"]))
+        logger.info("✅ [DEBUG] Session after update has %d ads", len(updated_session.get("ads", [])))
+        
+        # Check the ads in the updated session
+        if "ads" in updated_session and updated_session["ads"]:
+            logger.info("✅ [DEBUG] Ads were successfully saved to the session")
+            for i, ad in enumerate(updated_session["ads"]):
+                logger.info("✅ [DEBUG] Ad %d: %s", i, ad.get("title", "No title"))
+        else:
+            logger.warning("⚠️ [WARNING] No ads in the updated session")
     else:
         logger.error("🚫 [ERROR] Could not retrieve updated session or messages field is missing")
     

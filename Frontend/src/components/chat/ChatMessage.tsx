@@ -7,6 +7,7 @@ import { User, Bot, Edit, RotateCw, Trash } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useChat } from '@/contexts/ChatContext';
 import { Button } from '@/components/ui/button';
+import AdCard from '@/components/ads/AdCard';
 
 interface ChatMessageProps {
   message: Message;
@@ -96,6 +97,11 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             {processedContent}
           </ReactMarkdown>
         </div>
+        
+        {message.ad && (
+          <AdCard ad={message.ad} />
+        )}
+        
         <div className="text-xs text-gray-400">
           {message.timestamp && format(new Date(message.timestamp), 'MMM d, h:mm a')}
         </div>
