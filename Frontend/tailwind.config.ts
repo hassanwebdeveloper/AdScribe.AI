@@ -149,6 +149,34 @@ export default {
 							fontWeight: '700',
 							lineHeight: '1.2',
 						},
+						pre: {
+							backgroundColor: '#1f2937',
+							color: '#e5e7eb',
+							fontSize: '0.875rem',
+							lineHeight: '1.7',
+							margin: '1rem 0',
+							padding: '1rem',
+							borderRadius: '0.375rem',
+							overflowX: 'auto',
+						},
+						code: {
+							color: '#111827',
+							backgroundColor: '#e5e7eb',
+							borderRadius: '0.25rem',
+							padding: '0.125rem 0.25rem',
+							fontWeight: '500',
+							'&::before': {
+								content: 'none',
+							},
+							'&::after': {
+								content: 'none',
+							},
+						},
+						'pre code': {
+							color: '#e5e7eb',
+							backgroundColor: 'transparent',
+							padding: '0',
+						},
 					}
 				}
 			}

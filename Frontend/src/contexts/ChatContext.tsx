@@ -380,22 +380,27 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Helper function to send messages to webhook
   const sendMessageToWebhook = async (content: string, session: ChatSession) => {
+    console.log('🔍 [DEBUG] sendMessageToWebhook called with content:', content.substring(0, 50) + '...');
+    console.log('🔍 [DEBUG] Current session ID:', session.id);
+    console.log('🔍 [DEBUG] Current session _id:', session._id);
+    
     try {
       // Ensure we're authenticated
       if (!isAuthenticated || !user) {
+        console.error('🚫 [ERROR] User not authenticated - cannot send message');
         toast({
           title: "Error",
           description: "You must be logged in to send messages",
           variant: "destructive",
         });
-        return false;
+        return { success: false, session: null };
       }
 
       // Find the last user message
       const lastUserMessage = session.messages.filter(msg => msg.role === 'user').pop();
       if (!lastUserMessage) {
-        console.error('No user message found to respond to');
-        return false;
+        console.error('🚫 [ERROR] No user message found to respond to');
+        return { success: false, session: null };
       }
 
       // Prepare context from previous messages (exclude the latest user message)
@@ -403,7 +408,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .filter(msg => msg.id !== lastUserMessage.id)
         .slice(-5);
       
-      console.log('Current date range state:', JSON.stringify(dateRange));
+      console.log('🔍 [DEBUG] Current date range state:', JSON.stringify(dateRange));
+      console.log('🔍 [DEBUG] Context messages count:', contextMessages.length);
       
       // Get date range from React state
       let effectiveDateRange = {
@@ -419,9 +425,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const start = new Date(effectiveDateRange.startDate);
         const end = new Date(effectiveDateRange.endDate);
         daysToAnalyze = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)).toString();
-        console.log('Calculated days to analyze:', daysToAnalyze);
+        console.log('🔍 [DEBUG] Calculated days to analyze:', daysToAnalyze);
       } else {
-        console.log('Date range not set or incomplete');
+        console.log('🔍 [DEBUG] Date range not set or incomplete');
       }
       
       // Create payload for backend API - don't modify the original user message
@@ -438,15 +444,22 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         },
       };
       
-      console.log('Sending to backend API:', payload);
+      console.log('🔍 [DEBUG] Sending to backend API:', payload);
+      console.log('🔍 [DEBUG] Webhook endpoint:', BACKEND_CHAT_ENDPOINT);
       
       // Send request to backend (not directly to n8n) with auth
+      console.log('🔍 [DEBUG] Making API POST request to backend');
       const response = await api.post(BACKEND_CHAT_ENDPOINT, payload);
-      console.log('Backend API response:', response.data);
+      console.log('🔍 [DEBUG] Backend API response status:', response.status);
+      console.log('🔍 [DEBUG] Backend API response headers:', response.headers);
+      console.log('🔍 [DEBUG] Backend API response data type:', typeof response.data);
+      console.log('🔍 [DEBUG] Backend API response data:', 
+        typeof response.data === 'string' ? response.data.substring(0, 200) + '...' : response.data);
       
       // Process the response to extract the output
       const responseContent = extractOutputFromResponse(response.data);
-      console.log('Processed response content:', responseContent);
+      console.log('🔍 [DEBUG] Processed response content:', 
+        typeof responseContent === 'string' ? responseContent.substring(0, 200) + '...' : responseContent);
       
       // Add bot response from webhook
       const botMessage: Message = {
@@ -455,24 +468,29 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: 'bot',
         timestamp: new Date(),
       };
+      console.log('🔍 [DEBUG] Created bot message with ID:', botMessage.id);
       
-      // Get the current session with updated messages
+      // Get the current session with updated messages - IMPORTANT: include both user message and bot response
+      const updatedMessages = [...session.messages, botMessage];
+      const updatedSession = {
+        ...session,
+        messages: updatedMessages,
+        updatedAt: new Date(),
+      };
+      console.log('🔍 [DEBUG] Updated session message count:', updatedSession.messages.length);
+      
+      // If it's still using the default title, update it based on the first message
+      if (updatedSession.title.startsWith('New Chat')) {
+        updatedSession.title = content.slice(0, 30) + (content.length > 30 ? '...' : '');
+        console.log('🔍 [DEBUG] Updated session title:', updatedSession.title);
+      }
+      
+      // Update the state with the new session
       const currentSessions = [...chatState.sessions];
       const sessionIndex = currentSessions.findIndex(s => s.id === session.id);
       
       if (sessionIndex !== -1) {
-        // Create a new session object with the updated messages
-        const updatedSession = {
-          ...currentSessions[sessionIndex],
-          messages: [...session.messages, botMessage],
-          updatedAt: new Date(),
-        };
-        
-        // If it's still using the default title, update it based on the first message
-        if (updatedSession.title.startsWith('New Chat')) {
-          updatedSession.title = content.slice(0, 30) + (content.length > 30 ? '...' : '');
-        }
-        
+        console.log('🔍 [DEBUG] Found session at index:', sessionIndex);
         // Update the session in the array
         currentSessions[sessionIndex] = updatedSession;
         
@@ -482,21 +500,30 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           sessions: currentSessions,
           isLoading: false,
         }));
+        console.log('🔍 [DEBUG] Updated chat state with new message');
         
         // Clear any errors for the last user message
         clearMessageError(lastUserMessage.id);
         
-        return true; // Explicitly return true for success
+        console.log('✅ [DEBUG] Webhook call succeeded, returning true');
+        return { success: true, session: updatedSession };
       }
       
-      return false; // Return false if session was not found
+      console.error('🚫 [ERROR] Session not found in current sessions array');
+      return { success: false, session: null };
     } catch (error) {
-      console.error('Error calling backend API:', error);
+      console.error('🚫 [ERROR] Error calling backend API:', error);
+      console.error('🚫 [ERROR] Error details:', error.response ? {
+        status: error.response.status,
+        data: error.response.data,
+        headers: error.response.headers
+      } : 'No response details available');
       
       // Find the last user message to mark as having an error
       const lastUserMessage = session.messages.filter(msg => msg.role === 'user').pop();
       if (lastUserMessage) {
         setMessagesWithErrors(prev => [...prev, lastUserMessage.id]);
+        console.log('🔍 [DEBUG] Marked message as having error:', lastUserMessage.id);
       }
       
       setChatState(prev => ({
@@ -511,7 +538,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         variant: "destructive",
       });
       
-      return false; // Explicitly return false for error
+      console.log('❌ [DEBUG] Webhook call failed, returning false');
+      return { success: false, session: null };
     }
   };
 
@@ -584,17 +612,24 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const sendMessage = async (content: string) => {
-    if (!content.trim()) return;
+    console.log('🔍 [DEBUG] sendMessage called with content:', content.substring(0, 50) + '...');
+    
+    if (!content.trim()) {
+      console.log('🔍 [DEBUG] Empty content, returning early');
+      return;
+    }
     
     setChatState(prev => ({
       ...prev,
       isLoading: true,
       error: null,
     }));
+    console.log('🔍 [DEBUG] Set loading state to true');
     
     const currentSession = getCurrentSession();
     
     if (!currentSession) {
+      console.error('🚫 [ERROR] No active chat session');
       toast({
         title: "Error",
         description: "No active chat session",
@@ -603,6 +638,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     
+    console.log('🔍 [DEBUG] Current session ID:', currentSession.id);
+    console.log('🔍 [DEBUG] Current session _id:', currentSession._id);
+    console.log('🔍 [DEBUG] Current session message count:', currentSession.messages.length);
+    
     // Add user message
     const userMessage: Message = {
       id: `msg_${Math.random().toString(36).substring(2, 11)}`,
@@ -610,18 +649,21 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       role: 'user',
       timestamp: new Date(),
     };
+    console.log('🔍 [DEBUG] Created user message with ID:', userMessage.id);
     
     // Get the current sessions array
     const currentSessions = [...chatState.sessions];
     const sessionIndex = currentSessions.findIndex(s => s.id === currentSession.id);
     
     if (sessionIndex !== -1) {
+      console.log('🔍 [DEBUG] Found session at index:', sessionIndex);
       // Create a new session object with the updated messages
       const updatedSession = {
         ...currentSessions[sessionIndex],
         messages: [...currentSessions[sessionIndex].messages, userMessage],
         updatedAt: new Date(),
       };
+      console.log('🔍 [DEBUG] Updated session message count:', updatedSession.messages.length);
       
       // Update the session in the array
       currentSessions[sessionIndex] = updatedSession;
@@ -631,38 +673,61 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...prev,
         sessions: currentSessions,
       }));
+      console.log('🔍 [DEBUG] Updated chat state with user message');
       
       // Try to get a response from the webhook
       let webhookSuccess = false;
+      let updatedSessionAfterWebhook = null;
       try {
+        console.log('🔍 [DEBUG] Calling sendMessageToWebhook');
         // Use the helper function to send message to webhook
-        webhookSuccess = await sendMessageToWebhook(content, updatedSession);
+        const result = await sendMessageToWebhook(content, updatedSession);
+        webhookSuccess = result.success;
+        updatedSessionAfterWebhook = result.session;
+        console.log('🔍 [DEBUG] Webhook success:', webhookSuccess);
       } catch (error) {
-        console.error('Error sending message to webhook:', error);
+        console.error('🚫 [ERROR] Error sending message to webhook:', error);
         webhookSuccess = false;
       }
       
       // Only update the session in the API if the webhook call was successful
-      if (webhookSuccess) {
+      if (webhookSuccess && updatedSessionAfterWebhook) {
         try {
+          console.log('🔍 [DEBUG] Webhook successful, saving to database');
           // Use the correct session ID format for the backend
           const backendSessionId = currentSession._id || currentSession.id;
+          console.log('🔍 [DEBUG] Using backend session ID:', backendSessionId);
           
-          // Get the current state of the session after webhook response was added
-          const currentSessionAfterWebhook = chatState.sessions.find(s => s.id === currentSession.id);
-          if (currentSessionAfterWebhook) {
-            await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
-              messages: currentSessionAfterWebhook.messages
-            });
+          console.log('🔍 [DEBUG] Messages to save count:', updatedSessionAfterWebhook.messages.length);
+          
+          // Log a sample of message format being sent
+          if (updatedSessionAfterWebhook.messages.length > 0) {
+            console.log('🔍 [DEBUG] First message format sample:', JSON.stringify(updatedSessionAfterWebhook.messages[0]));
           }
+          
+          // Make the API call
+          console.log(`🔍 [DEBUG] Sending PUT request to: ${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`);
+          const response = await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
+            messages: updatedSessionAfterWebhook.messages
+          });
+          
+          console.log('✅ [DEBUG] Database save response:', response.status, response.statusText);
+          console.log('✅ [DEBUG] Messages saved successfully to database');
         } catch (error) {
-          console.error('Error updating session in API:', error);
+          console.error('🚫 [ERROR] Error updating session in API:', error);
+          console.error('🚫 [ERROR] Error details:', error.response ? {
+            status: error.response.status,
+            data: error.response.data,
+            headers: error.response.headers
+          } : 'No response details available');
         }
       } else {
         // Add the message to the errors list
         setMessagesWithErrors(prev => [...prev, userMessage.id]);
-        console.log('Webhook call failed, not saving to database');
+        console.log('❌ [DEBUG] Webhook call failed, not saving to database, marked message with error:', userMessage.id);
       }
+    } else {
+      console.error('🚫 [ERROR] Session not found in current sessions array');
     }
   };
 

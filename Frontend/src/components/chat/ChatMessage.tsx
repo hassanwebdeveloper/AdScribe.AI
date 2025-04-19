@@ -27,6 +27,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
   const isUserMessage = message.role === 'user';
   const { setEditingMessageId } = useChat();
   
+  // Replace backtick code blocks with proper markdown code blocks
+  const processedContent = message.content
+    // Replace triple backtick code blocks with proper markdown code blocks if they aren't already
+    .replace(/```([a-z]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+      return `\`\`\`${lang || ''}\n${code}\n\`\`\``;
+    });
+  
   // Controls visibility logic:
   // 1. Edit button: Only on the last user message
   // 2. Resend button: Only on messages with errors that aren't the last message
@@ -69,20 +76,24 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                 const match = /language-(\w+)/.exec(className || '');
                 const isInline = !className || !match;
                 return isInline ? (
-                  <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono" {...props}>
+                  <code className="bg-gray-200 px-1 py-0.5 rounded text-sm font-mono text-gray-800" {...props}>
                     {children}
                   </code>
                 ) : (
-                  <code className="block bg-gray-100 p-2 rounded text-sm font-mono overflow-x-auto my-2" {...props}>
+                  <code className="block bg-gray-800 p-2 rounded text-sm font-mono text-gray-100 overflow-x-auto my-2" {...props}>
                     {children}
                   </code>
                 );
               },
-              pre: ({ node, ...props }) => <pre className="bg-gray-100 p-2 rounded overflow-x-auto my-2" {...props} />,
+              pre: ({ node, children, ...props }) => (
+                <pre className="bg-gray-800 p-3 rounded-md overflow-x-auto my-3 text-gray-100" {...props}>
+                  {children}
+                </pre>
+              ),
               blockquote: ({ node, ...props }) => <blockquote className="border-l-4 border-gray-300 pl-4 italic my-2" {...props} />,
             }}
           >
-            {message.content}
+            {processedContent}
           </ReactMarkdown>
         </div>
         <div className="text-xs text-gray-400">
