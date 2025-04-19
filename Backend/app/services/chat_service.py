@@ -169,6 +169,39 @@ async def update_chat_session(session_id: str, user_id: str, messages: List[Mess
         if 'id' not in message_dict or 'content' not in message_dict or 'role' not in message_dict:
             logger.warning("⚠️ [WARNING] Message %d is missing required fields: %s", i, message_dict)
         
+        # Ensure start_date and end_date are present
+        if 'start_date' not in message_dict or message_dict['start_date'] is None:
+            logger.info("🔍 [DEBUG] Adding missing start_date to message %d", i)
+            message_dict['start_date'] = datetime.utcnow()
+        elif isinstance(message_dict['start_date'], str):
+            try:
+                # Try to parse the string as a datetime
+                logger.info("🔍 [DEBUG] Converting start_date string to datetime: %s", message_dict['start_date'])
+                message_dict['start_date'] = datetime.fromisoformat(message_dict['start_date'].replace('Z', '+00:00'))
+                logger.info("🔍 [DEBUG] Converted start_date string to datetime for message %d: %s", i, message_dict['start_date'])
+            except Exception as e:
+                logger.warning("⚠️ [WARNING] Error parsing start_date as datetime: %s. Using current time instead.", str(e))
+                message_dict['start_date'] = datetime.utcnow()
+        
+        if 'end_date' not in message_dict or message_dict['end_date'] is None:
+            logger.info("🔍 [DEBUG] Adding missing end_date to message %d", i)
+            message_dict['end_date'] = datetime.utcnow()
+        elif isinstance(message_dict['end_date'], str):
+            try:
+                # Try to parse the string as a datetime
+                logger.info("🔍 [DEBUG] Converting end_date string to datetime: %s", message_dict['end_date'])
+                message_dict['end_date'] = datetime.fromisoformat(message_dict['end_date'].replace('Z', '+00:00'))
+                logger.info("🔍 [DEBUG] Converted end_date string to datetime for message %d: %s", i, message_dict['end_date'])
+            except Exception as e:
+                logger.warning("⚠️ [WARNING] Error parsing end_date as datetime: %s. Using current time instead.", str(e))
+                message_dict['end_date'] = datetime.utcnow()
+            
+        # Log date fields for debugging
+        logger.info("🔍 [DEBUG] Message %d date fields - start: %s (type: %s), end: %s (type: %s)", 
+                   i, 
+                   message_dict.get('start_date'), type(message_dict.get('start_date')),
+                   message_dict.get('end_date'), type(message_dict.get('end_date')))
+        
         # Process ad if present in the message
         if 'ad' in message_dict and message_dict['ad']:
             try:

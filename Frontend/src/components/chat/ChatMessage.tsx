@@ -99,7 +99,11 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
         </div>
         
         {message.ad && (
-          <AdCard ad={message.ad} />
+          <AdCard 
+            ad={message.ad}
+            start_date={message.start_date}
+            end_date={message.end_date}
+          />
         )}
         
         <div className="text-xs text-gray-400">

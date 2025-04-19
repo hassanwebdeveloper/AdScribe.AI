@@ -31,6 +31,8 @@ export interface Message {
   content: string;
   role: 'user' | 'bot' | 'system';
   timestamp: Date;
+  start_date?: Date;
+  end_date?: Date;
   ad?: Ad;
 }
 

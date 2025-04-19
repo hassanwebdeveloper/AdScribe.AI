@@ -40,6 +40,8 @@ class Message(BaseModel):
     content: str
     role: str
     timestamp: datetime
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
     ad: Optional[Ad] = None
     
     model_config = {
@@ -52,6 +54,8 @@ class Message(BaseModel):
                 "content": "Hello, how can I help you?",
                 "role": "bot",
                 "timestamp": "2023-01-01T12:00:00",
+                "start_date": "2023-01-01T12:00:00",
+                "end_date": "2023-01-31T12:00:00",
                 "ad": None
             }
         }

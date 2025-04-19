@@ -98,6 +98,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             session.updatedAt = new Date(session.updatedAt);
             session.messages.forEach((msg: Message) => {
               msg.timestamp = new Date(msg.timestamp);
+              // Convert start_date and end_date if they exist
+              if (msg.start_date) {
+                msg.start_date = new Date(msg.start_date);
+              }
+              if (msg.end_date) {
+                msg.end_date = new Date(msg.end_date);
+              }
             });
           });
           
@@ -329,9 +336,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const messageIndex = currentSession.messages.findIndex(m => m.id === messageId);
       if (messageIndex === -1) return;
       
-      // Update the message
+      // Get the existing message to preserve fields like start_date and end_date
+      const existingMessage = currentSession.messages[messageIndex];
+      
+      // Update the message, preserving all other fields
       const updatedMessage = {
-        ...currentSession.messages[messageIndex],
+        ...existingMessage,
         content: newContent
       };
       
@@ -364,8 +374,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const backendSessionId = updatedSession._id || updatedSession.id;
           
+          // Use the utility function to serialize messages
+          const serializedMessages = serializeMessagesForAPI(updatedSession.messages);
+          console.log('🔍 [DEBUG] Serialized messages for API call, count:', serializedMessages.length);
+          
           await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
-            messages: updatedSession.messages
+            messages: serializedMessages
           });
         } catch (error) {
           console.error('Error updating session in API:', error);
@@ -509,6 +523,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         content: responseData.content,
         role: 'bot',
         timestamp: new Date(),
+        start_date: dateRange.startDate ? new Date(dateRange.startDate) : undefined,
+        end_date: dateRange.endDate ? new Date(dateRange.endDate) : undefined,
         ad: processedAd
       };
       console.log('🔍 [DEBUG] Created bot message with ID:', botMessage.id);
@@ -550,6 +566,36 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         // Clear any errors for the last user message
         clearMessageError(lastUserMessage.id);
+        
+        // Save the session to the database
+        try {
+          console.log('🔍 [DEBUG] Saving updated session to database');
+          const backendSessionId = session._id || session.id;
+          
+          // Use the utility function to serialize messages
+          const serializedMessages = serializeMessagesForAPI(updatedSession.messages);
+          console.log('🔍 [DEBUG] Serialized messages for API call, count:', serializedMessages.length);
+          
+          await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
+            messages: serializedMessages,
+            title: updatedSession.title !== session.title ? updatedSession.title : undefined
+          });
+          
+          console.log('✅ [DEBUG] Session saved to database successfully');
+        } catch (error) {
+          console.error('🚫 [ERROR] Error saving session to database:', error);
+          console.error('🚫 [ERROR] Error details:', error.response ? {
+            status: error.response.status,
+            data: error.response.data,
+            headers: error.response.headers
+          } : 'No response details available');
+          
+          toast({
+            title: "Warning",
+            description: "Response received but couldn't be saved to database",
+            variant: "destructive",
+          });
+        }
         
         console.log('✅ [DEBUG] Webhook call succeeded, returning true');
         return { success: true, session: updatedSession };
@@ -796,126 +842,218 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const sendMessage = async (content: string) => {
     console.log('🔍 [DEBUG] sendMessage called with content:', content.substring(0, 50) + '...');
     
-    if (!content.trim()) {
-      console.log('🔍 [DEBUG] Empty content, returning early');
-      return;
-    }
-    
-    setChatState(prev => ({
-      ...prev,
-      isLoading: true,
-      error: null,
-    }));
-    console.log('🔍 [DEBUG] Set loading state to true');
-    
-    const currentSession = getCurrentSession();
-    
-    if (!currentSession) {
-      console.error('🚫 [ERROR] No active chat session');
+    if (!user || !user._id) {
       toast({
         title: "Error",
-        description: "No active chat session",
+        description: "You must be logged in to send messages",
         variant: "destructive",
       });
       return;
     }
     
-    console.log('🔍 [DEBUG] Current session ID:', currentSession.id);
-    console.log('🔍 [DEBUG] Current session _id:', currentSession._id);
-    console.log('🔍 [DEBUG] Current session message count:', currentSession.messages.length);
+    if (!content.trim()) {
+      toast({
+        title: "Error",
+        description: "Message cannot be empty",
+        variant: "destructive",
+      });
+      return;
+    }
     
-    // Add user message
-    const userMessage: Message = {
-      id: `msg_${Math.random().toString(36).substring(2, 11)}`,
-      content,
-      role: 'user',
-      timestamp: new Date(),
-    };
-    console.log('🔍 [DEBUG] Created user message with ID:', userMessage.id);
-    
-    // Get the current sessions array
-    const currentSessions = [...chatState.sessions];
-    const sessionIndex = currentSessions.findIndex(s => s.id === currentSession.id);
-    
-    if (sessionIndex !== -1) {
-      console.log('🔍 [DEBUG] Found session at index:', sessionIndex);
-      // Create a new session object with the updated messages
+    try {
+      // Get current session or create one if none exists
+      let session: ChatSession;
+      if (!chatState.currentSessionId || !chatState.sessions.find(s => s.id === chatState.currentSessionId)) {
+        console.log('🔍 [DEBUG] No current session, creating new one');
+        
+        setChatState(prev => ({
+          ...prev,
+          isLoading: true
+        }));
+        
+        // Create a new session
+        const response = await api.post(`${CHAT_API_ENDPOINT}/sessions`, {
+          title: `New Chat ${chatState.sessions.length + 1}`
+        });
+        
+        session = response.data;
+        // MongoDB returns _id, but our frontend uses id
+        if (session._id && !session.id) {
+          session.id = session._id;
+        }
+        
+        // Convert date strings to Date objects
+        session.createdAt = new Date(session.created_at || session.createdAt);
+        session.updatedAt = new Date(session.updated_at || session.updatedAt);
+        session.messages = session.messages || [];
+        
+        console.log('✅ [DEBUG] New session created:', session.id);
+        
+        // Update the sessions list and select the new session
+        setChatState(prev => ({
+          ...prev,
+          sessions: [session, ...prev.sessions],
+          currentSessionId: session.id,
+          isLoading: false
+        }));
+      } else {
+        session = chatState.sessions.find(s => s.id === chatState.currentSessionId)!;
+        console.log('🔍 [DEBUG] Using existing session:', session.id);
+      }
+      
+      // Generate a new message ID
+      const messageId = `msg_${Date.now()}`;
+      
+      // Get the current date range
+      const currentStartDate = dateRange.startDate ? new Date(dateRange.startDate) : null;
+      const currentEndDate = dateRange.endDate ? new Date(dateRange.endDate) : null;
+      
+      // Create the new user message
+      const userMessage: Message = {
+        id: messageId,
+        content,
+        role: 'user',
+        timestamp: new Date(),
+        start_date: currentStartDate || undefined,
+        end_date: currentEndDate || undefined
+      };
+      
+      // Add user message to session
+      const updatedMessages = [...session.messages, userMessage];
       const updatedSession = {
-        ...currentSessions[sessionIndex],
-        messages: [...currentSessions[sessionIndex].messages, userMessage],
+        ...session,
+        messages: updatedMessages,
         updatedAt: new Date(),
       };
-      console.log('🔍 [DEBUG] Updated session message count:', updatedSession.messages.length);
       
-      // Update the session in the array
-      currentSessions[sessionIndex] = updatedSession;
-      
-      // Update the state with the new array
+      // Update the session in state immediately to show user message
       setChatState(prev => ({
         ...prev,
-        sessions: currentSessions,
+        sessions: prev.sessions.map(s => 
+          s.id === updatedSession.id ? updatedSession : s
+        ),
+        isLoading: true
       }));
-      console.log('🔍 [DEBUG] Updated chat state with user message');
       
-      // Try to get a response from the webhook
-      let webhookSuccess = false;
-      let updatedSessionAfterWebhook = null;
-      try {
-        console.log('🔍 [DEBUG] Calling sendMessageToWebhook');
-        // Use the helper function to send message to webhook
-        const result = await sendMessageToWebhook(content, updatedSession);
-        webhookSuccess = result.success;
-        updatedSessionAfterWebhook = result.session;
-        console.log('🔍 [DEBUG] Webhook success:', webhookSuccess);
-      } catch (error) {
-        console.error('🚫 [ERROR] Error sending message to webhook:', error);
-        webhookSuccess = false;
-      }
+      // Scroll to bottom for the new message
+      setTimeout(() => {
+        const chatContainer = document.getElementById('chat-messages-container');
+        if (chatContainer) {
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+      }, 100);
       
-      // Only update the session in the API if the webhook call was successful
-      if (webhookSuccess && updatedSessionAfterWebhook) {
+      // Call the webhook endpoint with the message content
+      console.log('🔍 [DEBUG] Calling sendMessageToWebhook');
+      
+      const result = await sendMessageToWebhook(content, updatedSession);
+      
+      // Update the session with the final messages (including API response)
+      setChatState(prev => ({
+        ...prev,
+        sessions: prev.sessions.map(s => 
+          s.id === updatedSession.id ? 
+            result.success && result.session ? 
+              result.session : 
+              {
+                ...s,
+                messages: updatedMessages,
+                updatedAt: new Date()
+              }
+          : s
+        ),
+        isLoading: false
+      }));
+      
+      // If webhook call wasn't successful, we need to save the user message to the database
+      if (!result.success) {
         try {
-          console.log('🔍 [DEBUG] Webhook successful, saving to database');
-          // Use the correct session ID format for the backend
-          const backendSessionId = currentSession._id || currentSession.id;
-          console.log('🔍 [DEBUG] Using backend session ID:', backendSessionId);
+          console.log('🔍 [DEBUG] Webhook call failed, saving just the user message to database');
+          const backendSessionId = session._id || session.id;
           
-          console.log('🔍 [DEBUG] Messages to save count:', updatedSessionAfterWebhook.messages.length);
+          // Use the utility function to serialize messages
+          const serializedMessages = serializeMessagesForAPI(updatedMessages);
+          console.log('🔍 [DEBUG] Serialized messages for API call, count:', serializedMessages.length);
           
-          // Log a sample of message format being sent
-          if (updatedSessionAfterWebhook.messages.length > 0) {
-            console.log('🔍 [DEBUG] First message format sample:', JSON.stringify(updatedSessionAfterWebhook.messages[0]));
-          }
-          
-          // Make the API call
-          console.log(`🔍 [DEBUG] Sending PUT request to: ${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`);
-          const response = await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
-            messages: updatedSessionAfterWebhook.messages
+          await api.put(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`, {
+            messages: serializedMessages
           });
           
-          console.log('✅ [DEBUG] Database save response:', response.status, response.statusText);
-          console.log('✅ [DEBUG] Messages saved successfully to database');
+          console.log('✅ [DEBUG] User message saved to database successfully');
         } catch (error) {
-          console.error('🚫 [ERROR] Error updating session in API:', error);
-          console.error('🚫 [ERROR] Error details:', error.response ? {
-            status: error.response.status,
-            data: error.response.data,
-            headers: error.response.headers
-          } : 'No response details available');
+          console.error('🚫 [ERROR] Error saving user message to database:', error);
+          toast({
+            title: "Warning",
+            description: "Your message was sent but couldn't be saved to database",
+            variant: "destructive",
+          });
         }
-      } else {
-        // Add the message to the errors list
-        setMessagesWithErrors(prev => [...prev, userMessage.id]);
-        console.log('❌ [DEBUG] Webhook call failed, not saving to database, marked message with error:', userMessage.id);
       }
-    } else {
-      console.error('🚫 [ERROR] Session not found in current sessions array');
+      
+    } catch (error: any) {
+      console.error('Error sending message:', error);
+      
+      // Add the message ID to the errors list
+      const errorMessageId = `msg_${Date.now()}`;
+      setMessagesWithErrors(prev => [...prev, errorMessageId]);
+      
+      setChatState(prev => ({
+        ...prev,
+        isLoading: false,
+        error: error.message || 'Failed to send message'
+      }));
+      
+      toast({
+        title: "Error",
+        description: error.response?.data?.detail || "Failed to send message",
+        variant: "destructive",
+      });
     }
   };
 
   // Toggle the analysis panel
   const toggleAnalysisPanel = () => {
     setIsAnalysisPanelOpen(!isAnalysisPanelOpen);
+  };
+
+  // Utility function to serialize messages for API calls
+  const serializeMessagesForAPI = (messages: Message[]) => {
+    const serializedMessages = messages.map(msg => {
+      // Create a deep copy of the message object
+      const msgCopy: any = { ...msg };
+      
+      // Convert Date objects to ISO strings
+      if (msgCopy.timestamp instanceof Date) {
+        msgCopy.timestamp = msgCopy.timestamp.toISOString();
+      }
+      
+      if (msgCopy.start_date instanceof Date) {
+        msgCopy.start_date = msgCopy.start_date.toISOString();
+      } else if (msgCopy.start_date) {
+        console.log('🔍 [DEBUG] start_date is not a Date object:', msgCopy.start_date, typeof msgCopy.start_date);
+      }
+      
+      if (msgCopy.end_date instanceof Date) {
+        msgCopy.end_date = msgCopy.end_date.toISOString();
+      } else if (msgCopy.end_date) {
+        console.log('🔍 [DEBUG] end_date is not a Date object:', msgCopy.end_date, typeof msgCopy.end_date);
+      }
+      
+      return msgCopy;
+    });
+    
+    // Log a sample message to debug date fields
+    if (serializedMessages.length > 0) {
+      const sampleMsg = serializedMessages[serializedMessages.length - 1];
+      console.log('🔍 [DEBUG] Sample serialized message:');
+      console.log('    - ID:', sampleMsg.id);
+      console.log('    - Role:', sampleMsg.role);
+      console.log('    - timestamp:', sampleMsg.timestamp);
+      console.log('    - start_date:', sampleMsg.start_date);
+      console.log('    - end_date:', sampleMsg.end_date);
+    }
+    
+    return serializedMessages;
   };
 
   return (

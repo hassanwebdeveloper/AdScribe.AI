@@ -2,9 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Ad } from '@/types';
+import { format, differenceInDays } from 'date-fns';
+import { CalendarRange } from 'lucide-react';
 
 interface AdCardProps {
   ad: Ad | any;
+  start_date?: Date;
+  end_date?: Date;
 }
 
 // Function to convert URLs in text to hyperlinks
@@ -41,7 +45,7 @@ const linkifyText = (text: string): JSX.Element => {
   return <>{elements}</>;
 };
 
-const AdCard: React.FC<AdCardProps> = ({ ad }) => {
+const AdCard: React.FC<AdCardProps> = ({ ad, start_date, end_date }) => {
   const [parsedAd, setParsedAd] = useState<Ad>({
     title: '',
     description: '',
@@ -123,17 +127,34 @@ const AdCard: React.FC<AdCardProps> = ({ ad }) => {
     }
   }, [ad]);
 
+  // Calculate duration in days if both dates are provided
+  const duration = (start_date && end_date) ? 
+    differenceInDays(new Date(end_date), new Date(start_date)) + 1 : // +1 to include both start and end dates
+    null;
+
   return (
     <Card className="mt-3 mb-3 border-green-200 shadow-sm max-w-md mx-auto">
       <CardHeader className="pb-2 py-3">
         <div className="flex justify-between items-start">
           <div>
             <CardTitle className="text-green-800 text-base">{parsedAd.title}</CardTitle>
-            {parsedAd.purchases > 0 && (
-              <span className="text-sm font-medium text-gray-600 mt-1 block">
-                {parsedAd.purchases} purchases
-              </span>
-            )}
+            <div className="mt-1 space-y-0.5">
+              {parsedAd.purchases > 0 && (
+                <div className="text-sm font-medium text-gray-600">
+                  {parsedAd.purchases} purchases
+                </div>
+              )}
+              
+              {start_date && end_date && (
+                <div className="text-xs text-gray-500 flex items-center gap-1">
+                  <CalendarRange className="h-3 w-3 text-gray-400" /> 
+                  <span>{format(new Date(start_date), 'MMM d')} - {format(new Date(end_date), 'MMM d')}</span>
+                  <span className="font-medium text-green-700">
+                    ({duration} day{duration !== 1 ? 's' : ''})
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex flex-col gap-1 items-end">
             <Badge variant="outline" className="bg-green-50 text-green-700">
@@ -167,7 +188,8 @@ const AdCard: React.FC<AdCardProps> = ({ ad }) => {
           </div>
         )}
       </CardContent>
-      <CardFooter className="text-xs text-gray-500 flex justify-between pt-1 py-2 px-3">
+      <CardFooter className="text-xs text-gray-500 pt-1 py-2 px-3 flex items-center">
+        {/* Date range moved to header section */}
       </CardFooter>
     </Card>
   );

@@ -28,6 +28,12 @@ class ChatSessionCreate(BaseModel):
 class ChatSessionUpdate(BaseModel):
     title: Optional[str] = None
     messages: List[Message] = []
+    
+    class Config:
+        # Allow extra fields to avoid validation errors with new fields
+        extra = "allow"
+        # Allow type conversion from strings to datetimes
+        arbitrary_types_allowed = True
 
 
 class DateRangeUpdate(BaseModel):
@@ -115,6 +121,22 @@ async def update_existing_chat_session(
         last_msg = session_data.messages[-1]
         logger.info("🔍 [DEBUG] First message ID: %s, Role: %s", first_msg.id, first_msg.role)
         logger.info("🔍 [DEBUG] Last message ID: %s, Role: %s", last_msg.id, last_msg.role)
+        
+        # Log date fields for the last message
+        logger.info("🔍 [DEBUG] Last message timestamp: %s (type: %s)", 
+                   last_msg.timestamp, type(last_msg.timestamp))
+        
+        if hasattr(last_msg, 'start_date'):
+            logger.info("🔍 [DEBUG] Last message start_date: %s (type: %s)", 
+                       last_msg.start_date, type(last_msg.start_date))
+        else:
+            logger.info("⚠️ [WARNING] Last message has no start_date field")
+            
+        if hasattr(last_msg, 'end_date'):
+            logger.info("🔍 [DEBUG] Last message end_date: %s (type: %s)", 
+                       last_msg.end_date, type(last_msg.end_date))
+        else:
+            logger.info("⚠️ [WARNING] Last message has no end_date field")
     
     user = await get_user_by_email(email)
     if not user:
