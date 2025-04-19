@@ -53,7 +53,38 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
         <div className="text-sm font-medium">
           {message.role === 'user' ? 'You' : 'AI Assistant'}
         </div>
-        <div className="text-gray-700 whitespace-pre-wrap">{message.content}</div>
+        <div className="text-gray-700 prose prose-sm max-w-none">
+          <ReactMarkdown
+            components={{
+              h1: ({ node, ...props }) => <h1 className="text-xl font-bold mt-4 mb-2" {...props} />,
+              h2: ({ node, ...props }) => <h2 className="text-lg font-bold mt-3 mb-2" {...props} />,
+              h3: ({ node, ...props }) => <h3 className="text-base font-bold mt-3 mb-1" {...props} />,
+              strong: ({ node, ...props }) => <strong className="font-bold" {...props} />,
+              em: ({ node, ...props }) => <em className="italic" {...props} />,
+              p: ({ node, ...props }) => <p className="mb-2" {...props} />,
+              ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-2" {...props} />,
+              ol: ({ node, ...props }) => <ol className="list-decimal pl-5 mb-2" {...props} />,
+              li: ({ node, ...props }) => <li className="mb-1" {...props} />,
+              code: ({ node, className, children, ...props }: any) => {
+                const match = /language-(\w+)/.exec(className || '');
+                const isInline = !className || !match;
+                return isInline ? (
+                  <code className="bg-gray-100 px-1 py-0.5 rounded text-sm font-mono" {...props}>
+                    {children}
+                  </code>
+                ) : (
+                  <code className="block bg-gray-100 p-2 rounded text-sm font-mono overflow-x-auto my-2" {...props}>
+                    {children}
+                  </code>
+                );
+              },
+              pre: ({ node, ...props }) => <pre className="bg-gray-100 p-2 rounded overflow-x-auto my-2" {...props} />,
+              blockquote: ({ node, ...props }) => <blockquote className="border-l-4 border-gray-300 pl-4 italic my-2" {...props} />,
+            }}
+          >
+            {message.content}
+          </ReactMarkdown>
+        </div>
         <div className="text-xs text-gray-400">
           {message.timestamp && format(new Date(message.timestamp), 'MMM d, h:mm a')}
         </div>

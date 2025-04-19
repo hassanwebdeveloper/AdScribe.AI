@@ -1,5 +1,6 @@
-
 import type { Config } from "tailwindcss";
+import tailwindcssAnimate from "tailwindcss-animate";
+import typography from "@tailwindcss/typography";
 
 export default {
 	darkMode: ["class"],
@@ -128,8 +129,33 @@ export default {
                 'cursor-blink': 'blink 0.7s infinite',
                 'bounce-in': 'bounce-in 0.3s ease-out',
                 'fade-in': 'fade-in 0.3s ease-out'
+			},
+			typography: {
+				DEFAULT: {
+					css: {
+						maxWidth: 'none',
+						color: 'var(--tw-prose-body)',
+						'> *': {
+							marginTop: '0',
+							marginBottom: '0'
+						},
+						p: {
+							marginTop: '0',
+							marginBottom: '1em'
+						},
+						'h1, h2, h3, h4, h5, h6': {
+							marginTop: '1.5em',
+							marginBottom: '0.5em',
+							fontWeight: '700',
+							lineHeight: '1.2',
+						},
+					}
+				}
 			}
 		}
 	},
-	plugins: [require("tailwindcss-animate")],
+	plugins: [
+		tailwindcssAnimate,
+		typography
+	],
 } satisfies Config;

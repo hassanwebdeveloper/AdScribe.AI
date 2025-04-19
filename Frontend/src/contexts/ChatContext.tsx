@@ -23,6 +23,8 @@ interface ChatContextType extends ChatState {
   editingMessageId: string | null;
   setEditingMessageId: (messageId: string | null) => void;
   setMessagesWithErrors: React.Dispatch<React.SetStateAction<string[]>>;
+  toggleAnalysisPanel: () => void;
+  isAnalysisPanelOpen: boolean;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -33,6 +35,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [dateRange, setDateRange] = useState<DateRange>({});
   const [messagesWithErrors, setMessagesWithErrors] = useState<string[]>([]);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [isAnalysisPanelOpen, setIsAnalysisPanelOpen] = useState<boolean>(false);
   
   const [chatState, setChatState] = useState<ChatState>({
     sessions: [],
@@ -663,6 +666,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Toggle the analysis panel
+  const toggleAnalysisPanel = () => {
+    setIsAnalysisPanelOpen(!isAnalysisPanelOpen);
+  };
+
   return (
     <ChatContext.Provider
       value={{
@@ -681,6 +689,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         editingMessageId,
         setEditingMessageId,
         setMessagesWithErrors,
+        toggleAnalysisPanel,
+        isAnalysisPanelOpen,
       }}
     >
       {children}

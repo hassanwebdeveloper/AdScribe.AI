@@ -141,41 +141,43 @@ const ChatWindow: React.FC = () => {
   };
 
   return (
-    <div className="h-full flex flex-col overflow-y-auto p-4">
-      {currentSession.messages.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center space-y-4 p-8 text-center">
-          <Bot className="h-12 w-12 text-brand-500" />
-          <h3 className="text-xl font-medium">Welcome to AdScribe AI</h3>
-          <p className="text-muted-foreground max-w-md">
-            I can help you analyze your Facebook ads and create optimized ad copy.
-            Let's start by asking about your ad campaign goals.
-          </p>
-        </div>
-      ) : (
-        <div className="flex-1 divide-y">
-          {currentSession.messages.map((message) => (
-            <ChatMessage
-              key={message.id}
-              message={message}
-              isLastUserMessage={message.id === lastUserMessageId}
-              hasError={messagesWithErrors.includes(message.id)}
-              onResendMessage={handleResendMessage}
-              onDeleteMessage={handleDeleteMessage}
-            />
-          ))}
-          
-          {isLoading && (
-            <div className="p-4 bg-chat-bot-light">
-              <div className="flex items-center">
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                <span>Thinking...</span>
+    <div className="h-full overflow-y-auto">
+      <div className="p-4">
+        {currentSession.messages.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center space-y-4 p-8 text-center">
+            <Bot className="h-12 w-12 text-brand-500" />
+            <h3 className="text-xl font-medium">Welcome to AdScribe AI</h3>
+            <p className="text-muted-foreground max-w-md">
+              I can help you analyze your Facebook ads and create optimized ad copy.
+              Let's start by asking about your ad campaign goals.
+            </p>
+          </div>
+        ) : (
+          <div className="divide-y">
+            {currentSession.messages.map((message) => (
+              <ChatMessage
+                key={message.id}
+                message={message}
+                isLastUserMessage={message.id === lastUserMessageId}
+                hasError={messagesWithErrors.includes(message.id)}
+                onResendMessage={handleResendMessage}
+                onDeleteMessage={handleDeleteMessage}
+              />
+            ))}
+            
+            {isLoading && (
+              <div className="p-4 bg-chat-bot-light">
+                <div className="flex items-center">
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  <span>Thinking...</span>
+                </div>
               </div>
-            </div>
-          )}
-          
-          <div ref={messagesEndRef} />
-        </div>
-      )}
+            )}
+            
+            <div ref={messagesEndRef} />
+          </div>
+        )}
+      </div>
     </div>
   );
 };
