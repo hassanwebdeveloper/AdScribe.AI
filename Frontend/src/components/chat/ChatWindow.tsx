@@ -166,10 +166,10 @@ const ChatWindow: React.FC = () => {
             ))}
             
             {isLoading && (
-              <div className="p-4 bg-chat-bot-light">
-                <div className="flex items-center">
+              <div className="p-4">
+                <div className="inline-flex items-center bg-chat-bot-light rounded-md px-3 py-2 self-start">
                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  <span>Thinking...</span>
+                  <span>Analyzing...</span>
                 </div>
               </div>
             )}

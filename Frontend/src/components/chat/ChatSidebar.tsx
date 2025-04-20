@@ -24,7 +24,7 @@ const ChatSidebar: React.FC = () => {
           variant="secondary"
         >
           <PlusCircle className="h-4 w-4" />
-          New Chat
+          New Analysis
         </Button>
       </div>
       
