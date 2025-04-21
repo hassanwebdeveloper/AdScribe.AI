@@ -1,7 +1,12 @@
-
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { AuthState, User } from '@/types';
 import { useToast } from '@/components/ui/use-toast';
+import axios from 'axios';
+
+// Create an axios instance with the base URL
+const api = axios.create({
+  baseURL: '/api/v1',
+});
 
 interface AuthContextType extends AuthState {
   login: (email: string, password: string) => Promise<void>;
@@ -22,33 +27,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     error: null,
   });
 
+  // Fetch current user when token changes
+  useEffect(() => {
+    const fetchCurrentUser = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) return;
+      
+      try {
+        const response = await api.get('/auth/me', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        
+        // Convert the response data to match our frontend model
+        const userData = {
+          ...response.data,
+          fbGraphApiKey: response.data.fb_graph_api_key,
+          fbAdAccountId: response.data.fb_ad_account_id,
+        };
+        
+        setAuthState({
+          user: userData,
+          token,
+          isAuthenticated: true,
+          isLoading: false,
+          error: null,
+        });
+      } catch (error) {
+        // If authentication fails, clear the token
+        localStorage.removeItem('token');
+        setAuthState({
+          user: null,
+          token: null,
+          isAuthenticated: false,
+          isLoading: false,
+          error: 'Session expired. Please log in again.',
+        });
+      }
+    };
+    
+    fetchCurrentUser();
+  }, []);
+
   // For demo purposes, we're using localStorage instead of a real backend
   // In a real app, you would connect to a backend service
   const login = async (email: string, password: string) => {
     setAuthState({ ...authState, isLoading: true, error: null });
     
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Make API call to login endpoint
+      const response = await api.post('/auth/login', {
+        email,
+        password
+      });
       
-      // Check if there's a user in localStorage with this email
-      const users = JSON.parse(localStorage.getItem('users') || '[]');
-      const user = users.find((u: any) => u.email === email);
+      const { user, token } = response.data;
       
-      if (!user || user.password !== password) {
-        throw new Error('Invalid email or password');
-      }
+      // Convert the response data to match our frontend model
+      const userData = {
+        ...user,
+        fbGraphApiKey: user.fb_graph_api_key,
+        fbAdAccountId: user.fb_ad_account_id,
+      };
       
-      // Remove password before storing in state
-      const { password: _, ...userWithoutPassword } = user;
-      
-      // Create a fake token
-      const token = `token_${Math.random().toString(36).substring(2, 15)}`;
-      
+      // Store token in localStorage
       localStorage.setItem('token', token);
       
+      // Update auth state
       setAuthState({
-        user: userWithoutPassword,
+        user: userData,
         token,
         isAuthenticated: true,
         isLoading: false,
@@ -61,15 +109,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         variant: "default",
       });
     } catch (error) {
+      let errorMessage = 'Login failed';
+      
+      if (axios.isAxiosError(error) && error.response) {
+        // Get the error message from the API response
+        errorMessage = error.response.data.detail || 'Login failed';
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      
       setAuthState({
         ...authState,
         isLoading: false,
-        error: error instanceof Error ? error.message : 'Login failed',
+        error: errorMessage,
       });
       
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'Login failed',
+        description: errorMessage,
         variant: "destructive",
       });
     }
@@ -79,38 +136,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthState({ ...authState, isLoading: true, error: null });
     
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Check if user already exists
-      const users = JSON.parse(localStorage.getItem('users') || '[]');
-      
-      if (users.some((u: any) => u.email === email)) {
-        throw new Error('User with this email already exists');
-      }
-      
-      // Create new user
-      const newUser = {
-        id: `user_${Math.random().toString(36).substring(2, 11)}`,
+      // Make API call to register endpoint
+      const response = await api.post('/auth/signup', {
         name,
         email,
-        password, // In a real app, this would be hashed
-        fbGraphApiKey: '',
-        fbAdAccountId: '',
+        password,
+      });
+      
+      const { user, token } = response.data;
+      
+      // Convert the response data to match our frontend model
+      const userData = {
+        ...user,
+        fbGraphApiKey: user.fb_graph_api_key,
+        fbAdAccountId: user.fb_ad_account_id,
       };
       
-      // Save user to localStorage
-      localStorage.setItem('users', JSON.stringify([...users, newUser]));
-      
-      // Remove password before storing in state
-      const { password: _, ...userWithoutPassword } = newUser;
-      
-      // Create a fake token
-      const token = `token_${Math.random().toString(36).substring(2, 15)}`;
+      // Store token in localStorage
       localStorage.setItem('token', token);
       
+      // Update auth state
       setAuthState({
-        user: userWithoutPassword,
+        user: userData,
         token,
         isAuthenticated: true,
         isLoading: false,
@@ -123,15 +170,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         variant: "default",
       });
     } catch (error) {
+      let errorMessage = 'Registration failed';
+      
+      if (axios.isAxiosError(error) && error.response) {
+        // Get the error message from the API response
+        errorMessage = error.response.data.detail || 'Registration failed';
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      
       setAuthState({
         ...authState,
         isLoading: false,
-        error: error instanceof Error ? error.message : 'Registration failed',
+        error: errorMessage,
       });
       
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'Registration failed',
+        description: errorMessage,
         variant: "destructive",
       });
     }
@@ -168,28 +224,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAuthState({ ...authState, isLoading: true, error: null });
     
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Update user in localStorage
-      const users = JSON.parse(localStorage.getItem('users') || '[]');
-      const userIndex = users.findIndex((u: any) => u.id === authState.user?.id);
-      
-      if (userIndex === -1) {
-        throw new Error('User not found');
+      // Convert the settings keys to match the backend API
+      const apiSettings: any = {};
+      if (settings.fbGraphApiKey !== undefined) {
+        apiSettings.fb_graph_api_key = settings.fbGraphApiKey;
+      }
+      if (settings.fbAdAccountId !== undefined) {
+        apiSettings.fb_ad_account_id = settings.fbAdAccountId;
       }
       
-      const updatedUser = { ...users[userIndex], ...settings };
-      users[userIndex] = updatedUser;
+      // Make API call to update user settings
+      const response = await api.patch('/auth/settings', apiSettings, {
+        headers: {
+          Authorization: `Bearer ${authState.token}`,
+        },
+      });
       
-      localStorage.setItem('users', JSON.stringify(users));
+      // Convert the response data to match our frontend model
+      const updatedUser = {
+        ...response.data,
+        fbGraphApiKey: response.data.fb_graph_api_key,
+        fbAdAccountId: response.data.fb_ad_account_id,
+      };
       
-      // Update user in state without password
-      const { password: _, ...userWithoutPassword } = updatedUser;
-      
+      // Update auth state
       setAuthState({
         ...authState,
-        user: userWithoutPassword,
+        user: updatedUser,
         isLoading: false,
       });
       
@@ -199,15 +260,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         variant: "default",
       });
     } catch (error) {
+      let errorMessage = 'Failed to update settings';
+      
+      if (axios.isAxiosError(error) && error.response) {
+        // Get the error message from the API response
+        errorMessage = error.response.data.detail || 'Failed to update settings';
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      
       setAuthState({
         ...authState,
         isLoading: false,
-        error: error instanceof Error ? error.message : 'Failed to update settings',
+        error: errorMessage,
       });
       
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'Failed to update settings',
+        description: errorMessage,
         variant: "destructive",
       });
     }

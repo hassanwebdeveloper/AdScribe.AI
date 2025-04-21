@@ -1,5 +1,6 @@
-
 import type { Config } from "tailwindcss";
+import tailwindcssAnimate from "tailwindcss-animate";
+import typography from "@tailwindcss/typography";
 
 export default {
 	darkMode: ["class"],
@@ -128,8 +129,61 @@ export default {
                 'cursor-blink': 'blink 0.7s infinite',
                 'bounce-in': 'bounce-in 0.3s ease-out',
                 'fade-in': 'fade-in 0.3s ease-out'
+			},
+			typography: {
+				DEFAULT: {
+					css: {
+						maxWidth: 'none',
+						color: 'var(--tw-prose-body)',
+						'> *': {
+							marginTop: '0',
+							marginBottom: '0'
+						},
+						p: {
+							marginTop: '0',
+							marginBottom: '1em'
+						},
+						'h1, h2, h3, h4, h5, h6': {
+							marginTop: '1.5em',
+							marginBottom: '0.5em',
+							fontWeight: '700',
+							lineHeight: '1.2',
+						},
+						pre: {
+							backgroundColor: '#1f2937',
+							color: '#e5e7eb',
+							fontSize: '0.875rem',
+							lineHeight: '1.7',
+							margin: '1rem 0',
+							padding: '1rem',
+							borderRadius: '0.375rem',
+							overflowX: 'auto',
+						},
+						code: {
+							color: '#111827',
+							backgroundColor: '#e5e7eb',
+							borderRadius: '0.25rem',
+							padding: '0.125rem 0.25rem',
+							fontWeight: '500',
+							'&::before': {
+								content: 'none',
+							},
+							'&::after': {
+								content: 'none',
+							},
+						},
+						'pre code': {
+							color: '#e5e7eb',
+							backgroundColor: 'transparent',
+							padding: '0',
+						},
+					}
+				}
 			}
 		}
 	},
-	plugins: [require("tailwindcss-animate")],
+	plugins: [
+		tailwindcssAnimate,
+		typography
+	],
 } satisfies Config;
