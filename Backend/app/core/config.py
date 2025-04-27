@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     
     # N8N Configuration
     N8N_WEBHOOK_URL: str
-
+    N8N_WEBHOOK_URL_ANALYZE_ALL_ADS: str
     class Config:
         env_file = ".env"
 

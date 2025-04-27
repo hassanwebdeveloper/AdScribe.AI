@@ -7,6 +7,7 @@ import logging
 
 from app.core.database import get_database
 from app.core.deps import get_current_user
+from app.core.config import settings
 from app.models.user import User
 from app.models.ad_analysis import AdAnalysis, AdAnalysisResponse
 
@@ -14,9 +15,6 @@ from app.models.ad_analysis import AdAnalysis, AdAnalysisResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# N8N Webhook URL
-N8N_WEBHOOK_URL = "https://n8n.srv764032.hstgr.cloud/webhook-test/5a4483f4-7fca-4476-be74-84970f60ebaf"
 
 @router.post("/analyze/", response_model=List[AdAnalysisResponse], status_code=status.HTTP_201_CREATED)
 async def analyze_ads(current_user: User = Depends(get_current_user)):
@@ -31,16 +29,48 @@ async def analyze_ads(current_user: User = Depends(get_current_user)):
             detail="Facebook Graph API key and Ad Account ID are required. Please configure them in settings."
         )
     
-    # Prepare payload for N8N
+    # Get database connection
+    db = get_database()
+    
+    # Get existing video IDs from the database for this user
+    existing_video_ids = []
+    try:
+        existing_analyses = await db.ad_analyses.find(
+            {"user_id": str(current_user.id)}, 
+            {"video_id": 1}
+        ).to_list(length=1000)
+        
+        # Extract video IDs from results
+        existing_video_ids = [
+            analysis.get("video_id") for analysis in existing_analyses 
+            if analysis.get("video_id") is not None
+        ]
+        logger.info(f"Found {len(existing_video_ids)} existing video IDs for user {current_user.id}")
+    except Exception as e:
+        logger.error(f"Error retrieving existing video IDs: {e}", exc_info=True)
+        # Continue anyway - we'll just analyze all ads
+    
+    # Prepare payload for N8N with existing video IDs
     payload = {
         "fb_graph_api_key": current_user.fb_graph_api_key,
-        "fb_ad_account_id": current_user.fb_ad_account_id
+        "fb_ad_account_id": current_user.fb_ad_account_id,
+        "existing_video_ids": existing_video_ids
     }
     
+    # Get N8N webhook URL from settings
+    n8n_webhook_url = settings.N8N_WEBHOOK_URL_ANALYZE_ALL_ADS
+    if not n8n_webhook_url:
+        logger.error("N8N webhook URL not configured in environment")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="N8N webhook URL not configured"
+        )
+    
     try:
+        logger.info(f"Calling N8N webhook with {len(existing_video_ids)} existing video IDs")
         # Call N8N webhook with increased timeout (15 minutes)
         async with httpx.AsyncClient(timeout=900.0) as client:
-            response = await client.post(N8N_WEBHOOK_URL, json=payload)
+            response = await client.post(n8n_webhook_url, json=payload)
             
             if response.status_code != 200:
                 raise HTTPException(
@@ -58,6 +88,13 @@ async def analyze_ads(current_user: User = Depends(get_current_user)):
                         detail="Invalid response format from N8N webhook: expected a list"
                     )
                 
+                logger.info(f"Received {len(response_data)} new ad analyses from N8N")
+                
+                # If no new ads were found, return empty list
+                if len(response_data) == 0:
+                    logger.info("No new ads to analyze")
+                    return []
+                
                 ad_analyses = response_data
             except json.JSONDecodeError:
                 logger.error(f"Failed to decode JSON response: {response.text}")
@@ -66,13 +103,17 @@ async def analyze_ads(current_user: User = Depends(get_current_user)):
                     detail="Invalid JSON response from N8N webhook"
                 )
             
-            # Get database connection
-            db = get_database()
-            
             # Store ad analyses in MongoDB
             stored_analyses = []
             for ad_analysis_data in ad_analyses:
                 try:
+                    # Check if this ad's video_id already exists to avoid duplicates
+                    # (This is a safeguard even though we sent the IDs to N8N)
+                    video_id = ad_analysis_data.get("video_id")
+                    if video_id and video_id in existing_video_ids:
+                        logger.info(f"Skipping already analyzed video: {video_id}")
+                        continue
+                    
                     # Create AdAnalysis object
                     ad_analysis = AdAnalysis(
                         user_id=str(current_user.id),
@@ -85,11 +126,17 @@ async def analyze_ads(current_user: User = Depends(get_current_user)):
                     # Get the inserted document
                     stored_analysis = await db.ad_analyses.find_one({"_id": result.inserted_id})
                     stored_analyses.append(stored_analysis)
+                    
+                    # Add to existing IDs to prevent duplicates in this batch
+                    if video_id:
+                        existing_video_ids.append(video_id)
+                        
                 except Exception as e:
                     logger.error(f"Error storing ad analysis: {e}", exc_info=True)
                     # Continue with the next item instead of failing completely
                     continue
             
+            logger.info(f"Stored {len(stored_analyses)} new ad analyses in database")
             return stored_analyses
             
     except httpx.RequestError as e:

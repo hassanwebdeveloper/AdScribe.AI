@@ -12,6 +12,7 @@ import re
 import json
 import logging
 from dotenv import load_dotenv
+from app.core.database import get_database
 
 # Load environment variables
 load_dotenv()
@@ -79,6 +80,26 @@ async def process_webhook(
     if request.dateRange and request.dateRange.startDate and request.dateRange.endDate:
         date_range_info = f"(Analysis date range: {request.dateRange.startDate} to {request.dateRange.endDate})"
     
+    # Retrieve ad analyses from the database
+    db = get_database()
+    ad_analyses = await db.ad_analyses.find({"user_id": str(current_user.id)}).to_list(length=100)
+    
+    # Extract relevant data from ad analyses (video_id, audio_description, video_description)
+    ad_analyses_data = []
+    video_ids = []
+    for analysis in ad_analyses:
+        if analysis.get("video_id") is not None:
+            ad_analyses_data.append({
+                "video_id": analysis.get("video_id"),
+                "audio_description": analysis.get("audio_description"),
+                "video_description": analysis.get("video_description"),
+                "video_url": analysis.get("video_url"),
+                "ad_description": analysis.get("ad_message")
+            })
+            video_ids.append(analysis.get("video_id"))
+    
+    logger.info(f"Retrieved {len(ad_analyses_data)} ad analyses for user {current_user.id}")
+    
     # Create the payload for the N8N webhook
     payload = {
         "userMessage": cleaned_message,  # Use the cleaned message without the date range
@@ -91,7 +112,9 @@ async def process_webhook(
             "fbGraphApiKey": current_user.fb_graph_api_key,
             "fbAdAccountId": current_user.fb_ad_account_id,
         },
-        "analysisContext": date_range_info  # Add date range as separate field
+        "analysisContext": date_range_info,  # Add date range as separate field
+        "adAnalyses": ad_analyses_data,  # Add ad analyses data
+        "videoIds": video_ids  # Add just the video IDs as a separate object
     }
     
     try:
