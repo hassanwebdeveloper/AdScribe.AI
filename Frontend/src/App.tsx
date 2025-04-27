@@ -12,6 +12,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Chat from "./pages/Chat";
 import Settings from "./pages/Settings";
+import AdAnalysis from "./pages/AdAnalysis";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,11 @@ const App = () => (
                 <Route path="/settings" element={
                   <Layout>
                     <Settings />
+                  </Layout>
+                } />
+                <Route path="/ad-analysis" element={
+                  <Layout>
+                    <AdAnalysis />
                   </Layout>
                 } />
               </Route>

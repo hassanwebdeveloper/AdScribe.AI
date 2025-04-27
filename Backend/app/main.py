@@ -43,6 +43,10 @@ async def startup_db_client():
     if "analysis_settings" not in collections:
         await db.create_collection("analysis_settings")
         await db.analysis_settings.create_index("user_id", unique=True)
+        
+    if "ad_analyses" not in collections:
+        await db.create_collection("ad_analyses")
+        await db.ad_analyses.create_index("user_id")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

@@ -12,6 +12,18 @@ export default defineConfig(({ mode }) => ({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        rewrite: (path) => {
+          // Ensure paths to the API have trailing slashes
+          if (path.endsWith('/')) {
+            return path;
+          } else if (path.includes('?')) {
+            // If the path has query parameters, add the slash before them
+            const [pathPart, queryPart] = path.split('?');
+            return `${pathPart}/?${queryPart}`;
+          } else {
+            return `${path}/`;
+          }
+        }
       }
     }
   },

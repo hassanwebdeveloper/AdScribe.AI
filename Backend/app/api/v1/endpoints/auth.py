@@ -4,6 +4,7 @@ from typing import Optional
 from app.models.user import UserCreate, UserResponse, User
 from app.services.user_service import create_user, authenticate_user, get_user_by_email, update_user_settings
 from app.core.security import get_current_user_email
+from app.core.deps import get_current_user
 
 router = APIRouter()
 
@@ -30,24 +31,18 @@ async def login(request: LoginRequest):
     return await authenticate_user(request.email, request.password)
 
 @router.get("/me", response_model=User)
-async def get_current_user(email: str = Depends(get_current_user_email)):
+async def get_me(current_user: User = Depends(get_current_user)):
     """
     Get the current authenticated user.
     """
-    user = await get_user_by_email(email)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    return user
+    return current_user
 
 @router.patch("/settings", response_model=User)
 async def update_settings(
     settings: UserSettingsUpdate,
-    email: str = Depends(get_current_user_email)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update user settings.
     """
-    return await update_user_settings(email, settings.model_dump(exclude_none=True)) 
+    return await update_user_settings(current_user.email, settings.model_dump(exclude_none=True)) 

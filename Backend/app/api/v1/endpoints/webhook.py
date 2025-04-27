@@ -3,7 +3,9 @@ from pydantic import BaseModel
 from typing import Dict, List, Any, Optional
 from app.core.config import settings
 from app.core.security import get_current_user_email
+from app.core.deps import get_current_user
 from app.services.user_service import get_user_by_email
+from app.models.user import User
 import httpx
 import os
 import re
@@ -44,7 +46,7 @@ class WebhookRequest(BaseModel):
 @router.post("/chat")
 async def process_webhook(
     request: WebhookRequest,
-    email: str = Depends(get_current_user_email)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Process a chat message by forwarding it to the N8N webhook
@@ -57,14 +59,6 @@ async def process_webhook(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="N8N webhook URL not configured"
-        )
-    
-    # Get the user (to ensure they are authenticated)
-    user = await get_user_by_email(email)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
         )
     
     # Clean the user message from any existing date range information
@@ -94,8 +88,8 @@ async def process_webhook(
         ],
         "dateRange": request.dateRange.model_dump() if request.dateRange else {},
         "userInfo": {
-            "fbGraphApiKey": user.fb_graph_api_key,
-            "fbAdAccountId": user.fb_ad_account_id,
+            "fbGraphApiKey": current_user.fb_graph_api_key,
+            "fbAdAccountId": current_user.fb_ad_account_id,
         },
         "analysisContext": date_range_info  # Add date range as separate field
     }
@@ -297,3 +291,13 @@ async def process_webhook(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Error communicating with N8N webhook: {str(e)}"
         ) 
+
+@router.post("/callback", response_model=Dict[str, Any])
+async def webhook_callback(
+    data: Dict[str, Any] = Body(...),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Handle webhook callbacks from external services
+    """
+    # ... existing code ... 
