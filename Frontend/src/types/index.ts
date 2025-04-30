@@ -1,9 +1,24 @@
+export interface FacebookProfile {
+  id: string;
+  name?: string;
+  email?: string;
+}
+
+export interface FacebookCredentials {
+  access_token: string;
+  account_id: string;
+  token_expires_at?: string;
+}
+
 export interface User {
   _id: string;
   name: string;
   email: string;
   fb_graph_api_key?: string;
   fb_ad_account_id?: string;
+  facebook_profile?: FacebookProfile;
+  facebook_credentials?: FacebookCredentials;
+  is_facebook_login?: boolean;
   created_at: string;
   updated_at: string;
   fbGraphApiKey?: string;
@@ -60,4 +75,10 @@ export interface ChatState {
 export interface DateRange {
   startDate?: string;
   endDate?: string;
+}
+
+export interface FacebookAdAccount {
+  id: string;
+  name: string;
+  account_status: number;
 }

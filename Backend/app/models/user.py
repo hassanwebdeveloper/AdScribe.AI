@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, Annotated
+from typing import Optional, Dict, Any
 from bson import ObjectId
 
 
@@ -24,6 +24,18 @@ class PyObjectId(str):
         return schema
 
 
+class FacebookCredentials(BaseModel):
+    access_token: str
+    account_id: str
+    token_expires_at: Optional[datetime] = None
+
+
+class FacebookProfile(BaseModel):
+    id: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+
 class UserBase(BaseModel):
     name: str
     email: EmailStr
@@ -36,14 +48,18 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    password: str
+    password: Optional[str] = None
 
 
 class UserInDB(UserBase):
     id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")
-    hashed_password: str
+    hashed_password: Optional[str] = None
     fb_graph_api_key: Optional[str] = None
     fb_ad_account_id: Optional[str] = None
+    facebook_profile: Optional[FacebookProfile] = None
+    facebook_credentials: Optional[FacebookCredentials] = None
+    is_facebook_login: bool = False
+    is_collecting_metrics: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
@@ -58,6 +74,10 @@ class User(UserBase):
     id: str = Field(..., alias="_id")
     fb_graph_api_key: Optional[str] = None
     fb_ad_account_id: Optional[str] = None
+    facebook_profile: Optional[FacebookProfile] = None
+    facebook_credentials: Optional[FacebookCredentials] = None
+    is_facebook_login: bool = False
+    is_collecting_metrics: bool = False
     created_at: datetime
     updated_at: datetime
     
@@ -71,6 +91,18 @@ class User(UserBase):
                 "email": "john@example.com",
                 "fb_graph_api_key": "",
                 "fb_ad_account_id": "",
+                "facebook_profile": {
+                    "id": "12345678",
+                    "name": "John Doe",
+                    "email": "john@example.com"
+                },
+                "facebook_credentials": {
+                    "access_token": "EAABsbCS1IPkBOwfLZCjMmzNHRyH...",
+                    "account_id": "12345678",
+                    "token_expires_at": "2023-12-31T23:59:59"
+                },
+                "is_facebook_login": True,
+                "is_collecting_metrics": False,
                 "created_at": "2021-06-22T12:00:00",
                 "updated_at": "2021-06-22T12:00:00"
             }
@@ -80,4 +112,9 @@ class User(UserBase):
 
 class UserResponse(BaseModel):
     user: User
-    token: str 
+    token: str
+
+
+class FacebookCredentialsUpdate(BaseModel):
+    access_token: str
+    account_id: str 

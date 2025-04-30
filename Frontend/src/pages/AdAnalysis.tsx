@@ -4,6 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Loader2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import axios from 'axios';
 
 interface AdAnalysisDetail {
@@ -244,8 +246,69 @@ const AdAnalysis = () => {
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isCollecting, setIsCollecting] = useState(false);
   const { token } = useAuth();
   const { toast } = useToast();
+
+  // Check if data collection is active
+  useEffect(() => {
+    const checkCollectionStatus = async () => {
+      try {
+        console.log('Checking collection status...');
+        const response = await axios.get('/api/v1/ad-analysis/collection-status', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        console.log('Collection status response:', response.data);
+        
+        // Updated to use the correct response format
+        if (response.data.status !== undefined) {
+          // Use the database status (status) instead of is_running
+          setIsCollecting(response.data.status);
+          console.log('Set collection status to:', response.data.status);
+        } else if (response.data.is_collecting !== undefined) {
+          // Backward compatibility for legacy API response
+          setIsCollecting(response.data.is_collecting);
+          console.log('Set collection status to (legacy):', response.data.is_collecting);
+        }
+      } catch (error) {
+        console.error('Error checking collection status:', error);
+      }
+    };
+    checkCollectionStatus();
+  }, [token]);
+
+  const toggleDataCollection = async () => {
+    try {
+      console.log('Toggling data collection. Current status:', isCollecting);
+      const response = await axios.post('/api/v1/ad-analysis/toggle-collection', 
+        {},  // No request body needed
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      console.log('Toggle response:', response.data);
+      
+      // Updated to use the correct response format
+      if (response.data.status !== undefined) {
+        setIsCollecting(response.data.status);
+      } else {
+        setIsCollecting(!isCollecting);  // Fallback
+      }
+      
+      toast({
+        title: response.data.status ? "Data Collection Started" : "Data Collection Stopped",
+        description: response.data.status 
+          ? "Your ad data will now be collected automatically."
+          : "Ad data collection has been stopped.",
+        variant: "default",
+      });
+    } catch (error) {
+      console.error('Error toggling data collection:', error);
+      toast({
+        title: "Error",
+        description: "Failed to update data collection status.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const fetchAdAnalyses = async () => {
     setLoading(true);
@@ -355,27 +418,27 @@ const AdAnalysis = () => {
         <div className="container mx-auto flex justify-between items-center">
           <h1 className="text-3xl font-bold">Ad Analysis</h1>
           <div className="flex gap-3">
-            <Button 
-              variant="outline" 
-              onClick={fetchAdAnalyses}
-              disabled={loading}
-            >
-              {loading ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4 mr-2" />
-              )}
-              Refresh
-            </Button>
-            <Button 
-              onClick={analyzeAds}
-              disabled={analyzing}
-            >
-              {analyzing ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : null}
-              {analyzing ? "Analyzing..." : "Analyze Ads (May Take Up To 15 Minutes)"}
-            </Button>
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center space-x-2">
+                <Switch
+                  id="data-collection"
+                  checked={isCollecting}
+                  onCheckedChange={toggleDataCollection}
+                />
+                <Label htmlFor="data-collection">
+                  {isCollecting ? "Stop Data Collection" : "Start Data Collection"}
+                </Label>
+              </div>
+              <Button 
+                onClick={analyzeAds}
+                disabled={analyzing}
+              >
+                {analyzing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : null}
+                {analyzing ? "Analyzing..." : "Analyze Ads (May Take Up To 15 Minutes)"}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

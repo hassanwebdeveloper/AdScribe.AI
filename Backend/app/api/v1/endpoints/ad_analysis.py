@@ -4,17 +4,82 @@ import httpx
 from typing import List, Dict, Any
 import json
 import logging
+from pydantic import BaseModel
+from bson import ObjectId
 
 from app.core.database import get_database
 from app.core.deps import get_current_user
 from app.core.config import settings
 from app.models.user import User
 from app.models.ad_analysis import AdAnalysis, AdAnalysisResponse
+from app.services.scheduler_service import SchedulerService
+from app.services.metrics_service import MetricsService
+from app.services.user_service import UserService
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+class CollectionStatusRequest(BaseModel):
+    is_collecting: bool
+
+@router.get("/collection-status")
+async def get_collection_status(current_user: User = Depends(get_current_user)):
+    """Get the current collection status for the current user."""
+    try:
+        scheduler_service = SchedulerService()
+        metrics_service = MetricsService(scheduler=scheduler_service)
+        
+        # Get collection status
+        status = await metrics_service.get_collection_status(str(current_user.id))
+        logger.info(f"Database status for user {current_user.id}: {status}")
+        
+        # Also check if the job is actually running
+        is_running = scheduler_service.is_job_running(str(current_user.id))
+        logger.info(f"Job running status for user {current_user.id}: {is_running}")
+        
+        response_data = {
+            "status": status,
+            "is_running": is_running
+        }
+        logger.info(f"Returning collection status: {response_data}")
+        
+        return response_data
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error getting collection status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting collection status: {str(e)}")
+
+@router.post("/toggle-collection")
+async def toggle_collection(current_user: User = Depends(get_current_user)):
+    """Toggle the collection status for the current user."""
+    try:
+        scheduler_service = SchedulerService()
+        metrics_service = MetricsService(scheduler=scheduler_service)
+        
+        # Validate Facebook credentials
+        if not current_user.fb_graph_api_key or not current_user.fb_ad_account_id:
+            raise HTTPException(status_code=400, detail="Facebook credentials not found")
+        
+        # Toggle collection status
+        new_status = await metrics_service.toggle_collection(str(current_user.id))
+        logger.info(f"Toggled collection status for user {current_user.id} to: {new_status}")
+        
+        # Check if job is running
+        is_running = scheduler_service.is_job_running(str(current_user.id))
+        logger.info(f"Job running status after toggle for user {current_user.id}: {is_running}")
+        
+        return {
+            "status": new_status,
+            "is_running": is_running
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error toggling collection: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error toggling collection: {str(e)}")
 
 @router.post("/analyze/", response_model=List[AdAnalysisResponse], status_code=status.HTTP_201_CREATED)
 async def analyze_ads(current_user: User = Depends(get_current_user)):
