@@ -161,7 +161,7 @@ class FacebookAdService:
         
         params = {
             "access_token": self.access_token,
-            "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name},creative{id,video_id,effective_object_story_id,object_story_spec},status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend}",
+            "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name},creative{id,video_id,effective_object_story_id,object_story_spec},status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend,cpc,cpm,ctr,purchase_roas}",
             "limit": 100  # Reduced limit to prevent rate limiting
         }
         
@@ -275,6 +275,10 @@ class FacebookAdService:
                             "reach": int(insights.get("reach", 0)),
                             "clicks": int(insights.get("clicks", 0)),
                             "spend": float(insights.get("spend", 0)),
+                            "cpc": float(insights.get("cpc", 0)),
+                            "cpm": float(insights.get("cpm", 0)),
+                            "ctr": float(insights.get("ctr", 0)),
+                            "purchase_roas": insights.get("purchase_roas", []),
                             **video_metrics
                         },
                         "collected_at": datetime.utcnow()
