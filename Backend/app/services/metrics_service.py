@@ -424,7 +424,7 @@ class MetricsService:
     async def calculate_aggregated_kpis(self, user_id: str, start_date: str, end_date: str) -> Dict[str, float]:
         """
         Calculate aggregated KPIs for the specified date range.
-        Returns a dict with KPI metrics.
+        Returns a dict with KPI metrics using the highest values for each metric.
         """
         # Get metrics for the date range
         metrics = await self.get_metrics_by_date_range(user_id, start_date, end_date)
@@ -440,36 +440,64 @@ class MetricsService:
                 "revenue": 0
             }
         
-        # Calculate totals
-        total_spend = 0
-        total_clicks = 0
-        total_impressions = 0
-        total_purchases = 0
-        total_revenue = 0
+        # Initialize with minimum values
+        max_spend = 0
+        max_clicks = 0
+        max_impressions = 0
+        max_purchases = 0
+        max_revenue = 0
         
+        # Group metrics by date to find the highest values for each day
+        metrics_by_date = {}
         for metric in metrics:
+            collected_at = metric.get("collected_at")
+            date_str = collected_at.strftime("%Y-%m-%d") if isinstance(collected_at, datetime) else str(collected_at).split("T")[0]
+            
             additional = metric.get("additional_metrics", {})
-            # Sum up totals
-            total_spend += float(additional.get("spend", 0))
-            total_clicks += int(additional.get("clicks", 0))
-            total_impressions += int(additional.get("impressions", 0))
-            total_purchases += int(metric.get("purchases", 0))
-            total_revenue += float(additional.get("purchases_value", 0))
+            current_spend = float(additional.get("spend", 0))
+            current_clicks = int(additional.get("clicks", 0))
+            current_impressions = int(additional.get("impressions", 0))
+            current_purchases = int(metric.get("purchases", 0))
+            current_revenue = float(additional.get("purchases_value", 0))
+            
+            if date_str not in metrics_by_date:
+                metrics_by_date[date_str] = {
+                    "spend": current_spend,
+                    "clicks": current_clicks,
+                    "impressions": current_impressions,
+                    "purchases": current_purchases,
+                    "revenue": current_revenue
+                }
+            else:
+                # Update with max values
+                metrics_by_date[date_str]["spend"] = max(metrics_by_date[date_str]["spend"], current_spend)
+                metrics_by_date[date_str]["clicks"] = max(metrics_by_date[date_str]["clicks"], current_clicks)
+                metrics_by_date[date_str]["impressions"] = max(metrics_by_date[date_str]["impressions"], current_impressions)
+                metrics_by_date[date_str]["purchases"] = max(metrics_by_date[date_str]["purchases"], current_purchases)
+                metrics_by_date[date_str]["revenue"] = max(metrics_by_date[date_str]["revenue"], current_revenue)
+        
+        # Sum up the daily maximum values
+        for daily_max in metrics_by_date.values():
+            max_spend += daily_max["spend"]
+            max_clicks += daily_max["clicks"]
+            max_impressions += daily_max["impressions"]
+            max_purchases += daily_max["purchases"]
+            max_revenue += daily_max["revenue"]
         
         # Calculate KPIs
-        ctr = total_clicks / total_impressions if total_impressions > 0 else 0
-        cpc = total_spend / total_clicks if total_clicks > 0 else 0
-        cpm = (total_spend / total_impressions) * 1000 if total_impressions > 0 else 0
-        roas = total_revenue / total_spend if total_spend > 0 else 0
+        ctr = max_clicks / max_impressions if max_impressions > 0 else 0
+        cpc = max_spend / max_clicks if max_clicks > 0 else 0
+        cpm = (max_spend / max_impressions) * 1000 if max_impressions > 0 else 0
+        roas = max_revenue / max_spend if max_spend > 0 else 0
         
         return {
             "roas": roas,
             "ctr": ctr,
             "cpc": cpc,
             "cpm": cpm,
-            "conversions": total_purchases,
-            "spend": total_spend,
-            "revenue": total_revenue
+            "conversions": max_purchases,
+            "spend": max_spend,
+            "revenue": max_revenue
         }
     
     async def get_daily_metrics(self, user_id: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
@@ -511,11 +539,11 @@ class MetricsService:
                                 "date": "$collected_at"
                             }
                         },
-                        "spend": {"$sum": {"$toDouble": {"$ifNull": [{"$getField": {"field": "spend", "input": "$additional_metrics"}}, 0]}}},
-                        "clicks": {"$sum": {"$toInt": {"$ifNull": [{"$getField": {"field": "clicks", "input": "$additional_metrics"}}, 0]}}},
-                        "impressions": {"$sum": {"$toInt": {"$ifNull": [{"$getField": {"field": "impressions", "input": "$additional_metrics"}}, 0]}}},
-                        "purchases": {"$sum": {"$toInt": {"$ifNull": ["$purchases", 0]}}},
-                        "revenue": {"$sum": {"$toDouble": {"$ifNull": [{"$getField": {"field": "purchases_value", "input": "$additional_metrics"}}, 0]}}}
+                        "spend": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "spend", "input": "$additional_metrics"}}, 0]}}},
+                        "clicks": {"$max": {"$toInt": {"$ifNull": [{"$getField": {"field": "clicks", "input": "$additional_metrics"}}, 0]}}},
+                        "impressions": {"$max": {"$toInt": {"$ifNull": [{"$getField": {"field": "impressions", "input": "$additional_metrics"}}, 0]}}},
+                        "purchases": {"$max": {"$toInt": {"$ifNull": ["$purchases", 0]}}},
+                        "revenue": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "purchases_value", "input": "$additional_metrics"}}, 0]}}}
                     }
                 },
                 {

@@ -5,7 +5,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { BarChart, LineChart } from '@/components/ui/chart';
+import { PlotlyBarChart, PlotlyLineChart } from '@/components/ui/plotly-chart';
 import { Loader2, TrendingUp, TrendingDown, DollarSign, MousePointerClick, Eye, ShoppingCart, RefreshCcw } from 'lucide-react';
 import { formatCurrency, formatPercentage } from '@/lib/utils';
 import { addDays, format, subDays } from 'date-fns';
@@ -277,22 +277,81 @@ const Dashboard = () => {
     );
   }
 
-  // Prepare chart data
-  const spendRevenueChartData = metrics?.daily_metrics.map(day => ({
-    name: format(new Date(day.date), 'MMM dd'),
-    Spend: day.spend,
-    Revenue: day.revenue,
-  })) || [];
+  // Before the chart data preparation, add a function to group and find the highest value for each day
+  // Get the maximum metrics value for each day
+  const getMaxMetricsByDate = (metrics: AdMetricsData['daily_metrics'] | undefined) => {
+    if (!metrics || metrics.length === 0) return [];
+    
+    // Group by date and find the max values
+    const groupedByDate = metrics.reduce((acc, metric) => {
+      const date = format(new Date(metric.date), 'MMM dd');
+      if (!acc[date]) {
+        acc[date] = {
+          date,
+          spend: metric.spend,
+          revenue: metric.revenue,
+          ctr: metric.ctr,
+          roas: metric.roas
+        };
+      } else {
+        // Take the highest value for each metric
+        acc[date].spend = Math.max(acc[date].spend, metric.spend);
+        acc[date].revenue = Math.max(acc[date].revenue, metric.revenue);
+        acc[date].ctr = Math.max(acc[date].ctr, metric.ctr);
+        acc[date].roas = Math.max(acc[date].roas, metric.roas);
+      }
+      
+      return acc;
+    }, {} as Record<string, { date: string; spend: number; revenue: number; ctr: number; roas: number }>);
+    
+    // Convert to array and sort by date
+    return Object.values(groupedByDate).sort((a, b) => 
+      new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+  };
 
-  const roasChartData = metrics?.daily_metrics.map(day => ({
-    name: format(new Date(day.date), 'MMM dd'),
-    ROAS: day.roas,
-  })) || [];
+  // Get max metrics data for each day
+  const maxDailyMetrics = getMaxMetricsByDate(metrics?.daily_metrics);
 
-  const ctrChartData = metrics?.daily_metrics.map(day => ({
-    name: format(new Date(day.date), 'MMM dd'),
-    CTR: day.ctr * 100, // Convert to percentage
-  })) || [];
+  // Prepare chart data for Plotly using the maximum values
+  const spendRevenueData = [
+    {
+      x: maxDailyMetrics.map(day => day.date),
+      y: maxDailyMetrics.map(day => day.spend),
+      type: 'bar',
+      name: 'Spend',
+      marker: { color: 'rgba(99, 102, 241, 0.7)' }
+    },
+    {
+      x: maxDailyMetrics.map(day => day.date),
+      y: maxDailyMetrics.map(day => day.revenue),
+      type: 'bar',
+      name: 'Revenue',
+      marker: { color: 'rgba(34, 197, 94, 0.7)' }
+    }
+  ];
+
+  const roasData = [
+    {
+      x: maxDailyMetrics.map(day => day.date),
+      y: maxDailyMetrics.map(day => day.roas),
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'ROAS',
+      line: { color: 'rgba(34, 197, 94, 0.7)' }
+    }
+  ];
+
+  const ctrData = [
+    {
+      x: maxDailyMetrics.map(day => day.date),
+      y: maxDailyMetrics.map(day => day.ctr * 100), // Convert to percentage
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'CTR',
+      line: { color: 'rgba(99, 102, 241, 0.7)' }
+    }
+  ];
 
   return (
     <div className="container mx-auto py-10 space-y-8 overflow-auto h-[calc(100vh-100px)]">
@@ -304,6 +363,7 @@ const Dashboard = () => {
               <TabsTrigger value="today">Today</TabsTrigger>
               <TabsTrigger value="last7Days">Last 7 Days</TabsTrigger>
               <TabsTrigger value="last30Days">Last 30 Days</TabsTrigger>
+              <TabsTrigger value="custom">Custom</TabsTrigger>
             </TabsList>
           </Tabs>
           <DateRangePicker
@@ -390,13 +450,11 @@ const Dashboard = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="h-[300px]">
-                <BarChart 
-                  data={spendRevenueChartData}
-                  index="name"
-                  categories={["Spend", "Revenue"]}
-                  colors={["blue", "green"]}
-                  yAxisWidth={65}
-                  valueFormatter={(value) => `$${value.toFixed(2)}`}
+                <PlotlyBarChart 
+                  data={spendRevenueData}
+                  layout={{
+                    yaxis: { title: 'Amount ($)' }
+                  }}
                 />
               </CardContent>
             </Card>
@@ -409,13 +467,11 @@ const Dashboard = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="h-[300px]">
-                <LineChart 
-                  data={roasChartData}
-                  index="name"
-                  categories={["ROAS"]}
-                  colors={["green"]}
-                  yAxisWidth={40}
-                  valueFormatter={(value) => `${value.toFixed(2)}x`}
+                <PlotlyLineChart 
+                  data={roasData}
+                  layout={{
+                    yaxis: { title: 'ROAS' }
+                  }}
                 />
               </CardContent>
             </Card>
@@ -428,13 +484,11 @@ const Dashboard = () => {
                 </CardDescription>
               </CardHeader>
               <CardContent className="h-[300px]">
-                <LineChart 
-                  data={ctrChartData}
-                  index="name"
-                  categories={["CTR"]}
-                  colors={["blue"]}
-                  yAxisWidth={40}
-                  valueFormatter={(value) => `${value.toFixed(2)}%`}
+                <PlotlyLineChart 
+                  data={ctrData}
+                  layout={{
+                    yaxis: { title: 'CTR (%)' }
+                  }}
                 />
               </CardContent>
             </Card>
