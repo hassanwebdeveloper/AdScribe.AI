@@ -13,6 +13,7 @@ import Register from "./pages/Register";
 import Chat from "./pages/Chat";
 import Settings from "./pages/Settings";
 import AdAnalysis from "./pages/AdAnalysis";
+import Dashboard from "./pages/Dashboard";
 import NotFound from "./pages/NotFound";
 import SelectAdAccount from "./pages/SelectAdAccount";
 
@@ -52,6 +53,11 @@ const App = () => (
                 <Route path="/ad-analysis" element={
                   <Layout>
                     <AdAnalysis />
+                  </Layout>
+                } />
+                <Route path="/dashboard" element={
+                  <Layout>
+                    <Dashboard />
                   </Layout>
                 } />
               </Route>

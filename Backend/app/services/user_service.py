@@ -30,6 +30,62 @@ class UserService:
     async def update_facebook_ad_account(self, user_id: str, account_id: str) -> User:
         """Update the Facebook ad account ID for a user."""
         return await update_facebook_ad_account(user_id, account_id)
+        
+    async def get_facebook_credentials(self, user_id: str) -> dict:
+        """Get Facebook credentials for a user."""
+        db = get_database()
+        
+        # Try to find user by ID
+        try:
+            # Try as ObjectId first
+            user_obj_id = ObjectId(user_id) if isinstance(user_id, str) else user_id
+            user = await db.users.find_one({"_id": user_obj_id})
+        except Exception:
+            # If ObjectId conversion fails, try as string
+            user = await db.users.find_one({"id": user_id})
+            
+        # If still not found, return empty credentials
+        if not user:
+            return {}
+            
+        # Log the entire user object for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Found user with keys: {list(user.keys())}")
+            
+        # Check for facebook_credentials in the user document
+        credentials = {}
+        
+        if "facebook_credentials" in user and user["facebook_credentials"]:
+            credentials = user["facebook_credentials"]
+            logger.info("Found credentials in facebook_credentials field")
+            
+        # Check for credentials in alternative formats (even if we already found some)
+        if "fb_graph_api_key" in user and user["fb_graph_api_key"]:
+            credentials["access_token"] = user["fb_graph_api_key"]
+            logger.info("Found access_token in fb_graph_api_key field")
+            
+        if "fb_ad_account_id" in user and user["fb_ad_account_id"]:
+            credentials["account_id"] = user["fb_ad_account_id"]
+            logger.info("Found account_id in fb_ad_account_id field")
+            
+        # Extra check for facebook_access_token field
+        if "facebook_access_token" in user and user["facebook_access_token"]:
+            credentials["access_token"] = user["facebook_access_token"]
+            logger.info("Found access_token in facebook_access_token field")
+        
+        # Check if we have both required credentials
+        if "access_token" in credentials and "account_id" in credentials:
+            logger.info("Found both access_token and account_id")
+        elif "access_token" in credentials:
+            logger.info("Found access_token but missing account_id")
+        elif "account_id" in credentials:
+            logger.info("Found account_id but missing access_token")
+        else:
+            logger.info("No Facebook credentials found")
+            
+        # Return found credentials or empty dict
+        return credentials
 
 async def create_user(user: UserCreate) -> UserResponse:
     """Create a new user with the given user data."""

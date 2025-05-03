@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, List, Any, Optional
-from datetime import datetime
-from app.core.database import get_database
+from datetime import datetime, timedelta
+from app.core.database import get_database, get_metrics_collection, get_users_collection
 from app.models.ad_metrics import AdMetrics
 from app.services.facebook_service import FacebookAdService
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -89,6 +89,505 @@ class MetricsService:
         cursor = self.db.ad_metrics.find({"user_id": user_id}).skip(skip).limit(limit).sort("collected_at", -1)
         metrics = await cursor.to_list(length=limit)
         return metrics
+    
+    async def get_metrics_by_date_range(self, user_id: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
+        """
+        Get metrics by date range from MongoDB.
+        Accepts date range as string formatted as YYYY-MM-DD.
+        """
+        try:
+            # Convert string dates to datetime objects
+            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else start_date
+            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d") if isinstance(end_date, str) else end_date
+            
+            # Include the full end day
+            end_date_obj = end_date_obj.replace(hour=23, minute=59, second=59)
+            
+            collection = await get_metrics_collection()
+            
+            # Query metrics using the collected_at date field
+            cursor = collection.find({
+                "user_id": user_id,  # Use string user_id as stored in metrics
+                "collected_at": {
+                    "$gte": start_date_obj,
+                    "$lte": end_date_obj
+                }
+            })
+            
+            # Convert to list
+            metrics = await cursor.to_list(length=None)
+            
+            # Log metrics count for debugging
+            logger.info(f"Found {len(metrics)} metrics for user {user_id} from {start_date} to {end_date}")
+            
+            return metrics
+        except Exception as e:
+            logger.error(f"Error getting metrics by date range: {str(e)}")
+            return []
+    
+    async def has_complete_data_for_range(self, user_id: str, start_date: str, end_date: str) -> bool:
+        """
+        Check if we have metrics data for each day in the specified date range.
+        Returns True if we have complete data, False otherwise.
+        """
+        try:
+            # Convert string dates to datetime objects
+            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else start_date
+            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d") if isinstance(end_date, str) else end_date
+            
+            # Calculate expected number of days in the date range
+            expected_days = (end_date_obj - start_date_obj).days + 1
+            logger.info(f"Checking data completeness for user {user_id} from {start_date} to {end_date} ({expected_days} days)")
+            
+            # Get the metrics collection
+            collection = await get_metrics_collection()
+            
+            # First check if we have any data at all for this user
+            count = await collection.count_documents({"user_id": user_id})
+            if count == 0:
+                logger.info(f"No metrics data found for user {user_id}")
+                return False
+            
+            # Count metrics in the date range
+            date_range_count = await collection.count_documents({
+                "user_id": user_id,
+                "collected_at": {
+                    "$gte": start_date_obj,
+                    "$lte": end_date_obj
+                }
+            })
+            logger.info(f"Found {date_range_count} metrics in date range for user {user_id}")
+            
+            # Now use aggregation to group by date and see how many unique dates we have
+            pipeline = [
+                {
+                    "$match": {
+                        "user_id": user_id,
+                        "collected_at": {
+                            "$gte": start_date_obj,
+                            "$lte": end_date_obj
+                        }
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": {
+                            "$dateToString": {
+                                "format": "%Y-%m-%d", 
+                                "date": "$collected_at"
+                            }
+                        },
+                        "count": {"$sum": 1}
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": None,
+                        "dates": {"$push": "$_id"},
+                        "total_days": {"$sum": 1}
+                    }
+                }
+            ]
+            
+            result = await collection.aggregate(pipeline).to_list(length=1)
+            
+            # If no results, we don't have any data
+            if not result:
+                logger.info(f"No data found for user {user_id} from {start_date} to {end_date}, expected {expected_days} days")
+                return False
+                
+            days_with_data = result[0].get("total_days", 0)
+            dates_found = result[0].get("dates", [])
+            logger.info(f"Found data for {days_with_data} days out of {expected_days} expected days for user {user_id}")
+            logger.info(f"Dates with data: {dates_found}")
+            
+            # Check each day in the date range
+            current_date = start_date_obj
+            missing_dates = []
+            while current_date <= end_date_obj:
+                date_str = current_date.strftime("%Y-%m-%d")
+                if date_str not in dates_found:
+                    missing_dates.append(date_str)
+                current_date += timedelta(days=1)
+            
+            if missing_dates:
+                logger.info(f"Missing data for dates: {missing_dates}")
+            
+            # Check if we have data for each day
+            is_complete = days_with_data >= expected_days
+            logger.info(f"Data completeness for user {user_id}: {is_complete}")
+            return is_complete
+            
+        except Exception as e:
+            logger.error(f"Error checking for complete data: {str(e)}")
+            return False
+    
+    async def get_aggregated_metrics(self, user_id: str, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+        """
+        Calculate aggregated metrics for the specified date range.
+        Similar to calculate_aggregated_kpis but with a cleaner interface.
+        Returns a dict with all the KPI metrics.
+        """
+        try:
+            # Format dates for string conversion if needed
+            start_date_str = start_date.strftime("%Y-%m-%d") if isinstance(start_date, datetime) else start_date
+            end_date_str = end_date.strftime("%Y-%m-%d") if isinstance(end_date, datetime) else end_date
+            
+            # Delegate to existing method
+            return await self.calculate_aggregated_kpis(user_id, start_date_str, end_date_str)
+        except Exception as e:
+            logger.error(f"Error getting aggregated metrics: {str(e)}")
+            # Return empty metrics
+            return {
+                "roas": 0,
+                "ctr": 0,
+                "cpc": 0,
+                "cpm": 0,
+                "conversions": 0,
+                "spend": 0,
+                "revenue": 0
+            }
+    
+    async def fetch_metrics_from_facebook(
+        self, 
+        user_id: str, 
+        start_date: str, 
+        end_date: str,
+        time_increment: int = 1,
+        credentials: Dict[str, str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch metrics directly from Facebook API for the specified date range.
+        Uses a single account-level API call with time_increment to get daily metrics efficiently.
+        
+        Args:
+            user_id: The user ID
+            start_date: Start date (string or datetime)
+            end_date: End date (string or datetime)
+            time_increment: Time increment for the API call (1 for daily metrics)
+            credentials: Optional Facebook credentials dict with access_token and account_id.
+                         If not provided, will attempt to look up from the database.
+        """
+        try:
+            # Convert string dates to properly formatted strings if they're datetime objects
+            start_date_str = start_date.strftime("%Y-%m-%d") if isinstance(start_date, datetime) else start_date
+            end_date_str = end_date.strftime("%Y-%m-%d") if isinstance(end_date, datetime) else end_date
+            
+            # Log the date parameters for debugging
+            logger.info(f"fetch_metrics_from_facebook called with start_date={start_date_str}, end_date={end_date_str}, type(start_date)={type(start_date)}, type(end_date)={type(end_date)}")
+            
+            access_token = None
+            account_id = None
+            
+            # Use provided credentials if available
+            if credentials and isinstance(credentials, dict):
+                access_token = credentials.get("access_token")
+                account_id = credentials.get("account_id")
+                logger.info(f"Using provided credentials for user {user_id}")
+            
+            # If credentials not provided or incomplete, try to get from database
+            if not access_token or not account_id:
+                logger.info(f"Credentials not provided or incomplete, looking up from database for user {user_id}")
+                # Get user's Facebook credentials - handle ObjectId conversion
+                users_collection = await get_users_collection()
+                user = None
+                
+                # Try with ObjectId first
+                try:
+                    user = await users_collection.find_one({"_id": ObjectId(user_id)})
+                except Exception:
+                    # If conversion fails, try with string ID
+                    user = await users_collection.find_one({"_id": user_id})
+                    
+                # If still not found, try with different ID field formats
+                if not user:
+                    logger.warning(f"User not found with ID {user_id}, trying alternate ID formats")
+                    # Try to find by string ID in case it's stored that way
+                    user = await users_collection.find_one({"id": user_id})
+                
+                if not user:
+                    logger.error(f"User {user_id} not found after multiple attempts")
+                    # Return empty data but don't fail to avoid breaking the dashboard
+                    return []
+                    
+                # Log successful user lookup
+                logger.info(f"Found user {user_id} in database")
+                    
+                # Extract credentials - check both formats (direct and nested)
+                db_credentials = {}
+                if "facebook_credentials" in user:
+                    db_credentials = user.get("facebook_credentials", {})
+                
+                access_token = access_token or db_credentials.get("access_token") or user.get("facebook_access_token")
+                account_id = account_id or db_credentials.get("ad_account_id") or db_credentials.get("account_id") or user.get("facebook_account_id")
+            
+            if not access_token or not account_id:
+                logger.error(f"User {user_id} has no Facebook credentials")
+                return []
+            
+            # Log info about the credentials
+            logger.info(f"Using Facebook credentials for user {user_id}, account_id: {account_id}")
+            
+            # Initialize Facebook service
+            facebook_service = FacebookAdService(
+                access_token=access_token,
+                account_id=account_id
+            )
+            
+            # Fetch metrics using account-level insights with time_increment
+            logger.info(f"Fetching Facebook metrics for date range {start_date_str} to {end_date_str} with time_increment={time_increment}")
+            
+            start_time = datetime.now()
+            metrics = await facebook_service.collect_ad_metrics_for_range(
+                user_id=user_id,
+                start_date=start_date_str,  # Ensure we pass string dates to avoid type issues
+                end_date=end_date_str,      # Ensure we pass string dates to avoid type issues
+                time_increment=time_increment
+            )
+            elapsed_time = (datetime.now() - start_time).total_seconds()
+            
+            # Return empty list instead of failing if no metrics were found
+            if not metrics:
+                logger.warning(f"No metrics fetched from Facebook for {user_id} from {start_date_str} to {end_date_str}")
+                return []
+                
+            # Ensure metrics is a list to avoid type errors
+            if not isinstance(metrics, list):
+                logger.warning(f"Expected list of metrics but got {type(metrics).__name__}")
+                if isinstance(metrics, dict):
+                    # Convert single dict to list with one item
+                    metrics = [metrics]
+                else:
+                    # Return empty list for any other non-list type
+                    return []
+            
+            logger.info(f"Fetched {len(metrics)} metrics in {elapsed_time:.2f} seconds")
+            
+            # Store metrics in MongoDB
+            if metrics:
+                collection = await get_metrics_collection()
+                stored_count = 0
+                
+                # Use collected_at from each metric (should be the actual date of the metrics)
+                for metric in metrics:
+                    try:
+                        # Handle duplicates by removing any existing metrics for the same ad_id and date
+                        metric_date = metric.get("collected_at")
+                        if not isinstance(metric_date, datetime):
+                            # Try to convert string date to datetime
+                            try:
+                                metric_date = datetime.strptime(metric_date, "%Y-%m-%d")
+                                metric["collected_at"] = metric_date
+                            except (ValueError, TypeError):
+                                # If conversion fails, use current date
+                                metric_date = datetime.now()
+                                metric["collected_at"] = metric_date
+                                
+                        metric_date_str = metric_date.strftime("%Y-%m-%d")
+                        
+                        # Log the date we're processing
+                        logger.debug(f"Processing metric for date {metric_date_str}, ad_id {metric.get('ad_id')}")
+                        
+                        # Delete any existing metrics for this ad on this date
+                        delete_result = await collection.delete_many({
+                            "user_id": user_id,
+                            "ad_id": metric.get("ad_id"),
+                            "collected_at": {
+                                "$gte": datetime.strptime(metric_date_str, "%Y-%m-%d"),
+                                "$lt": datetime.strptime(metric_date_str, "%Y-%m-%d") + timedelta(days=1)
+                            }
+                        })
+                        
+                        if delete_result.deleted_count > 0:
+                            logger.debug(f"Deleted {delete_result.deleted_count} existing metrics for ad {metric.get('ad_id')} on {metric_date_str}")
+                        
+                        # Verify the date before insertion
+                        logger.debug(f"Storing metric with collected_at={metric_date.isoformat()} ({type(metric_date).__name__})")
+                        
+                        # Insert the new metric
+                        await collection.insert_one(metric)
+                        stored_count += 1
+                    except Exception as e:
+                        logger.error(f"Error storing metric: {str(e)}")
+                
+                logger.info(f"Stored {stored_count} out of {len(metrics)} metrics from Facebook for user {user_id}")
+            
+            # Get the updated metrics from the database to return
+            return await self.get_metrics_by_date_range(user_id, start_date_str, end_date_str)
+        
+        except Exception as e:
+            logger.error(f"Error fetching metrics from Facebook: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
+    
+    async def calculate_aggregated_kpis(self, user_id: str, start_date: str, end_date: str) -> Dict[str, float]:
+        """
+        Calculate aggregated KPIs for the specified date range.
+        Returns a dict with KPI metrics.
+        """
+        # Get metrics for the date range
+        metrics = await self.get_metrics_by_date_range(user_id, start_date, end_date)
+        
+        if not metrics:
+            return {
+                "roas": 0,
+                "ctr": 0,
+                "cpc": 0,
+                "cpm": 0,
+                "conversions": 0,
+                "spend": 0,
+                "revenue": 0
+            }
+        
+        # Calculate totals
+        total_spend = 0
+        total_clicks = 0
+        total_impressions = 0
+        total_purchases = 0
+        total_revenue = 0
+        
+        for metric in metrics:
+            additional = metric.get("additional_metrics", {})
+            # Sum up totals
+            total_spend += float(additional.get("spend", 0))
+            total_clicks += int(additional.get("clicks", 0))
+            total_impressions += int(additional.get("impressions", 0))
+            total_purchases += int(metric.get("purchases", 0))
+            total_revenue += float(additional.get("purchases_value", 0))
+        
+        # Calculate KPIs
+        ctr = total_clicks / total_impressions if total_impressions > 0 else 0
+        cpc = total_spend / total_clicks if total_clicks > 0 else 0
+        cpm = (total_spend / total_impressions) * 1000 if total_impressions > 0 else 0
+        roas = total_revenue / total_spend if total_spend > 0 else 0
+        
+        return {
+            "roas": roas,
+            "ctr": ctr,
+            "cpc": cpc,
+            "cpm": cpm,
+            "conversions": total_purchases,
+            "spend": total_spend,
+            "revenue": total_revenue
+        }
+    
+    async def get_daily_metrics(self, user_id: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
+        """
+        Get daily metrics for trend charts.
+        Returns a list of daily metrics with date, spend, revenue, ctr, and roas.
+        Ensures all dates in the range have entries, even if there's no data.
+        """
+        try:
+            # Convert string dates to datetime objects
+            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d") if isinstance(start_date, str) else start_date
+            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d") if isinstance(end_date, str) else end_date
+            
+            # Include the full end day
+            end_date_obj = end_date_obj.replace(hour=23, minute=59, second=59)
+            
+            # Get metrics collection
+            collection = await get_metrics_collection()
+            
+            # Log the date range being queried
+            logger.info(f"Querying daily metrics from {start_date_obj} to {end_date_obj} for user {user_id}")
+            
+            # Aggregate metrics by day - use the actual collected_at field from the database
+            pipeline = [
+                {
+                    "$match": {
+                        "user_id": user_id,
+                        "collected_at": {
+                            "$gte": start_date_obj,
+                            "$lte": end_date_obj
+                        }
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": {
+                            "$dateToString": {
+                                "format": "%Y-%m-%d", 
+                                "date": "$collected_at"
+                            }
+                        },
+                        "spend": {"$sum": {"$toDouble": {"$ifNull": [{"$getField": {"field": "spend", "input": "$additional_metrics"}}, 0]}}},
+                        "clicks": {"$sum": {"$toInt": {"$ifNull": [{"$getField": {"field": "clicks", "input": "$additional_metrics"}}, 0]}}},
+                        "impressions": {"$sum": {"$toInt": {"$ifNull": [{"$getField": {"field": "impressions", "input": "$additional_metrics"}}, 0]}}},
+                        "purchases": {"$sum": {"$toInt": {"$ifNull": ["$purchases", 0]}}},
+                        "revenue": {"$sum": {"$toDouble": {"$ifNull": [{"$getField": {"field": "purchases_value", "input": "$additional_metrics"}}, 0]}}}
+                    }
+                },
+                {
+                    "$project": {
+                        "_id": 0,
+                        "date": "$_id",
+                        "spend": 1,
+                        "revenue": 1,
+                        "clicks": 1,
+                        "impressions": 1,
+                        "purchases": 1,
+                        "ctr": {
+                            "$cond": [
+                                {"$gt": ["$impressions", 0]},
+                                {"$divide": ["$clicks", "$impressions"]},
+                                0
+                            ]
+                        },
+                        "roas": {
+                            "$cond": [
+                                {"$gt": ["$spend", 0]},
+                                {"$divide": ["$revenue", "$spend"]},
+                                0
+                            ]
+                        }
+                    }
+                },
+                {
+                    "$sort": {"date": 1}
+                }
+            ]
+            
+            daily_metrics = await collection.aggregate(pipeline).to_list(length=None)
+            
+            # Log the number of days with data
+            logger.info(f"Found {len(daily_metrics)} days with data out of {(end_date_obj - start_date_obj).days + 1} days in range")
+            
+            # Generate entries for days with no data to ensure continuous date range
+            all_days = []
+            current_date = start_date_obj
+            while current_date <= end_date_obj:
+                date_str = current_date.strftime("%Y-%m-%d")
+                
+                # Find if we have data for this day
+                day_data = next((day for day in daily_metrics if day["date"] == date_str), None)
+                
+                if day_data:
+                    all_days.append(day_data)
+                else:
+                    # Add zero metrics for this day
+                    all_days.append({
+                        "date": date_str,
+                        "spend": 0,
+                        "revenue": 0,
+                        "clicks": 0,
+                        "impressions": 0,
+                        "purchases": 0,
+                        "ctr": 0,
+                        "roas": 0
+                    })
+                
+                current_date += timedelta(days=1)
+            
+            # Double check we have data for each day in the range
+            if len(all_days) != (end_date_obj - start_date_obj).days + 1:
+                logger.warning(f"Generated {len(all_days)} days but expected {(end_date_obj - start_date_obj).days + 1} days")
+            
+            return all_days
+            
+        except Exception as e:
+            logger.error(f"Error getting daily metrics: {str(e)}")
+            return []
     
     async def get_ad_metrics_history(self, ad_id: str, skip: int = 0, limit: int = 100) -> List[Dict[str, Any]]:
         """Get historical metrics for a specific ad."""

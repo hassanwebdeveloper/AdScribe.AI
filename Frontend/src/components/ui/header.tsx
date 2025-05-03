@@ -52,6 +52,15 @@ export function Header({ className }: HeaderProps) {
         
         <div className="ml-8 flex space-x-4">
           <Link 
+            to="/dashboard" 
+            className={cn(
+              "px-3 py-2 text-sm font-medium rounded-md",
+              location.pathname === "/dashboard" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+          >
+            Dashboard
+          </Link>
+          <Link 
             to="/chat" 
             className={cn(
               "px-3 py-2 text-sm font-medium rounded-md",
