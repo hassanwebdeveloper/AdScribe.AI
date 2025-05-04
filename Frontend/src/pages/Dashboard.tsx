@@ -61,6 +61,7 @@ interface AdMetricsData {
     date: string;
     ad_id: string;
     ad_name: string;
+    ad_title?: string;
     campaign_name?: string;
     adset_name?: string;
     spend: number;
@@ -76,6 +77,7 @@ interface AdMetricsData {
   unique_ads: Array<{
     ad_id: string;
     ad_name: string;
+    ad_title?: string;
   }>;
 }
 
@@ -504,8 +506,10 @@ const Dashboard = () => {
     // Get unique ad IDs and their names
     const uniqueAds = new Map();
     adMetrics.forEach(metric => {
-      if (metric.ad_id && metric.ad_name) {
-        uniqueAds.set(metric.ad_id, metric.ad_name);
+      if (metric.ad_id && (metric.ad_name || metric.ad_title)) {
+        // Prefer ad_title over ad_name when available
+        const displayName = metric.ad_title || metric.ad_name;
+        uniqueAds.set(metric.ad_id, displayName);
       }
     });
     
@@ -515,8 +519,10 @@ const Dashboard = () => {
     if (uniqueAds.size === 0 && metrics?.unique_ads) {
       console.log('Using unique_ads array for ad info');
       metrics.unique_ads.forEach(ad => {
-        if (ad.ad_id && ad.ad_name) {
-          uniqueAds.set(ad.ad_id, ad.ad_name);
+        if (ad.ad_id && (ad.ad_name || ad.ad_title)) {
+          // Prefer ad_title over ad_name when available
+          const displayName = ad.ad_title || ad.ad_name;
+          uniqueAds.set(ad.ad_id, displayName);
         }
       });
       console.log(`Now have ${uniqueAds.size} unique ads from unique_ads array`);
@@ -596,12 +602,16 @@ const Dashboard = () => {
       const campaignName = campaignInfo.get(adId) || 'Campaign Info Unavailable';
       const adsetName = adsetInfo.get(adId) || 'Ad Set Info Unavailable';
       
+      // Get the best display name for the ad (prefer ad_title if available)
+      const adObject = adMetrics.find(m => m.ad_id === adId) || {};
+      const displayName = adObject.ad_title || uniqueAds.get(adId) || adId.substring(0, 8);
+      
       adData[adId] = {
         x: [],
         y: [],
         type: 'scatter',
         mode: 'lines+markers',
-        name: uniqueAds.get(adId) || adId.substring(0, 8),
+        name: displayName,
         line: { color: adColors[adId], width: 2 },
         marker: { size: 6 },
         // Add customdata and hovertemplate for rich tooltips
@@ -638,17 +648,17 @@ const Dashboard = () => {
         
         // Add custom data for tooltip with improved formatting
         adData[metric.ad_id].customdata.push([
-          metric.ad_name || 'Unknown Ad',                  // Ad name
-          campaignName,                                    // Campaign name (with fallback)
-          adsetName,                                       // Ad set name (with fallback)
-          metric.purchases || 0,                           // Purchases 
-          (metric.spend || 0).toFixed(2),                  // Spend
-          (metric.revenue || 0).toFixed(2),                // Revenue
-          metric.clicks?.toLocaleString() || 0,            // Clicks with thousand separators
-          metric.impressions?.toLocaleString() || 0,       // Impressions with thousand separators
-          (metric.roas || 0).toFixed(2),                   // ROAS
-          (metric.cpc || 0).toFixed(2),                    // CPC
-          (metric.cpm || 0).toFixed(2)                     // CPM
+          metric.ad_title || metric.ad_name || 'Unknown Ad',    // Prefer ad_title over ad_name
+          campaignName,                                         // Campaign name (with fallback)
+          adsetName,                                            // Ad set name (with fallback)
+          metric.purchases || 0,                                // Purchases 
+          (metric.spend || 0).toFixed(2),                       // Spend
+          (metric.revenue || 0).toFixed(2),                     // Revenue
+          metric.clicks?.toLocaleString() || 0,                 // Clicks with thousand separators
+          metric.impressions?.toLocaleString() || 0,            // Impressions with thousand separators
+          (metric.roas || 0).toFixed(2),                        // ROAS
+          (metric.cpc || 0).toFixed(2),                         // CPC
+          (metric.cpm || 0).toFixed(2)                          // CPM
         ]);
       }
     });

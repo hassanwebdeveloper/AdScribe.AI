@@ -47,6 +47,7 @@ class AdDailyMetric(BaseModel):
     date: str
     ad_id: str
     ad_name: str
+    ad_title: Optional[str] = None
     campaign_id: Optional[str] = None
     campaign_name: Optional[str] = None
     adset_id: Optional[str] = None
@@ -67,11 +68,11 @@ class DashboardResponse(BaseModel):
     daily_metrics: List[DailyMetric] = Field(default_factory=list)
     refresh_status: RefreshStatus = Field(default_factory=RefreshStatus)
     ad_metrics: List[AdDailyMetric] = Field(default_factory=list)
-    unique_ads: List[Dict[str, str]] = Field(default_factory=list)
+    unique_ads: List[Dict[str, Any]] = Field(default_factory=list)
 
 class AdMetricsByAdResponse(BaseModel):
     ad_metrics: List[AdDailyMetric] = Field(default_factory=list)
-    unique_ads: List[Dict[str, str]] = Field(default_factory=list)
+    unique_ads: List[Dict[str, Any]] = Field(default_factory=list)
     date_range: Dict[str, str] = Field(default_factory=dict)
 
 # Use lazy loading for scheduler service
@@ -395,6 +396,19 @@ async def get_metrics_by_ad(
                 date_range={"start_date": start_date, "end_date": end_date}
             )
         
+        # Fetch ad titles from ad_analyses collection
+        db = get_database()
+        ad_analyses = await db.ad_analyses.find({"user_id": str(current_user.id)}).to_list(length=1000)
+        
+        # Create a map of ad_id to ad_title
+        ad_titles = {}
+        for analysis in ad_analyses:
+            if "campaign_id" in analysis and analysis["campaign_id"]:
+                # Map both by ad_id and campaign_id to increase match chances
+                ad_titles[analysis.get("campaign_id")] = analysis.get("ad_title")
+        
+        logger.info(f"Found {len(ad_titles)} ad titles from ad_analyses for user {current_user.id}")
+        
         # Process metrics to get daily values by ad
         ad_metrics = []
         unique_ads = {}  # Keep track of unique ads
@@ -410,9 +424,18 @@ async def get_metrics_by_ad(
             
             # Track unique ads
             if ad_id not in unique_ads:
+                # Get ad title from ad_analyses if available
+                ad_title = None
+                campaign_id = metric.get("campaign_id")
+                if campaign_id and campaign_id in ad_titles:
+                    ad_title = ad_titles[campaign_id]
+                elif ad_id in ad_titles:
+                    ad_title = ad_titles[ad_id]
+                
                 unique_ads[ad_id] = {
                     "ad_id": ad_id, 
                     "ad_name": ad_name,
+                    "ad_title": ad_title or "",  # Empty string instead of None
                     "campaign_id": metric.get("campaign_id", None),
                     "campaign_name": metric.get("campaign_name", None),
                     "adset_id": metric.get("adset_id", None),
@@ -435,11 +458,20 @@ async def get_metrics_by_ad(
             current_cpm = (current_spend / current_impressions) * 1000 if current_impressions > 0 else 0
             current_roas = current_revenue / current_spend if current_spend > 0 else 0
             
+            # Get ad title from ad_analyses if available
+            ad_title = None
+            campaign_id = metric.get("campaign_id")
+            if campaign_id and campaign_id in ad_titles:
+                ad_title = ad_titles[campaign_id]
+            elif ad_id in ad_titles:
+                ad_title = ad_titles[ad_id]
+            
             if key not in metrics_by_date_and_ad:
                 metrics_by_date_and_ad[key] = {
                     "date": date_str,
                     "ad_id": ad_id,
                     "ad_name": ad_name,
+                    "ad_title": ad_title or "",  # Empty string instead of None
                     "campaign_id": metric.get("campaign_id", None),
                     "campaign_name": metric.get("campaign_name", None),
                     "adset_id": metric.get("adset_id", None),

@@ -27,10 +27,13 @@ class AdMetrics(BaseModel):
     id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")
     user_id: str
     ad_id: str
+    ad_account_id: Optional[str] = None
     campaign_id: Optional[str] = None
     video_id: Optional[str] = None
     ad_name: Optional[str] = None
     campaign_name: Optional[str] = None
+    adset_id: Optional[str] = None
+    adset_name: Optional[str] = None
     purchases: int = 0
     additional_metrics: Optional[Dict[str, Any]] = None
     collected_at: datetime = Field(default_factory=datetime.utcnow)
@@ -95,12 +98,17 @@ class RefreshStatus(BaseModel):
 class AdDailyMetric(BaseModel):
     date: str
     ad_id: str
-    ad_name: str
+    ad_name: Optional[str] = None
+    ad_title: Optional[str] = None
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
+    adset_id: Optional[str] = None
+    adset_name: Optional[str] = None
     spend: float = 0
-    revenue: float = 0
     clicks: int = 0
     impressions: int = 0
     purchases: int = 0
+    revenue: float = 0
     ctr: float = 0
     cpc: float = 0
     cpm: float = 0
@@ -121,36 +129,23 @@ class DashboardResponse(BaseModel):
     unique_ads: List[Dict[str, str]] = Field(default_factory=list)
 
 
-class AdMetrics(BaseModel):
+class AdMetricsDetail(BaseModel):
+    id: str = Field(default_factory=lambda: str(ObjectId()), alias="_id")
     user_id: str
     ad_id: str
-    ad_account_id: str
-    collected_at: datetime
-    spend: float
-    impressions: int
-    clicks: int
-    purchases: int
-    purchases_value: float
-    ctr: float
-    cpc: float
-    cpm: float
-    roas: float
-    additional_metrics: Dict[str, Any] = {}
-
-
-class AdMetricsResponse(BaseModel):
-    id: str
-    user_id: str
-    ad_id: str
-    ad_account_id: str
-    collected_at: datetime
-    spend: float
-    impressions: int
-    clicks: int
-    purchases: int
-    purchases_value: float
-    ctr: float
-    cpc: float
-    cpm: float
-    roas: float
-    additional_metrics: Dict[str, Any] = {} 
+    ad_account_id: Optional[str] = None
+    campaign_id: Optional[str] = None
+    video_id: Optional[str] = None
+    ad_name: Optional[str] = None
+    campaign_name: Optional[str] = None
+    adset_id: Optional[str] = None
+    adset_name: Optional[str] = None
+    purchases: int = 0
+    additional_metrics: Optional[Dict[str, Any]] = None
+    collected_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_encoders": {ObjectId: str}
+    } 

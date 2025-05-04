@@ -233,10 +233,19 @@ class FacebookAdService:
                     
                     # Extract purchases from actions
                     purchases = 0
+                    purchases_value = 0
+                    
                     if "actions" in insights:
                         for action in insights["actions"]:
                             if action.get("action_type") == "purchase":
                                 purchases = int(action.get("value", 0))
+                                break
+                    
+                    # Extract purchase value from action_values
+                    if "action_values" in insights:
+                        for action_value in insights["action_values"]:
+                            if action_value.get("action_type") == "purchase":
+                                purchases_value = float(action_value.get("value", 0))
                                 break
                     
                     # Extract video watch metrics
@@ -263,28 +272,39 @@ class FacebookAdService:
                     metrics = {
                         "user_id": user_id,
                         "ad_id": ad["id"],
-                        "ad_name": ad.get("name"),
-                        "video_id": video_id,
-                        # Skip video URL, only store video ID
+                        "ad_account_id": self.account_id,
                         "campaign_id": ad.get("campaign_id"),
                         "campaign_name": ad.get("campaign", {}).get("name"),
                         "adset_id": ad.get("adset_id"),
                         "adset_name": ad.get("adset", {}).get("name"),
-                        "ad_status": ad.get("status"),
+                        "video_id": video_id,
+                        "ad_name": ad.get("name"),
                         "purchases": purchases,
                         "additional_metrics": {
                             "impressions": int(insights.get("impressions", 0)),
-                            "reach": int(insights.get("reach", 0)),
                             "clicks": int(insights.get("clicks", 0)),
                             "spend": float(insights.get("spend", 0)),
+                            "purchases_value": purchases_value,
+                            "ctr": float(insights.get("ctr", 0)),
                             "cpc": float(insights.get("cpc", 0)),
                             "cpm": float(insights.get("cpm", 0)),
-                            "ctr": float(insights.get("ctr", 0)),
-                            "purchase_roas": insights.get("purchase_roas", []),
+                            "roas": 0,  # Default value, will be set properly below
+                            "reach": int(insights.get("reach", 0)),
                             **video_metrics
                         },
                         "collected_at": datetime.utcnow()
                     }
+                    
+                    # Handle ROAS calculation properly
+                    purchase_roas = insights.get("purchase_roas", [])
+                    if purchase_roas and isinstance(purchase_roas, list) and len(purchase_roas) > 0:
+                        # Facebook returns purchase_roas as an array of objects with 'value' field
+                        if isinstance(purchase_roas[0], dict) and "value" in purchase_roas[0]:
+                            metrics["additional_metrics"]["roas"] = float(purchase_roas[0]["value"])
+                    else:
+                        # Calculate ROAS manually if not provided
+                        spend = metrics["additional_metrics"]["spend"]
+                        metrics["additional_metrics"]["roas"] = metrics["additional_metrics"]["purchases_value"] / spend if spend > 0 else 0
                     
                     # Calculate processing time
                     process_time = time.time() - process_start
@@ -620,33 +640,33 @@ class FacebookAdService:
             logger.error(f"Error collecting ad metrics for user {user_id}: {str(e)}")
             raise
     
-    async def collect_ad_metrics(self, user_id: str) -> List[Dict[str, Any]]:
-        """Collect metrics for all ads in the account."""
-        try:
-            # Get all ads first
-            ads = await self.get_ads()
+    # async def collect_ad_metrics(self, user_id: str) -> List[Dict[str, Any]]:
+    #     """Collect metrics for all ads in the account."""
+    #     try:
+    #         # Get all ads first
+    #         ads = await self.get_ads()
             
-            if not ads:
-                logger.info(f"No ads found for user {user_id}")
-                return []
+    #         if not ads:
+    #             logger.info(f"No ads found for user {user_id}")
+    #             return []
             
-            # Process each ad in parallel
-            result_tasks = []
-            for ad in ads:
-                task = self._process_ad(ad, user_id)
-                result_tasks.append(task)
+    #         # Process each ad in parallel
+    #         result_tasks = []
+    #         for ad in ads:
+    #             task = self._process_ad(ad, user_id)
+    #             result_tasks.append(task)
             
-            # Await all tasks
-            results = await asyncio.gather(*result_tasks)
+    #         # Await all tasks
+    #         results = await asyncio.gather(*result_tasks)
             
-            # Filter out None values
-            metrics_list = [result for result in results if result]
+    #         # Filter out None values
+    #         metrics_list = [result for result in results if result]
             
-            return metrics_list
+    #         return metrics_list
             
-        except Exception as e:
-            logger.error(f"Error collecting ad metrics for user {user_id}: {str(e)}")
-            raise
+    #     except Exception as e:
+    #         logger.error(f"Error collecting ad metrics for user {user_id}: {str(e)}")
+    #         raise
     
     async def _process_ad(self, ad: Dict[str, Any], user_id: str) -> Optional[Dict[str, Any]]:
         """Process an ad to collect its metrics."""
