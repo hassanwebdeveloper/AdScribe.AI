@@ -713,191 +713,204 @@ const Dashboard = () => {
         </div>
       ) : (
         <div className="pb-10"> {/* Add padding at bottom for better scrolling */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 mb-6">
-            <MetricCard 
-              title="ROAS" 
-              value={metrics?.current_period?.roas || 0} 
-              previousValue={metrics?.previous_period?.roas || 0} 
-              icon={<DollarSign />} 
-              formatter={(n) => n.toFixed(2)}
-              suffix="x"
-            />
-            <MetricCard 
-              title="CTR" 
-              value={metrics?.current_period?.ctr || 0} 
-              previousValue={metrics?.previous_period?.ctr || 0} 
-              icon={<MousePointerClick />} 
-              formatter={(n) => formatPercentage(n * 100)}
-              suffix="%"
-            />
-            <MetricCard 
-              title="CPC" 
-              value={metrics?.current_period?.cpc || 0} 
-              previousValue={metrics?.previous_period?.cpc || 0} 
-              icon={<MousePointerClick />} 
-              prefix="$"
-              formatter={(n) => formatCurrency(n)}
-            />
-            <MetricCard 
-              title="CPM" 
-              value={metrics?.current_period?.cpm || 0} 
-              previousValue={metrics?.previous_period?.cpm || 0} 
-              icon={<Eye />} 
-              prefix="$"
-              formatter={(n) => formatCurrency(n)}
-            />
-            <MetricCard 
-              title="Conversions" 
-              value={metrics?.current_period?.conversions || 0} 
-              previousValue={metrics?.previous_period?.conversions || 0} 
-              icon={<ShoppingCart />} 
-              formatter={(n) => n.toFixed(0)}
-            />
-          </div>
+          {/* Main Dashboard Tabs */}
+          <Tabs defaultValue="account" className="w-full mt-4">
+            <TabsList className="mb-6">
+              <TabsTrigger value="account">Account Performance</TabsTrigger>
+              <TabsTrigger value="ads">Ad Performance</TabsTrigger>
+            </TabsList>
+            
+            {/* Account Performance Tab */}
+            <TabsContent value="account" className="space-y-6">
+              {/* KPI Cards */}
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 mb-6">
+                <MetricCard 
+                  title="ROAS" 
+                  value={metrics?.current_period?.roas || 0} 
+                  previousValue={metrics?.previous_period?.roas || 0} 
+                  icon={<DollarSign />} 
+                  formatter={(n) => n.toFixed(2)}
+                  suffix="x"
+                />
+                <MetricCard 
+                  title="CTR" 
+                  value={metrics?.current_period?.ctr || 0} 
+                  previousValue={metrics?.previous_period?.ctr || 0} 
+                  icon={<MousePointerClick />} 
+                  formatter={(n) => formatPercentage(n * 100)}
+                  suffix="%"
+                />
+                <MetricCard 
+                  title="CPC" 
+                  value={metrics?.current_period?.cpc || 0} 
+                  previousValue={metrics?.previous_period?.cpc || 0} 
+                  icon={<MousePointerClick />} 
+                  prefix="$"
+                  formatter={(n) => formatCurrency(n)}
+                />
+                <MetricCard 
+                  title="CPM" 
+                  value={metrics?.current_period?.cpm || 0} 
+                  previousValue={metrics?.previous_period?.cpm || 0} 
+                  icon={<Eye />} 
+                  prefix="$"
+                  formatter={(n) => formatCurrency(n)}
+                />
+                <MetricCard 
+                  title="Conversions" 
+                  value={metrics?.current_period?.conversions || 0} 
+                  previousValue={metrics?.previous_period?.conversions || 0} 
+                  icon={<ShoppingCart />} 
+                  formatter={(n) => n.toFixed(0)}
+                />
+              </div>
 
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mb-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Daily Spend vs Revenue</CardTitle>
-                <CardDescription>
-                  Compare your daily ad spend against generated revenue
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="h-[300px]">
-                <PlotlyBarChart 
-                  data={spendRevenueData}
-                  layout={{
-                    yaxis: { title: 'Amount ($)' }
-                  }}
-                />
-              </CardContent>
-            </Card>
+              {/* Account Performance Charts */}
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Daily Spend vs Revenue</CardTitle>
+                    <CardDescription>
+                      Compare your daily ad spend against generated revenue
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="h-[300px]">
+                    <PlotlyBarChart 
+                      data={spendRevenueData}
+                      layout={{
+                        yaxis: { title: 'Amount ($)' }
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>ROAS Trend</CardTitle>
+                    <CardDescription>
+                      Return on ad spend over time
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="h-[300px]">
+                    <PlotlyLineChart 
+                      data={roasData}
+                      layout={{
+                        yaxis: { title: 'ROAS' }
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Click-Through Rate Trend</CardTitle>
+                    <CardDescription>
+                      CTR performance over time
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="h-[300px]">
+                    <PlotlyLineChart 
+                      data={ctrData}
+                      layout={{
+                        yaxis: { title: 'CTR (%)' }
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
             
-            <Card>
-              <CardHeader>
-                <CardTitle>ROAS Trend</CardTitle>
-                <CardDescription>
-                  Return on ad spend over time
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="h-[300px]">
-                <PlotlyLineChart 
-                  data={roasData}
-                  layout={{
-                    yaxis: { title: 'ROAS' }
-                  }}
-                />
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle>Click-Through Rate Trend</CardTitle>
-                <CardDescription>
-                  CTR performance over time
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="h-[300px]">
-                <PlotlyLineChart 
-                  data={ctrData}
-                  layout={{
-                    yaxis: { title: 'CTR (%)' }
-                  }}
-                />
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* New Section: Ad Performance Overview */}
-          <div className="mt-8">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-bold">Ad Performance</h2>
-              <Button
-                variant="outline"
-                onClick={() => navigate('/app/ad-metrics')}
-              >
-                View Detailed Ad Metrics
-              </Button>
-            </div>
-            
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2 mb-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>ROAS by Ad</CardTitle>
-                  <CardDescription>
-                    Return on ad spend for each ad over time
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="h-[400px]">
-                  <PlotlyLineChart 
-                    data={getAdMetricsChartData(metrics?.ad_metrics || [], 'roas')}
-                    layout={{
-                      yaxis: { title: 'ROAS' },
-                      legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
-                      margin: { l: 50, r: 20, t: 30, b: 100 }
-                    }}
-                  />
-                </CardContent>
-              </Card>
+            {/* Ad Performance Tab */}
+            <TabsContent value="ads">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-2xl font-bold">Ad Performance</h2>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate('/app/ad-metrics')}
+                >
+                  View Detailed Ad Metrics
+                </Button>
+              </div>
               
-              <Card>
-                <CardHeader>
-                  <CardTitle>CTR by Ad</CardTitle>
-                  <CardDescription>
-                    Click-through rate for each ad over time
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="h-[400px]">
-                  <PlotlyLineChart 
-                    data={getAdMetricsChartData(metrics?.ad_metrics || [], 'ctr', value => value * 100)}
-                    layout={{
-                      yaxis: { title: 'CTR (%)' },
-                      legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
-                      margin: { l: 50, r: 20, t: 30, b: 100 }
-                    }}
-                  />
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader>
-                  <CardTitle>Spend by Ad</CardTitle>
-                  <CardDescription>
-                    Daily spend for each ad
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="h-[400px]">
-                  <PlotlyLineChart 
-                    data={getAdMetricsChartData(metrics?.ad_metrics || [], 'spend')}
-                    layout={{
-                      yaxis: { title: 'Spend ($)' },
-                      legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
-                      margin: { l: 50, r: 20, t: 30, b: 100 }
-                    }}
-                  />
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader>
-                  <CardTitle>Revenue by Ad</CardTitle>
-                  <CardDescription>
-                    Daily revenue for each ad
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="h-[400px]">
-                  <PlotlyLineChart 
-                    data={getAdMetricsChartData(metrics?.ad_metrics || [], 'revenue')}
-                    layout={{
-                      yaxis: { title: 'Revenue ($)' },
-                      legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
-                      margin: { l: 50, r: 20, t: 30, b: 100 }
-                    }}
-                  />
-                </CardContent>
-              </Card>
-            </div>
-          </div>
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2 mb-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>ROAS by Ad</CardTitle>
+                    <CardDescription>
+                      Return on ad spend for each ad over time
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="h-[400px]">
+                    <PlotlyLineChart 
+                      data={getAdMetricsChartData(metrics?.ad_metrics || [], 'roas')}
+                      layout={{
+                        yaxis: { title: 'ROAS' },
+                        legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+                        margin: { l: 50, r: 20, t: 30, b: 100 }
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>CTR by Ad</CardTitle>
+                    <CardDescription>
+                      Click-through rate for each ad over time
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="h-[400px]">
+                    <PlotlyLineChart 
+                      data={getAdMetricsChartData(metrics?.ad_metrics || [], 'ctr', value => value * 100)}
+                      layout={{
+                        yaxis: { title: 'CTR (%)' },
+                        legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+                        margin: { l: 50, r: 20, t: 30, b: 100 }
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Spend by Ad</CardTitle>
+                    <CardDescription>
+                      Daily spend for each ad
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="h-[400px]">
+                    <PlotlyLineChart 
+                      data={getAdMetricsChartData(metrics?.ad_metrics || [], 'spend')}
+                      layout={{
+                        yaxis: { title: 'Spend ($)' },
+                        legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+                        margin: { l: 50, r: 20, t: 30, b: 100 }
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Revenue by Ad</CardTitle>
+                    <CardDescription>
+                      Daily revenue for each ad
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="h-[400px]">
+                    <PlotlyLineChart 
+                      data={getAdMetricsChartData(metrics?.ad_metrics || [], 'revenue')}
+                      layout={{
+                        yaxis: { title: 'Revenue ($)' },
+                        legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+                        margin: { l: 50, r: 20, t: 30, b: 100 }
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          </Tabs>
         </div>
       )}
     </div>
