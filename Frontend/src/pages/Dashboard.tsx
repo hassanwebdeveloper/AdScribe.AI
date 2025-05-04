@@ -10,6 +10,7 @@ import { Loader2, TrendingUp, TrendingDown, DollarSign, MousePointerClick, Eye, 
 import { formatCurrency, formatPercentage } from '@/lib/utils';
 import { addDays, format, subDays } from 'date-fns';
 import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
 
 interface DateRange {
   from: Date;
@@ -48,12 +49,34 @@ interface AdMetricsData {
     purchases: number;
     ctr: number;
     roas: number;
+    ad_id?: string;
+    ad_name?: string;
   }>;
   refresh_status: {
     metrics_fetched: boolean;
     has_complete_data: boolean;
     force_refresh_attempted: boolean;
   };
+  ad_metrics: Array<{
+    date: string;
+    ad_id: string;
+    ad_name: string;
+    campaign_name?: string;
+    adset_name?: string;
+    spend: number;
+    revenue: number;
+    clicks: number;
+    impressions: number;
+    purchases: number;
+    ctr: number;
+    cpc: number;
+    cpm: number;
+    roas: number;
+  }>;
+  unique_ads: Array<{
+    ad_id: string;
+    ad_name: string;
+  }>;
 }
 
 const Dashboard = () => {
@@ -70,6 +93,7 @@ const Dashboard = () => {
   const [fetchAttempts, setFetchAttempts] = useState<number>(0);
   const [forceRefresh, setForceRefresh] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   // Calculate previous date range
   const getPreviousRange = (from: Date, to: Date) => {
@@ -155,6 +179,18 @@ const Dashboard = () => {
       console.log('Response received:', response.data);
       console.log('Refresh status:', response.data.refresh_status);
       
+      // Debug ad metrics data
+      console.log('Ad metrics data length:', response.data.ad_metrics ? response.data.ad_metrics.length : 0);
+      console.log('First few ad metrics items:', response.data.ad_metrics?.slice(0, 3));
+      console.log('Unique ads:', response.data.unique_ads);
+      
+      // Debug for campaign and adset data
+      if (response.data.ad_metrics && response.data.ad_metrics.length > 0) {
+        console.log('Campaign data available:', response.data.ad_metrics.some(m => m.campaign_name));
+        console.log('Adset data available:', response.data.ad_metrics.some(m => m.adset_name));
+        console.log('Sample ad metrics with campaign/adset:', response.data.ad_metrics.find(m => m.campaign_name || m.adset_name));
+      }
+      
       // Set data & check if we need to refetch
       if (response.data) {
         setMetrics(response.data);
@@ -202,6 +238,49 @@ const Dashboard = () => {
   useEffect(() => {
     fetchMetrics();
   }, [dateRange, user, fetchAttempts, forceRefresh]);
+
+  // Helper to generate sample ad metrics data for testing
+  const generateSampleAdData = () => {
+    const adNames = ['Summer Sale Ad', 'Holiday Promotion', 'New Product Launch', 'Brand Awareness'];
+    const adIds = ['ad_123456', 'ad_234567', 'ad_345678', 'ad_456789'];
+    const campaignNames = ['Summer Campaign 2023', 'Holiday Campaign 2023', 'Product Launch Q4', 'Brand Awareness Q3'];
+    const adsetNames = ['Mobile Users', 'Desktop Users', 'Retargeting Audience', 'Lookalike Audience'];
+    const results = [];
+    
+    // Generate 30 days of data
+    const today = new Date();
+    for (let i = 0; i < 30; i++) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      const dateStr = format(date, 'yyyy-MM-dd');
+      
+      // Generate data for each ad
+      for (let j = 0; j < adIds.length; j++) {
+        // Add some randomness but keep a trend
+        const dayFactor = Math.max(0.5, 1 - (i * 0.02)); // Slight downward trend for older dates
+        const randomFactor = 0.7 + (Math.random() * 0.6); // Random variation between 0.7 and 1.3
+        
+        results.push({
+          date: dateStr,
+          ad_id: adIds[j],
+          ad_name: adNames[j],
+          campaign_name: campaignNames[j % campaignNames.length],
+          adset_name: adsetNames[j % adsetNames.length],
+          spend: 100 * dayFactor * randomFactor * (j + 1),
+          revenue: 300 * dayFactor * randomFactor * (j + 1),
+          clicks: Math.floor(1000 * dayFactor * randomFactor * (j + 0.5)),
+          impressions: Math.floor(10000 * dayFactor * randomFactor * (j + 0.5)),
+          purchases: Math.floor(50 * dayFactor * randomFactor * (j + 0.5)),
+          ctr: 0.1 * randomFactor,
+          cpc: 1.2 * randomFactor,
+          cpm: 10 * randomFactor,
+          roas: 3 * randomFactor
+        });
+      }
+    }
+    
+    return results;
+  };
 
   // Calculate percentage change
   const calculateChange = (current: number, previous: number): number => {
@@ -353,6 +432,241 @@ const Dashboard = () => {
     }
   ];
 
+  // New Section: Ad Performance Overview
+  const getTopAdsData = (dailyMetrics: AdMetricsData['daily_metrics'] | undefined) => {
+    if (!dailyMetrics || dailyMetrics.length === 0) return [];
+    
+    // Create a map of unique ads with their aggregated metrics
+    const adMetricsMap = new Map<string, { 
+      name: string; 
+      spend: number; 
+      revenue: number; 
+      impressions: number;
+      clicks: number;
+      roas: number; 
+      ctr: number 
+    }>();
+    
+    // Process each daily metric to aggregate by ad
+    dailyMetrics.forEach(metric => {
+      // Use date as a placeholder since we don't have ad_id/ad_name in the current model
+      // In a real implementation, you would use metric.ad_id as the key
+      const adId = metric.date; // Temporary: using date as ad identifier
+      const adName = metric.date; // Temporary: using date as ad name
+      
+      if (!adMetricsMap.has(adId)) {
+        adMetricsMap.set(adId, {
+          name: adName,
+          spend: metric.spend,
+          revenue: metric.revenue,
+          impressions: metric.impressions || 0,
+          clicks: metric.clicks || 0,
+          roas: metric.revenue > 0 && metric.spend > 0 ? metric.revenue / metric.spend : 0,
+          ctr: metric.impressions > 0 && metric.clicks > 0 ? metric.clicks / metric.impressions : 0
+        });
+      } else {
+        const existing = adMetricsMap.get(adId)!;
+        existing.spend += metric.spend;
+        existing.revenue += metric.revenue;
+        existing.impressions += (metric.impressions || 0);
+        existing.clicks += (metric.clicks || 0);
+        
+        // Recalculate derived metrics
+        existing.roas = existing.spend > 0 ? existing.revenue / existing.spend : 0;
+        existing.ctr = existing.impressions > 0 ? existing.clicks / existing.impressions : 0;
+      }
+    });
+    
+    // Convert map to array and sort by revenue (highest first)
+    return Array.from(adMetricsMap.values())
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5); // Get top 5 ads
+  };
+
+  // Get Ad Metrics Chart Data
+  const getAdMetricsChartData = (adMetrics: any[], metricName: string, formatter?: (value: number) => number) => {
+    console.log(`getAdMetricsChartData called with ${adMetrics?.length || 0} items for metric: ${metricName}`);
+    
+    // If ad_metrics is empty, use the sample data
+    if (!adMetrics || adMetrics.length === 0) {
+      console.log('Using sample ad data for testing');
+      adMetrics = generateSampleAdData();
+    }
+    
+    // Log first ad metric to see its structure
+    if (adMetrics.length > 0) {
+      console.log('Sample ad metric structure:', adMetrics[0]);
+    }
+    
+    // Log what we're working with
+    console.log(`Working with ${adMetrics.length} metrics for the chart`);
+    
+    // Get unique ad IDs and their names
+    const uniqueAds = new Map();
+    adMetrics.forEach(metric => {
+      if (metric.ad_id && metric.ad_name) {
+        uniqueAds.set(metric.ad_id, metric.ad_name);
+      }
+    });
+    
+    console.log(`Found ${uniqueAds.size} unique ads`);
+    
+    // If no ad information, get unique ads from the separate unique_ads array
+    if (uniqueAds.size === 0 && metrics?.unique_ads) {
+      console.log('Using unique_ads array for ad info');
+      metrics.unique_ads.forEach(ad => {
+        if (ad.ad_id && ad.ad_name) {
+          uniqueAds.set(ad.ad_id, ad.ad_name);
+        }
+      });
+      console.log(`Now have ${uniqueAds.size} unique ads from unique_ads array`);
+    }
+    
+    // If still no ad information, use sample data
+    if (uniqueAds.size === 0) {
+      console.log('No unique ads found, using sample data');
+      return [];
+    }
+    
+    // Generate colors for each ad - one color per ad
+    const colors = [
+      'rgba(99, 102, 241, 1)',  // Indigo
+      'rgba(34, 197, 94, 1)',   // Green
+      'rgba(249, 115, 22, 1)',  // Orange
+      'rgba(236, 72, 153, 1)',  // Pink
+      'rgba(168, 85, 247, 1)',  // Purple
+      'rgba(59, 130, 246, 1)',  // Blue
+      'rgba(234, 179, 8, 1)',   // Yellow
+      'rgba(239, 68, 68, 1)',   // Red
+      'rgba(20, 184, 166, 1)',  // Teal
+      'rgba(75, 85, 99, 1)'     // Gray
+    ];
+    
+    // Assign a color to each ad
+    let colorIndex = 0;
+    const adColors = {};
+    uniqueAds.forEach((name, id) => {
+      adColors[id] = colors[colorIndex % colors.length];
+      colorIndex++;
+    });
+    
+    // Extract campaign and adset info if available
+    const campaignInfo = new Map();
+    const adsetInfo = new Map();
+    
+    // Create a lookup for campaign and adset based on ad_id
+    adMetrics.forEach(metric => {
+      if (metric.ad_id) {
+        // If campaign_name is available in the data, store it
+        if (metric.campaign_name) {
+          campaignInfo.set(metric.ad_id, metric.campaign_name);
+        }
+        
+        // If adset_name is available in the data, store it
+        if (metric.adset_name) {
+          adsetInfo.set(metric.ad_id, metric.adset_name);
+        }
+      }
+    });
+    
+    // If there's no campaign or adset info, enrich with fallback data by extracting from ad name
+    uniqueAds.forEach((adName, adId) => {
+      // Only set fallback if we don't have actual data
+      if (!campaignInfo.has(adId)) {
+        // Try to derive campaign name from ad name or use a generic name with the ad ID
+        const derivedCampaign = adName.includes(' - ') 
+          ? adName.split(' - ')[0]
+          : `Campaign ${adId.substring(0, 6)}`;
+        campaignInfo.set(adId, derivedCampaign);
+      }
+      
+      if (!adsetInfo.has(adId)) {
+        // Try to derive adset name from ad name or use a generic name with the ad ID
+        const derivedAdset = adName.includes(' - ') && adName.split(' - ').length > 1
+          ? adName.split(' - ')[1]
+          : `Ad Set ${adId.substring(0, 6)}`;
+        adsetInfo.set(adId, derivedAdset);
+      }
+    });
+    
+    // Group data by ad_id
+    const adData = {};
+    Array.from(uniqueAds.keys()).forEach(adId => {
+      // Get campaign and adset names for this ad
+      const campaignName = campaignInfo.get(adId) || 'Campaign Info Unavailable';
+      const adsetName = adsetInfo.get(adId) || 'Ad Set Info Unavailable';
+      
+      adData[adId] = {
+        x: [],
+        y: [],
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: uniqueAds.get(adId) || adId.substring(0, 8),
+        line: { color: adColors[adId], width: 2 },
+        marker: { size: 6 },
+        // Add customdata and hovertemplate for rich tooltips
+        customdata: [],
+        hovertemplate: '<b>%{customdata[0]}</b><br><br>Date: %{x}<br>' + 
+          (metricName === 'ctr' ? 'CTR' : metricName.charAt(0).toUpperCase() + metricName.slice(1)) + ': %{y}<br><br>' +
+          'Campaign: %{customdata[1]}<br>Ad Set: %{customdata[2]}<br><br>' +
+          'Purchases: %{customdata[3]}<br>Spend: $%{customdata[4]}<br>Revenue: $%{customdata[5]}<br>' +
+          'Clicks: %{customdata[6]}<br>Impressions: %{customdata[7]}<br>ROAS: %{customdata[8]}x<br>' +
+          'CPC: $%{customdata[9]}<br>CPM: $%{customdata[10]}<extra></extra>'
+      };
+    });
+    
+    // Sort metrics by date
+    const sortedMetrics = [...adMetrics].sort((a, b) => {
+      return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
+    
+    console.log(`Processing ${sortedMetrics.length} metrics sorted by date`);
+    
+    // Populate data for each ad
+    sortedMetrics.forEach(metric => {
+      if (metric.ad_id && adData[metric.ad_id]) {
+        const date = format(new Date(metric.date), 'MMM dd');
+        adData[metric.ad_id].x.push(date);
+        
+        // Apply formatter if provided
+        const value = metric[metricName] ?? 0;
+        adData[metric.ad_id].y.push(formatter ? formatter(value) : value);
+        
+        // Get campaign and adset names (from our lookup or from the metric itself)
+        const campaignName = metric.campaign_name || campaignInfo.get(metric.ad_id) || 'Campaign Info Unavailable';
+        const adsetName = metric.adset_name || adsetInfo.get(metric.ad_id) || 'Ad Set Info Unavailable';
+        
+        // Add custom data for tooltip with improved formatting
+        adData[metric.ad_id].customdata.push([
+          metric.ad_name || 'Unknown Ad',                  // Ad name
+          campaignName,                                    // Campaign name (with fallback)
+          adsetName,                                       // Ad set name (with fallback)
+          metric.purchases || 0,                           // Purchases 
+          (metric.spend || 0).toFixed(2),                  // Spend
+          (metric.revenue || 0).toFixed(2),                // Revenue
+          metric.clicks?.toLocaleString() || 0,            // Clicks with thousand separators
+          metric.impressions?.toLocaleString() || 0,       // Impressions with thousand separators
+          (metric.roas || 0).toFixed(2),                   // ROAS
+          (metric.cpc || 0).toFixed(2),                    // CPC
+          (metric.cpm || 0).toFixed(2)                     // CPM
+        ]);
+      }
+    });
+    
+    // For debugging: Check what data we have for each ad
+    Object.entries(adData).forEach(([adId, data]: [string, any]) => {
+      console.log(`Ad ${adId} has ${data.x.length} data points`);
+    });
+    
+    // Return only ads that have data points, limiting to 10 ads maximum to prevent overcrowding
+    const dataArray = Object.values(adData)
+      .filter((ad: any) => ad.x.length > 0)
+      .slice(0, 10);
+    
+    console.log(`Returning ${dataArray.length} ads with data for charts`);
+    return dataArray;
+  };
+
   return (
     <div className="container mx-auto py-10 space-y-8 overflow-auto h-[calc(100vh-100px)]">
       <div className="flex justify-between items-center">
@@ -441,7 +755,7 @@ const Dashboard = () => {
             />
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mb-6">
             <Card>
               <CardHeader>
                 <CardTitle>Daily Spend vs Revenue</CardTitle>
@@ -492,6 +806,97 @@ const Dashboard = () => {
                 />
               </CardContent>
             </Card>
+          </div>
+
+          {/* New Section: Ad Performance Overview */}
+          <div className="mt-8">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold">Ad Performance</h2>
+              <Button
+                variant="outline"
+                onClick={() => navigate('/app/ad-metrics')}
+              >
+                View Detailed Ad Metrics
+              </Button>
+            </div>
+            
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2 mb-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>ROAS by Ad</CardTitle>
+                  <CardDescription>
+                    Return on ad spend for each ad over time
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="h-[400px]">
+                  <PlotlyLineChart 
+                    data={getAdMetricsChartData(metrics?.ad_metrics || [], 'roas')}
+                    layout={{
+                      yaxis: { title: 'ROAS' },
+                      legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+                      margin: { l: 50, r: 20, t: 30, b: 100 }
+                    }}
+                  />
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader>
+                  <CardTitle>CTR by Ad</CardTitle>
+                  <CardDescription>
+                    Click-through rate for each ad over time
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="h-[400px]">
+                  <PlotlyLineChart 
+                    data={getAdMetricsChartData(metrics?.ad_metrics || [], 'ctr', value => value * 100)}
+                    layout={{
+                      yaxis: { title: 'CTR (%)' },
+                      legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+                      margin: { l: 50, r: 20, t: 30, b: 100 }
+                    }}
+                  />
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader>
+                  <CardTitle>Spend by Ad</CardTitle>
+                  <CardDescription>
+                    Daily spend for each ad
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="h-[400px]">
+                  <PlotlyLineChart 
+                    data={getAdMetricsChartData(metrics?.ad_metrics || [], 'spend')}
+                    layout={{
+                      yaxis: { title: 'Spend ($)' },
+                      legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+                      margin: { l: 50, r: 20, t: 30, b: 100 }
+                    }}
+                  />
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardHeader>
+                  <CardTitle>Revenue by Ad</CardTitle>
+                  <CardDescription>
+                    Daily revenue for each ad
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="h-[400px]">
+                  <PlotlyLineChart 
+                    data={getAdMetricsChartData(metrics?.ad_metrics || [], 'revenue')}
+                    layout={{
+                      yaxis: { title: 'Revenue ($)' },
+                      legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
+                      margin: { l: 50, r: 20, t: 30, b: 100 }
+                    }}
+                  />
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       )}

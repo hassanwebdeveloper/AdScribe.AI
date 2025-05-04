@@ -5,72 +5,84 @@ import createPlotlyComponent from 'react-plotly.js/factory';
 // Create a Plotly React component
 const Plot = createPlotlyComponent(Plotly);
 
-interface PlotlyChartProps {
+// Types for the charts
+interface PlotlyLineChartProps {
+  data: Array<any>;
+  layout?: Partial<Plotly.Layout>;
+  config?: Partial<Plotly.Config>;
+  onPlotClick?: (data: any) => void;
+}
+
+interface PlotlyBarChartProps {
   data: Array<any>;
   layout?: Partial<Plotly.Layout>;
   config?: Partial<Plotly.Config>;
   className?: string;
 }
 
-export function PlotlyBarChart({
+// Line chart implementation using React-Plotly
+export const PlotlyLineChart = ({
   data,
   layout = {},
-  config = {},
-  className,
-}: PlotlyChartProps) {
+  config = { responsive: true },
+  onPlotClick
+}: PlotlyLineChartProps) => {
   const defaultLayout: Partial<Plotly.Layout> = {
     autosize: true,
-    margin: { l: 50, r: 20, t: 20, b: 50 },
-    barmode: 'group',
+    margin: { l: 50, r: 20, t: 30, b: 50 },
     hovermode: 'closest',
     ...layout,
   };
 
   const defaultConfig: Partial<Plotly.Config> = {
-    responsive: true,
     displayModeBar: false,
-    ...config,
+    displaylogo: false,
+    responsive: true,
+    ...config
+  };
+
+  // Handle click events if needed
+  const handleClick = (data: any) => {
+    if (onPlotClick) {
+      onPlotClick(data);
+    }
   };
 
   return (
-    <div className={`h-[300px] w-full ${className || ''}`}>
-      <Plot
-        data={data}
-        layout={defaultLayout}
-        config={defaultConfig}
-        style={{ width: '100%', height: '100%' }}
-      />
-    </div>
+    <Plot
+      data={data}
+      layout={defaultLayout}
+      config={defaultConfig}
+      onClick={handleClick}
+      style={{ width: '100%', height: '100%' }}
+    />
   );
-}
+};
 
-export function PlotlyLineChart({
+// Bar chart implementation
+export const PlotlyBarChart = ({
   data,
   layout = {},
   config = {},
   className,
-}: PlotlyChartProps) {
+}: PlotlyBarChartProps) => {
   const defaultLayout: Partial<Plotly.Layout> = {
     autosize: true,
-    margin: { l: 50, r: 20, t: 20, b: 50 },
-    hovermode: 'closest',
+    margin: { l: 50, r: 20, t: 30, b: 50 },
     ...layout,
   };
 
-  const defaultConfig: Partial<Plotly.Config> = {
-    responsive: true,
-    displayModeBar: false,
-    ...config,
-  };
-
   return (
-    <div className={`h-[300px] w-full ${className || ''}`}>
-      <Plot
-        data={data}
-        layout={defaultLayout}
-        config={defaultConfig}
-        style={{ width: '100%', height: '100%' }}
-      />
-    </div>
+    <Plot
+      data={data}
+      layout={defaultLayout}
+      config={{
+        displayModeBar: false,
+        responsive: true,
+        ...config,
+      }}
+      className={className}
+      style={{ width: '100%', height: '100%' }}
+    />
   );
-} 
+}; 

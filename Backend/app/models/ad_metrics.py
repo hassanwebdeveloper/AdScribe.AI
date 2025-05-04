@@ -1,6 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from bson import ObjectId
 
 
@@ -58,4 +58,99 @@ class AdMetricsResponse(BaseModel):
         "populate_by_name": True,
         "arbitrary_types_allowed": True,
         "json_encoders": {ObjectId: str}
-    } 
+    }
+
+
+class PeriodMetrics(BaseModel):
+    start_date: str
+    end_date: str
+    roas: float = 0
+    ctr: float = 0
+    cpc: float = 0
+    cpm: float = 0
+    conversions: int = 0
+    spend: float = 0
+    revenue: float = 0
+
+
+class DailyMetric(BaseModel):
+    date: str
+    spend: float = 0
+    revenue: float = 0
+    clicks: int = 0
+    impressions: int = 0
+    purchases: int = 0
+    ctr: float = 0
+    roas: float = 0
+    ad_id: Optional[str] = None
+    ad_name: Optional[str] = None
+
+
+class RefreshStatus(BaseModel):
+    metrics_fetched: bool = False
+    has_complete_data: bool = False
+    force_refresh_attempted: bool = False
+
+
+class AdDailyMetric(BaseModel):
+    date: str
+    ad_id: str
+    ad_name: str
+    spend: float = 0
+    revenue: float = 0
+    clicks: int = 0
+    impressions: int = 0
+    purchases: int = 0
+    ctr: float = 0
+    cpc: float = 0
+    cpm: float = 0
+    roas: float = 0
+
+
+class UniqueAd(BaseModel):
+    ad_id: str
+    ad_name: str
+
+
+class DashboardResponse(BaseModel):
+    current_period: PeriodMetrics
+    previous_period: PeriodMetrics
+    daily_metrics: List[DailyMetric] = Field(default_factory=list)
+    refresh_status: RefreshStatus = Field(default_factory=RefreshStatus)
+    ad_metrics: List[AdDailyMetric] = Field(default_factory=list)
+    unique_ads: List[Dict[str, str]] = Field(default_factory=list)
+
+
+class AdMetrics(BaseModel):
+    user_id: str
+    ad_id: str
+    ad_account_id: str
+    collected_at: datetime
+    spend: float
+    impressions: int
+    clicks: int
+    purchases: int
+    purchases_value: float
+    ctr: float
+    cpc: float
+    cpm: float
+    roas: float
+    additional_metrics: Dict[str, Any] = {}
+
+
+class AdMetricsResponse(BaseModel):
+    id: str
+    user_id: str
+    ad_id: str
+    ad_account_id: str
+    collected_at: datetime
+    spend: float
+    impressions: int
+    clicks: int
+    purchases: int
+    purchases_value: float
+    ctr: float
+    cpc: float
+    cpm: float
+    roas: float
+    additional_metrics: Dict[str, Any] = {} 

@@ -13,15 +13,15 @@ import {
 } from "@/components/ui/popover";
 
 interface DateRangePickerProps {
-  value: DateRange;
-  onChange: (value: DateRange) => void;
   className?: string;
+  value: DateRange;
+  onChange: (date: DateRange | undefined) => void;
 }
 
 export function DateRangePicker({
-  value,
-  onChange,
   className,
+  value,
+  onChange
 }: DateRangePickerProps) {
   return (
     <div className={cn("grid gap-2", className)}>
@@ -31,7 +31,7 @@ export function DateRangePicker({
             id="date"
             variant={"outline"}
             className={cn(
-              "w-[260px] justify-start text-left font-normal",
+              "w-[300px] justify-start text-left font-normal",
               !value && "text-muted-foreground"
             )}
           >

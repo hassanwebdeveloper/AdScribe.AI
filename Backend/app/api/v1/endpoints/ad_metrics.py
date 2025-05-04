@@ -43,11 +43,36 @@ class RefreshStatus(BaseModel):
     has_complete_data: bool = False
     force_refresh_attempted: bool = False
 
+class AdDailyMetric(BaseModel):
+    date: str
+    ad_id: str
+    ad_name: str
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
+    adset_id: Optional[str] = None
+    adset_name: Optional[str] = None
+    spend: float = 0
+    revenue: float = 0
+    clicks: int = 0
+    impressions: int = 0
+    purchases: int = 0
+    ctr: float = 0
+    cpc: float = 0
+    cpm: float = 0
+    roas: float = 0
+
 class DashboardResponse(BaseModel):
     current_period: PeriodMetrics
     previous_period: PeriodMetrics
     daily_metrics: List[DailyMetric] = Field(default_factory=list)
     refresh_status: RefreshStatus = Field(default_factory=RefreshStatus)
+    ad_metrics: List[AdDailyMetric] = Field(default_factory=list)
+    unique_ads: List[Dict[str, str]] = Field(default_factory=list)
+
+class AdMetricsByAdResponse(BaseModel):
+    ad_metrics: List[AdDailyMetric] = Field(default_factory=list)
+    unique_ads: List[Dict[str, str]] = Field(default_factory=list)
+    date_range: Dict[str, str] = Field(default_factory=dict)
 
 # Use lazy loading for scheduler service
 def get_scheduler_service():
@@ -211,19 +236,51 @@ async def get_dashboard_metrics(
             start_date=start_date_obj,
             end_date=end_date_obj,
         )
+        
+        # Get ad-level metrics for the period
+        ad_metrics_response = await get_metrics_by_ad(
+            start_date=start_date,
+            end_date=end_date,
+            force_refresh=False,  # We already refreshed if needed
+            current_user=current_user
+        )
+        
+        # Add ad_id and ad_name to daily metrics if available
+        enhanced_daily_metrics = daily_metrics
+        if ad_metrics_response and ad_metrics_response.ad_metrics:
+            # Create a lookup from date to ad details
+            ad_lookup = {}
+            for ad_metric in ad_metrics_response.ad_metrics:
+                if ad_metric.date not in ad_lookup:
+                    ad_lookup[ad_metric.date] = []
+                ad_lookup[ad_metric.date].append({
+                    "ad_id": ad_metric.ad_id,
+                    "ad_name": ad_metric.ad_name
+                })
+            
+            # Enhance daily metrics with ad information
+            for daily_metric in enhanced_daily_metrics:
+                date_str = daily_metric["date"]
+                if date_str in ad_lookup:
+                    # Use the first ad for this date as representative
+                    if ad_lookup[date_str]:
+                        daily_metric["ad_id"] = ad_lookup[date_str][0]["ad_id"]
+                        daily_metric["ad_name"] = ad_lookup[date_str][0]["ad_name"]
 
         # Return the dashboard data
         response = {
             "current_period": {"start_date": start_date, "end_date": end_date, **current_agg_metrics},
             "previous_period": {"start_date": prev_start_date, "end_date": prev_end_date, **prev_agg_metrics},
-            "daily_metrics": daily_metrics,
+            "daily_metrics": enhanced_daily_metrics,
             "refresh_status": {
                 "metrics_fetched": metrics_fetched,
                 "has_complete_data": await metrics_service.has_complete_data_for_range(
                     current_user.id, start_date_obj, end_date_obj
                 ),
                 "force_refresh_attempted": force_refresh,
-            }
+            },
+            "ad_metrics": ad_metrics_response.ad_metrics if ad_metrics_response else [],
+            "unique_ads": ad_metrics_response.unique_ads if ad_metrics_response else []
         }
         
         logger.info(f"Dashboard response refresh_status: {response['refresh_status']}")
@@ -269,4 +326,156 @@ async def trigger_metrics_collection(current_user: User = Depends(get_current_us
     scheduler_service = get_scheduler_service()
     await scheduler_service.schedule_metrics_collection_for_user(current_user.id)
     
-    return {"message": "Metrics collection scheduled"} 
+    return {"message": "Metrics collection scheduled"}
+
+@router.get("/by-ad/", response_model=AdMetricsByAdResponse)
+async def get_metrics_by_ad(
+    start_date: str,
+    end_date: str,
+    force_refresh: bool = False,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get daily metrics broken down by ad for the specified date range.
+    Returns metrics for each ad for each day in the range.
+    """
+    try:
+        # Parse dates
+        try:
+            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
+            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
+        except ValueError as e:
+            logger.error(f"Invalid date format: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
+
+        logger.info(f"Metrics by ad request: start_date={start_date}, end_date={end_date}, force_refresh={force_refresh}")
+        
+        # Check if we have complete data for the requested period
+        has_complete_data = await metrics_service.has_complete_data_for_range(
+            current_user.id, start_date_obj, end_date_obj
+        )
+        logger.info(f"Has complete data for requested period: {has_complete_data}")
+
+        # Get FB credentials for the user
+        user_service = UserService()
+        fb_credentials = await user_service.get_facebook_credentials(current_user.id)
+        
+        # Check if credentials are valid
+        has_credentials = (
+            bool(fb_credentials) and 
+            'access_token' in fb_credentials and 
+            'account_id' in fb_credentials
+        )
+        
+        # Determine if we need to fetch data from Facebook (only if we have credentials)
+        need_to_fetch = (force_refresh or not has_complete_data) and has_credentials
+        
+        # If we don't have complete data and have credentials, try to fetch from Facebook
+        if need_to_fetch:
+            logger.info(f"Attempting to fetch metrics from Facebook for user {current_user.id}")
+            try:
+                # Use time_increment=1 to get daily breakdown
+                await metrics_service.fetch_metrics_from_facebook(
+                    user_id=current_user.id,
+                    start_date=start_date_obj,
+                    end_date=end_date_obj,
+                    credentials=fb_credentials
+                )
+            except Exception as e:
+                logger.error(f"Error fetching metrics from Facebook: {str(e)}")
+                # Continue with available data
+        
+        # Get raw metrics for the date range
+        metrics = await metrics_service.get_metrics_by_date_range(current_user.id, start_date, end_date)
+        
+        if not metrics:
+            return AdMetricsByAdResponse(
+                ad_metrics=[],
+                unique_ads=[],
+                date_range={"start_date": start_date, "end_date": end_date}
+            )
+        
+        # Process metrics to get daily values by ad
+        ad_metrics = []
+        unique_ads = {}  # Keep track of unique ads
+
+        # Group metrics by date and ad_id
+        metrics_by_date_and_ad = {}
+        
+        for metric in metrics:
+            collected_at = metric.get("collected_at")
+            date_str = collected_at.strftime("%Y-%m-%d") if isinstance(collected_at, datetime) else str(collected_at).split("T")[0]
+            ad_id = metric.get("ad_id", "unknown")
+            ad_name = metric.get("ad_name", "Unknown Ad")
+            
+            # Track unique ads
+            if ad_id not in unique_ads:
+                unique_ads[ad_id] = {
+                    "ad_id": ad_id, 
+                    "ad_name": ad_name,
+                    "campaign_id": metric.get("campaign_id", None),
+                    "campaign_name": metric.get("campaign_name", None),
+                    "adset_id": metric.get("adset_id", None),
+                    "adset_name": metric.get("adset_name", None)
+                }
+            
+            # Create key for grouping
+            key = f"{date_str}_{ad_id}"
+            
+            additional = metric.get("additional_metrics", {})
+            current_spend = float(additional.get("spend", 0))
+            current_clicks = int(additional.get("clicks", 0))
+            current_impressions = int(additional.get("impressions", 0))
+            current_purchases = int(metric.get("purchases", 0))
+            current_revenue = float(additional.get("purchases_value", 0))
+            
+            # Calculate derived metrics
+            current_ctr = current_clicks / current_impressions if current_impressions > 0 else 0
+            current_cpc = current_spend / current_clicks if current_clicks > 0 else 0
+            current_cpm = (current_spend / current_impressions) * 1000 if current_impressions > 0 else 0
+            current_roas = current_revenue / current_spend if current_spend > 0 else 0
+            
+            if key not in metrics_by_date_and_ad:
+                metrics_by_date_and_ad[key] = {
+                    "date": date_str,
+                    "ad_id": ad_id,
+                    "ad_name": ad_name,
+                    "campaign_id": metric.get("campaign_id", None),
+                    "campaign_name": metric.get("campaign_name", None),
+                    "adset_id": metric.get("adset_id", None),
+                    "adset_name": metric.get("adset_name", None),
+                    "spend": current_spend,
+                    "clicks": current_clicks,
+                    "impressions": current_impressions,
+                    "purchases": current_purchases,
+                    "revenue": current_revenue,
+                    "ctr": current_ctr,
+                    "cpc": current_cpc,
+                    "cpm": current_cpm,
+                    "roas": current_roas
+                }
+            else:
+                # Take the highest value for each metric
+                metrics_by_date_and_ad[key]["spend"] = max(metrics_by_date_and_ad[key]["spend"], current_spend)
+                metrics_by_date_and_ad[key]["clicks"] = max(metrics_by_date_and_ad[key]["clicks"], current_clicks)
+                metrics_by_date_and_ad[key]["impressions"] = max(metrics_by_date_and_ad[key]["impressions"], current_impressions)
+                metrics_by_date_and_ad[key]["purchases"] = max(metrics_by_date_and_ad[key]["purchases"], current_purchases)
+                metrics_by_date_and_ad[key]["revenue"] = max(metrics_by_date_and_ad[key]["revenue"], current_revenue)
+                metrics_by_date_and_ad[key]["ctr"] = max(metrics_by_date_and_ad[key]["ctr"], current_ctr)
+                metrics_by_date_and_ad[key]["cpc"] = max(metrics_by_date_and_ad[key]["cpc"], current_cpc)
+                metrics_by_date_and_ad[key]["cpm"] = max(metrics_by_date_and_ad[key]["cpm"], current_cpm)
+                metrics_by_date_and_ad[key]["roas"] = max(metrics_by_date_and_ad[key]["roas"], current_roas)
+        
+        # Convert to list and sort by date and ad_id
+        ad_metrics = list(metrics_by_date_and_ad.values())
+        ad_metrics.sort(key=lambda x: (x["date"], x["ad_id"]))
+        
+        return AdMetricsByAdResponse(
+            ad_metrics=ad_metrics,
+            unique_ads=list(unique_ads.values()),
+            date_range={"start_date": start_date, "end_date": end_date}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting metrics by ad: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e)) 
