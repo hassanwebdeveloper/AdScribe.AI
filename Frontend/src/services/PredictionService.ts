@@ -161,19 +161,25 @@ class PredictionService {
   ): Promise<PredictionResponse> {
     try {
       const useTimeSeries = options.useTimeSeries !== undefined ? options.useTimeSeries : true;
+      console.log(`🚀 PredictionService.getBestPerformingAd - useTimeSeries: ${useTimeSeries}`);
+      
+      const params = {
+        start_date: startDate,
+        end_date: endDate,
+        days_to_predict: daysToPredict,
+        use_time_series: useTimeSeries
+      };
+      
+      console.log('🔄 API Request params:', params);
       
       const response = await axios.get('/api/v1/predictions/best-ad', {
-        params: {
-          start_date: startDate,
-          end_date: endDate,
-          days_to_predict: daysToPredict,
-          use_time_series: useTimeSeries
-        },
+        params,
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`
         }
       });
       
+      console.log(`📥 API Response status: ${response.status}`);
       return response.data;
     } catch (error) {
       console.error('Error in getBestPerformingAd:', error);

@@ -106,6 +106,7 @@ async def get_best_performing_ad(
     """
     Find the best performing ad based on predicted metrics.
     Uses time series forecasting by default for more accurate predictions.
+    If use_time_series is False, only returns the best ad based on frequency analysis without predictions.
     """
     if use_time_series:
         prediction_service = TimeSeriesPredictionService()
@@ -128,6 +129,25 @@ async def get_best_performing_ad(
             days_to_predict=days_to_predict,
             use_time_series=use_time_series
         )
+        
+        # If use_time_series is False, return only the best ad without predictions
+        if not use_time_series and result["success"] and result["best_ad"]:
+            # Find the historical data for the best ad
+            best_ad_id = result["best_ad"]["ad_id"]
+            best_ad_historical = []
+            
+            # Find the data for the best ad in the result predictions
+            for prediction in result["predictions"]:
+                if prediction["ad_id"] == best_ad_id:
+                    best_ad_historical = prediction.get("historical", [])
+                    break
+            
+            return {
+                "success": True,
+                "best_ad": result["best_ad"],
+                "predictions": [],  # Empty predictions when not using time series
+                "historical": best_ad_historical  # Include historical data even in frequency mode
+            }
         
         # If we have a successful result with a best_ad, return it
         if result["success"] and result["best_ad"]:

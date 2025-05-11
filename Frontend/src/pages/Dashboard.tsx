@@ -104,6 +104,7 @@ const Dashboard = () => {
   const [isPredicting, setIsPredicting] = useState<boolean>(false);
   const [bestAd, setBestAd] = useState<BestAdPrediction | null>(null);
   const [useTimeSeries, setUseTimeSeries] = useState<boolean>(true);
+  const [timeSeriesToggled, setTimeSeriesToggled] = useState<boolean>(false);
 
   // Add state for historical and prediction data
   const [adPredictions, setAdPredictions] = useState<AdMetrics[]>([]);
@@ -283,11 +284,14 @@ const Dashboard = () => {
     if (!user) return;
     
     setIsPredicting(true);
+    console.log(`⭐ Starting prediction with use_time_series=${useTimeSeries}`);
     
     try {
       // Use the same date range as the dashboard
       const startDate = format(dateRange.from || subDays(new Date(), 7), 'yyyy-MM-dd');
       const endDate = format(dateRange.to || new Date(), 'yyyy-MM-dd');
+      
+      console.log(`🔍 API call params: startDate=${startDate}, endDate=${endDate}, useTimeSeries=${useTimeSeries}`);
       
       // Call prediction service with time series option
       const result = await PredictionService.getBestPerformingAd(
@@ -297,11 +301,22 @@ const Dashboard = () => {
         { useTimeSeries }
       );
       
+      console.log(`✅ API response received: success=${result.success}, predictions count=${result.predictions?.length || 0}, historical count=${result.historical?.length || 0}`);
+      
       if (result.success && result.best_ad) {
-        console.log(`Best performing ad (${useTimeSeries ? 'time series' : 'frequency-based'} prediction):`, result.best_ad);
+        console.log(`📊 Best performing ad (${useTimeSeries ? 'time series' : 'frequency-based'} prediction):`, result.best_ad);
         setBestAd(result.best_ad);
-        setAdPredictions(result.predictions || []);
+        
+        // Set historical data regardless of time series mode
         setHistoricalMetrics(result.historical || []);
+        
+        // Only set predictions data if using time series
+        if (useTimeSeries) {
+          setAdPredictions(result.predictions || []);
+        } else {
+          // Clear predictions when not using time series
+          setAdPredictions([]);
+        }
         
         // Show a toast notification about the prediction
         toast({
@@ -340,6 +355,15 @@ const Dashboard = () => {
       setIsPredicting(false);
     }
   };
+
+  // New useEffect to handle the toggle state change
+  useEffect(() => {
+    // Skip on initial render by checking the timeSeriesToggled flag
+    if (timeSeriesToggled && user && !isLoading) {
+      console.log(`useTimeSeries state changed to: ${useTimeSeries}`);
+      predictBestPerformingAd();
+    }
+  }, [useTimeSeries, timeSeriesToggled]);
 
   // Fetch metrics when date range changes
   useEffect(() => {
@@ -782,90 +806,96 @@ const Dashboard = () => {
     return dataArray;
   };
 
-  // Create a helper function to prepare chart data with both historical and prediction data
+  // Prepare data for prediction charts with best performing ad
   const getPredictionChartData = (metric: string, formatter?: (value: number) => number) => {
-    if (!bestAd || !adPredictions.length) return [];
+    // If best ad is not loaded, return empty data
+    if (!bestAd) return [];
     
-    // Format dates for x-axis (historical + prediction dates)
-    const formattedHistorical = historicalMetrics.map(item => ({
-      ...item,
-      formattedDate: format(parseISO(item.date), 'MMM dd')
-    })).sort((a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime());
-    
-    const formattedPredictions = adPredictions.map(item => ({
-      ...item,
-      formattedDate: format(parseISO(item.date), 'MMM dd')
-    })).sort((a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime());
-    
-    // Historical line trace
+    // Historical data trace - always included regardless of mode
     const historicalTrace = {
-      x: formattedHistorical.map(d => d.formattedDate),
-      y: formattedHistorical.map(d => metric === 'ctr' && formatter ? formatter(d[metric]) : d[metric]),
+      x: historicalMetrics.map(item => item.date),
+      y: historicalMetrics.map(item => {
+        const value = item[metric as keyof typeof item] as number;
+        return formatter ? formatter(value) : value;
+      }),
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Historical',
-      line: { color: 'rgba(99, 102, 241, 1)', width: 2 },
-      marker: { size: 5 }
+      line: {
+        color: '#4c6ef5',
+      },
+      marker: {
+        size: 6,
+      },
     };
     
-    // Prediction line trace
-    const color = metric === 'roas' ? 'rgba(34, 197, 94, 1)' : 
-                 metric === 'ctr' ? 'rgba(99, 102, 241, 1)' :
-                 metric === 'revenue' ? 'rgba(236, 72, 153, 1)' : 'rgba(168, 85, 247, 1)';
+    // If not using time series or no predictions, return only historical data
+    if (!useTimeSeries || !adPredictions.length) {
+      return [historicalTrace];
+    }
     
+    // Prediction data trace - only included in time series mode
     const predictionTrace = {
-      x: formattedPredictions.map(d => d.formattedDate),
-      y: formattedPredictions.map(d => metric === 'ctr' && formatter ? formatter(d[metric]) : d[metric]),
+      x: adPredictions.map(item => item.date),
+      y: adPredictions.map(item => {
+        const value = item[metric as keyof typeof item] as number;
+        return formatter ? formatter(value) : value;
+      }),
       type: 'scatter',
       mode: 'lines+markers',
       name: 'Prediction',
-      line: { color, width: 3, dash: 'dot' },
-      marker: { size: 7 }
+      line: {
+        color: '#40c057',
+        dash: 'dot',
+      },
+      marker: {
+        size: 6,
+      },
     };
     
-    // Add confidence intervals
+    // Error margin lower bound
+    const marginFactor = {
+      roas: 0.15,    // 15% error margin for ROAS
+      ctr: 0.10,     // 10% error margin for CTR
+      conversions: 0.20, // 20% error margin for conversions
+      revenue: 0.20   // 20% error margin for revenue
+    };
+    
+    const errorFactor = marginFactor[metric as keyof typeof marginFactor] || 0.15;
+    
     const lowerBoundTrace = {
-      x: formattedPredictions.map(d => d.formattedDate),
-      y: formattedPredictions.map(d => {
-        let value = d[metric];
-        // Apply a reasonable error margin based on the metric type
-        const errorFactor = metric === 'roas' ? 0.25 : 
-                            metric === 'ctr' ? 0.2 :
-                            metric === 'conversions' ? 0.3 : 0.25;
-                            
-        // Apply the formatter if needed, but after the calculation
-        value = value * (1 - errorFactor);
-        return metric === 'ctr' && formatter ? formatter(value) : value;
+      x: adPredictions.map(item => item.date),
+      y: adPredictions.map(item => {
+        const value = item[metric as keyof typeof item] as number;
+        const adjustedValue = value * (1 - errorFactor);
+        return formatter ? formatter(adjustedValue) : adjustedValue;
       }),
       type: 'scatter',
       mode: 'lines',
-      name: 'Lower Bound',
-      line: { width: 0 },
+      line: {
+        width: 0,
+      },
       showlegend: false,
-      hoverinfo: 'none'
+      hoverinfo: 'none',
     };
     
+    // Error margin upper bound
     const upperBoundTrace = {
-      x: formattedPredictions.map(d => d.formattedDate),
-      y: formattedPredictions.map(d => {
-        let value = d[metric];
-        // Apply a reasonable error margin based on the metric type
-        const errorFactor = metric === 'roas' ? 0.25 : 
-                            metric === 'ctr' ? 0.2 :
-                            metric === 'conversions' ? 0.3 : 0.25;
-                            
-        // Apply the formatter if needed, but after the calculation
-        value = value * (1 + errorFactor);
-        return metric === 'ctr' && formatter ? formatter(value) : value;
+      x: adPredictions.map(item => item.date),
+      y: adPredictions.map(item => {
+        const value = item[metric as keyof typeof item] as number;
+        const adjustedValue = value * (1 + errorFactor);
+        return formatter ? formatter(adjustedValue) : adjustedValue;
       }),
       type: 'scatter',
       mode: 'lines',
-      name: 'Upper Bound',
+      line: {
+        width: 0,
+      },
       fill: 'tonexty',
-      fillcolor: `${color.replace('1)', '0.15)')}`,
-      line: { width: 0 },
+      fillcolor: 'rgba(64, 192, 87, 0.2)',
       showlegend: false,
-      hoverinfo: 'none'
+      hoverinfo: 'none',
     };
     
     return [historicalTrace, predictionTrace, lowerBoundTrace, upperBoundTrace];
@@ -1141,9 +1171,10 @@ const Dashboard = () => {
                       id="time-series-toggle"
                       checked={useTimeSeries}
                       onCheckedChange={(checked) => {
+                        console.log(`Toggle changed to: ${checked}`);
                         setUseTimeSeries(checked);
-                        // Trigger new prediction when toggle changes
-                        predictBestPerformingAd();
+                        setTimeSeriesToggled(true);
+                        // The useEffect hook will handle the API call
                       }}
                     />
                   </div>
@@ -1196,14 +1227,18 @@ const Dashboard = () => {
                     </CardContent>
                   </Card>
 
-                  {/* Prediction Charts Grid */}
+                  {/* Prediction Charts Grid - Always shown, but with different content based on mode */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {/* ROAS Prediction Chart */}
+                    {/* ROAS Chart */}
                     <Card>
                       <CardHeader>
-                        <CardTitle className="text-lg">ROAS Prediction</CardTitle>
+                        <CardTitle className="text-lg">
+                          {useTimeSeries ? "ROAS Prediction" : "ROAS History"}
+                        </CardTitle>
                         <CardDescription>
-                          Predicted return on ad spend over time
+                          {useTimeSeries 
+                            ? "Predicted return on ad spend over time" 
+                            : "Historical return on ad spend for best ad"}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="h-[300px]">
@@ -1219,12 +1254,16 @@ const Dashboard = () => {
                       </CardContent>
                     </Card>
 
-                    {/* CTR Prediction Chart */}
+                    {/* CTR Chart */}
                     <Card>
                       <CardHeader>
-                        <CardTitle className="text-lg">CTR Prediction</CardTitle>
+                        <CardTitle className="text-lg">
+                          {useTimeSeries ? "CTR Prediction" : "CTR History"}
+                        </CardTitle>
                         <CardDescription>
-                          Predicted click-through rate over time
+                          {useTimeSeries 
+                            ? "Predicted click-through rate over time" 
+                            : "Historical click-through rate for best ad"}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="h-[300px]">
@@ -1240,12 +1279,16 @@ const Dashboard = () => {
                       </CardContent>
                     </Card>
 
-                    {/* Revenue Prediction Chart */}
+                    {/* Revenue Chart */}
                     <Card>
                       <CardHeader>
-                        <CardTitle className="text-lg">Revenue Prediction</CardTitle>
+                        <CardTitle className="text-lg">
+                          {useTimeSeries ? "Revenue Prediction" : "Revenue History"}
+                        </CardTitle>
                         <CardDescription>
-                          Predicted revenue over time
+                          {useTimeSeries 
+                            ? "Predicted revenue over time" 
+                            : "Historical revenue for best ad"}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="h-[300px]">
@@ -1261,12 +1304,16 @@ const Dashboard = () => {
                       </CardContent>
                     </Card>
 
-                    {/* Conversions Prediction Chart */}
+                    {/* Conversions Chart */}
                     <Card>
                       <CardHeader>
-                        <CardTitle className="text-lg">Conversions Prediction</CardTitle>
+                        <CardTitle className="text-lg">
+                          {useTimeSeries ? "Conversions Prediction" : "Conversions History"}
+                        </CardTitle>
                         <CardDescription>
-                          Predicted conversions over time
+                          {useTimeSeries 
+                            ? "Predicted conversions over time" 
+                            : "Historical conversions for best ad"}
                         </CardDescription>
                       </CardHeader>
                       <CardContent className="h-[300px]">

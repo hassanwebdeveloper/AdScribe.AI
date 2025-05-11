@@ -247,22 +247,60 @@ class PredictionService:
                 ad_id = ad["ad_id"]
                 ad_name = ad.get("ad_name", "Unknown Ad")
                 
-                prediction = await self.predict_ad_metrics(
-                    user_id=user_id,
-                    ad_id=ad_id,
-                    start_date=start_date,
-                    end_date=end_date,
-                    days_to_predict=days_to_predict
-                )
-                
-                if prediction["success"] and prediction["predictions"]:
-                    # Add ad_name to each prediction
-                    for pred in prediction["predictions"]:
-                        pred["ad_name"] = ad_name
+                if use_time_series:
+                    # Get full predictions with time series forecasting
+                    prediction = await self.predict_ad_metrics(
+                        user_id=user_id,
+                        ad_id=ad_id,
+                        start_date=start_date,
+                        end_date=end_date,
+                        days_to_predict=days_to_predict
+                    )
                     
-                    all_predictions.append(prediction)
+                    if prediction["success"] and prediction["predictions"]:
+                        # Add ad_name to each prediction
+                        for pred in prediction["predictions"]:
+                            pred["ad_name"] = ad_name
+                        
+                        all_predictions.append(prediction)
+                else:
+                    # For frequency-based analysis, we only need historical data
+                    historical_metrics = await self._get_ad_historical_metrics(
+                        user_id=user_id,
+                        ad_id=ad_id,
+                        start_date=start_date,
+                        end_date=end_date
+                    )
+                    
+                    # Get ad details
+                    ad_info = await self._get_ad_details(user_id, ad_id)
+                    ad_title = ad_info.get("ad_title", "")
+                    
+                    # Format historical data
+                    formatted_historical = []
+                    for metric in historical_metrics:
+                        historical_point = {
+                            "date": metric.get("date", ""),
+                            "ad_id": ad_id,
+                            "ad_name": ad_name,
+                            "ad_title": ad_title
+                        }
+                        
+                        for field in ["roas", "ctr", "cpc", "cpm", "conversions", "revenue", "spend"]:
+                            if field in metric:
+                                historical_point[field] = float(metric[field])
+                        
+                        formatted_historical.append(historical_point)
+                    
+                    if formatted_historical:
+                        all_predictions.append({
+                            "ad_id": ad_id,
+                            "historical": formatted_historical,
+                            "predictions": [],  # Empty predictions for frequency-based mode
+                            "success": True
+                        })
             
-            # Find the best performing ad based on multiple metrics
+            # Find the best performing ad
             best_ad = self._find_best_performing_ad(all_predictions, use_time_series)
             
             return {
@@ -345,56 +383,71 @@ class PredictionService:
             best_ad_id = max(ad_scores.keys(), key=lambda x: ad_scores[x]["score"])
             return ad_scores[best_ad_id]
         else:
-            # New frequency-based scoring system
+            # Frequency-based scoring system
             metrics_to_track = ["roas", "ctr", "conversions", "revenue"]
             ad_frequencies = {}
             
-            # For each day in the date range
+            # For each ad, analyze historical data
             for prediction in all_predictions:
                 ad_id = prediction["ad_id"]
-                if not prediction.get("predictions"):
+                historical_data = prediction.get("historical", [])
+                
+                if not historical_data:
                     continue
                 
                 if ad_id not in ad_frequencies:
+                    first_historical = historical_data[0] if historical_data else {}
+                    ad_name = first_historical.get("ad_name", "Unknown Ad")
+                    ad_title = first_historical.get("ad_title", "")
+                    
                     ad_frequencies[ad_id] = {
                         "ad_id": ad_id,
-                        "ad_name": prediction["predictions"][0].get("ad_name", "Unknown Ad"),
-                        "ad_title": prediction["predictions"][0].get("ad_title", ""),
+                        "ad_name": ad_name,
+                        "ad_title": ad_title,
                         "top_metrics_count": 0,
-                        "total_days": len(prediction["predictions"]),
+                        "total_days": len(historical_data),
                         "metrics_sum": {metric: 0 for metric in metrics_to_track}
                     }
                 
-                # For each day's prediction
-                for day_prediction in prediction["predictions"]:
-                    # Check if this ad had the highest value for any metric on this day
+                # For each day in historical data
+                for day_data in historical_data:
+                    date = day_data.get("date", "")
+                    
+                    # Sum up the metrics for averaging
                     for metric in metrics_to_track:
-                        if metric in day_prediction:
-                            # Get all values for this metric across all ads for this day
+                        if metric in day_data:
+                            ad_frequencies[ad_id]["metrics_sum"][metric] += day_data[metric]
+                            
+                            # Get all values for this metric across all ads for this date
                             all_values = [
-                                p["predictions"][i][metric]
+                                h_data[metric]
                                 for p in all_predictions
-                                for i, pred in enumerate(p["predictions"])
-                                if pred["date"] == day_prediction["date"]
-                                and metric in pred
+                                for h_data in p.get("historical", [])
+                                if h_data.get("date") == date and metric in h_data
                             ]
                             
-                            # If this ad had the highest value for this metric
-                            if all_values and day_prediction[metric] == max(all_values):
+                            # If this ad had the highest value for this metric on this day
+                            if all_values and day_data[metric] == max(all_values):
                                 ad_frequencies[ad_id]["top_metrics_count"] += 1
-                            
-                            # Sum up the metrics for averaging
-                            ad_frequencies[ad_id]["metrics_sum"][metric] += day_prediction[metric]
             
             # Calculate final scores and averages
             for ad_id, data in ad_frequencies.items():
-                # Calculate average metrics
-                data["average_metrics"] = {
-                    metric: data["metrics_sum"][metric] / data["total_days"]
-                    for metric in metrics_to_track
-                }
-                # Score is the percentage of times this ad was top performer
-                data["score"] = (data["top_metrics_count"] / (data["total_days"] * len(metrics_to_track))) * 100
+                if data["total_days"] > 0:
+                    # Calculate average metrics
+                    data["average_metrics"] = {
+                        metric: data["metrics_sum"][metric] / data["total_days"]
+                        for metric in metrics_to_track
+                    }
+                    # Score is the percentage of times this ad was top performer
+                    total_possible = data["total_days"] * len(metrics_to_track)
+                    if total_possible > 0:
+                        data["score"] = (data["top_metrics_count"] / total_possible) * 100
+                    else:
+                        data["score"] = 0
+                else:
+                    data["average_metrics"] = {metric: 0 for metric in metrics_to_track}
+                    data["score"] = 0
+                    
                 # Remove the temporary metrics_sum
                 del data["metrics_sum"]
             
