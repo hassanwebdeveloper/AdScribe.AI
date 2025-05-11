@@ -53,7 +53,7 @@ class TimeSeriesPredictionService:
             # First, get historical metrics for this ad
             historical_metrics = await self._get_ad_historical_metrics(user_id, ad_id, start_date, end_date)
             
-            if not historical_metrics or len(historical_metrics) < 3:
+            if not historical_metrics or len(historical_metrics) < 1:
                 logger.warning(f"Not enough historical data for ad {ad_id} to make predictions")
                 return {
                     "ad_id": ad_id,
@@ -111,6 +111,19 @@ class TimeSeriesPredictionService:
                             except:
                                 pass
             
+            # Add a fallback model selection logic based on available data
+            model_type = "simple_average"  # Default for very limited data
+            if days_count >= 14 and has_weekly_pattern:
+                model_type = "sarima"
+            elif days_count >= 10:
+                model_type = "arima"
+            elif days_count >= 5:
+                model_type = "exp_smoothing"
+            elif days_count >= 2:
+                model_type = "trend_extension"
+                
+            logger.info(f"Using {model_type} model for ad {ad_id} with {days_count} days of data")
+            
             # Predict each metric for each future date
             for i, future_date in enumerate(future_dates):
                 day_prediction = {
@@ -145,10 +158,9 @@ class TimeSeriesPredictionService:
                                 recent_slope = slope
                         
                         # Select appropriate model based on data characteristics
-                        if days_count >= 14 and has_weekly_pattern:
-                            # Use SARIMA for data with weekly patterns
+                        if model_type == "sarima":
+                            # SARIMA with weekly seasonality (s=7)
                             try:
-                                # SARIMA with weekly seasonality (s=7)
                                 from statsmodels.tsa.statespace.sarimax import SARIMAX
                                 
                                 # Adjust parameters based on volatility
@@ -166,8 +178,7 @@ class TimeSeriesPredictionService:
                                 model_fit = model.fit()
                                 forecast = model_fit.forecast(steps=i+1)
                                 predicted_value = forecast.iloc[-1]
-                                
-                        elif days_count >= 10:
+                        elif model_type == "arima":
                             # Adjust ARIMA parameters based on data characteristics
                             if is_volatile:
                                 # More complex model for volatile data
@@ -179,8 +190,7 @@ class TimeSeriesPredictionService:
                             model_fit = model.fit()
                             forecast = model_fit.forecast(steps=i+1)
                             predicted_value = forecast.iloc[-1]
-                            
-                        elif days_count >= 5:
+                        elif model_type == "exp_smoothing":
                             # Use Exponential Smoothing with trend component based on data
                             if abs(recent_slope) > 0.1:  # If there's a noticeable trend
                                 model = ExponentialSmoothing(ts_data, trend='add', seasonal=None, damped=True)
@@ -190,12 +200,19 @@ class TimeSeriesPredictionService:
                             model_fit = model.fit()
                             forecast = model_fit.forecast(steps=i+1)
                             predicted_value = forecast.iloc[-1]
-                            
-                        else:
+                        elif model_type == "trend_extension":
                             # For very limited data, use simple average with trend
                             base_value = ts_data.mean()
                             trend_factor = recent_slope * (i + 1) if abs(recent_slope) > 0 else 0
                             predicted_value = base_value + trend_factor
+                        else:  # simple_average
+                            # Simplest model: just repeat the existing value(s)
+                            predicted_value = ts_data.mean()
+                            
+                            # If there's only one data point, we'll just use that value
+                            if len(ts_data) == 1:
+                                logger.info(f"Only one data point for ad {ad_id}, using that value for predictions")
+                                predicted_value = ts_data.iloc[0]
                         
                         # Ensure continuity with historical data
                         if i == 0 and len(ts_data) > 0:
@@ -422,15 +439,39 @@ class TimeSeriesPredictionService:
             start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
             end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
             
+            # Log query parameters for debugging
+            logger.info(f"Querying ad metrics for user_id={user_id}, ad_id={ad_id}, date range={start_date} to {end_date}")
+            
             # Query metrics for this specific ad
-            cursor = self.db.ad_metrics.find({
+            query = {
                 "user_id": user_id,
                 "ad_id": ad_id,
                 "collected_at": {
                     "$gte": start_date_obj,
                     "$lte": end_date_obj
                 }
-            })
+            }
+            
+            # First, count how many metrics match our query
+            count = await self.db.ad_metrics.count_documents(query)
+            logger.info(f"Found {count} metrics records for ad {ad_id}")
+            
+            # If we didn't find any records, try with a more inclusive query (without date range)
+            if count == 0:
+                logger.warning(f"No metrics found for ad {ad_id} in date range, trying without date restriction")
+                query = {
+                    "user_id": user_id,
+                    "ad_id": ad_id,
+                }
+                count = await self.db.ad_metrics.count_documents(query)
+                logger.info(f"Found {count} metrics records for ad {ad_id} without date restriction")
+                
+                # If we still don't have any records, we can't make predictions
+                if count == 0:
+                    return []
+            
+            # Proceed with query (either the original or updated one)
+            cursor = self.db.ad_metrics.find(query)
             
             metrics = await cursor.to_list(length=None)
             
@@ -500,7 +541,7 @@ class TimeSeriesPredictionService:
             
         except Exception as e:
             logger.error(f"Error getting user ads: {str(e)}")
-            return []
+            return [] 
     
     async def _get_ad_details(self, user_id: str, ad_id: str) -> Dict[str, Any]:
         """Get ad details including title."""

@@ -201,55 +201,33 @@ const Dashboard = () => {
         },
         headers: {
           Authorization: `Bearer ${token}`
-        },
-        timeout: 60000 // 60 seconds timeout for Facebook data fetching
+        }
       });
       
-      console.log('Response received:', response.data);
-      console.log('Refresh status:', response.data.refresh_status);
-      
-      // Debug ad metrics data
-      console.log('Ad metrics data length:', response.data.ad_metrics ? response.data.ad_metrics.length : 0);
-      console.log('First few ad metrics items:', response.data.ad_metrics?.slice(0, 3));
-      console.log('Unique ads:', response.data.unique_ads);
-      
-      // Debug for campaign and adset data
-      if (response.data.ad_metrics && response.data.ad_metrics.length > 0) {
-        console.log('Campaign data available:', response.data.ad_metrics.some(m => m.campaign_name));
-        console.log('Adset data available:', response.data.ad_metrics.some(m => m.adset_name));
-        console.log('Sample ad metrics with campaign/adset:', response.data.ad_metrics.find(m => m.campaign_name || m.adset_name));
-      }
-      
-      // Set data & check if we need to refetch
-      if (response.data) {
-        setMetrics(response.data);
+      if (response.status === 200) {
+        // Process the metrics data
+        const metricsData = response.data;
+        setMetrics(metricsData);
         
-        const refreshStatus = response.data.refresh_status;
-        if (refreshStatus) {
-          console.log(`Metrics fetched: ${refreshStatus.metrics_fetched}, Has complete data: ${refreshStatus.has_complete_data}`);
-          
-          // If force refresh was attempted but didn't fetch metrics, show warning
-          if (refreshStatus.force_refresh_attempted && !refreshStatus.metrics_fetched) {
-            toast({
-              title: "Data refresh attempted",
-              description: "We attempted to refresh your data, but no new data was fetched. This could be due to Facebook API limits or credentials issues.",
-              variant: "default",
-            });
-          }
-          
-          // If we still don't have complete data after fetch, show info message
-          if (!refreshStatus.has_complete_data) {
-            toast({
-              title: "Incomplete data",
-              description: "Some data may be missing for the selected date range. Try a narrower range or check your Facebook connection.",
-              variant: "default",
-            });
-          }
+        // After dashboard data is loaded successfully, fetch the best-ad prediction
+        if (metricsData.refresh_status.has_complete_data || metricsData.refresh_status.metrics_fetched) {
+          console.log("Dashboard data loaded, now fetching best ad prediction");
+          // Call the prediction service with same date range
+          predictBestPerformingAd();
         }
         
-        // After fetching metrics, get predictions for best ad
-        if (response.data.ad_metrics && response.data.ad_metrics.length > 0) {
-          predictBestPerformingAd();
+        // If refresh is needed but we're not at max attempts
+        if (
+          metricsData.refresh_status.force_refresh_attempted &&
+          !metricsData.refresh_status.metrics_fetched &&
+          fetchAttempts < 3
+        ) {
+          console.log("Refreshing data, attempt:", fetchAttempts + 1);
+          setForceRefresh(true);
+          setFetchAttempts(prev => prev + 1);
+          setIsFetchingFromFacebook(true);
+        } else {
+          setIsFetchingFromFacebook(false);
         }
       }
     } catch (err: any) {
@@ -266,11 +244,11 @@ const Dashboard = () => {
         // navigate('/login');
       } else {
         setError('Failed to load dashboard data');
-        toast({
-          title: "Error loading data",
-          description: "There was a problem loading your dashboard data. Please try again later.",
-          variant: "destructive",
-        });
+      toast({
+        title: "Error loading data",
+        description: "There was a problem loading your dashboard data. Please try again later.",
+        variant: "destructive",
+      });
       }
     } finally {
       setIsLoading(false);
@@ -921,29 +899,29 @@ const Dashboard = () => {
                 <TabsTrigger value="custom" className="text-xs px-1">Custom</TabsTrigger>
               </TabsList>
             </Tabs>
-            <DateRangePicker 
-              value={dateRange}
-              onChange={handleDateRangePickerChange}
+          <DateRangePicker 
+            value={dateRange}
+            onChange={handleDateRangePickerChange}
               className="w-[220px]"
-            />
+          />
           </div>
-          <Button
+            <Button
             variant="ghost"
             size="icon"
             className="h-10 w-10"
-            onClick={() => {
-              setForceRefresh(true);
-              setFetchAttempts(prev => prev + 1);
-              setIsFetchingFromFacebook(true);
-            }}
-            disabled={isFetchingFromFacebook}
-          >
-            {isFetchingFromFacebook ? (
+              onClick={() => {
+                setForceRefresh(true);
+                setFetchAttempts(prev => prev + 1);
+                setIsFetchingFromFacebook(true);
+              }}
+              disabled={isFetchingFromFacebook}
+            >
+              {isFetchingFromFacebook ? (
               <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
+              ) : (
               <RefreshCcw className="h-5 w-5" />
-            )}
-          </Button>
+              )}
+            </Button>
         </div>
       </div>
 

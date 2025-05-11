@@ -1,13 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
+import logging
 
 from app.services.prediction_service import PredictionService
 from app.services.prediction_time_series import TimeSeriesPredictionService
 from app.core.deps import get_current_user
 from app.models.user import User
+from app.services.metrics_service import MetricsService
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
+logger = logging.getLogger(__name__)
 
 @router.get("/ad/{ad_id}")
 async def predict_ad_metrics(
@@ -101,17 +104,23 @@ async def get_best_performing_ad(
     end_date: str = Query(..., description="End date for historical data (YYYY-MM-DD)"),
     days_to_predict: int = Query(7, description="Number of days to predict into the future"),
     use_time_series: bool = Query(True, description="Whether to use time series forecasting"),
+    force_refresh: bool = Query(False, description="Force refresh data from Facebook API"),
     current_user: User = Depends(get_current_user)
 ):
     """
     Find the best performing ad based on predicted metrics.
     Uses time series forecasting by default for more accurate predictions.
     If use_time_series is False, only returns the best ad based on frequency analysis without predictions.
+    
+    Before making predictions, ensures that all necessary historical data is available.
     """
     if use_time_series:
         prediction_service = TimeSeriesPredictionService()
     else:
         prediction_service = PredictionService()
+    
+    # Create metrics service for data completeness check
+    metrics_service = MetricsService()
     
     try:
         # Validate date formats
@@ -120,6 +129,37 @@ async def get_best_performing_ad(
         
         # Get user_id from current user
         user_id = str(current_user.id)
+        
+        # First ensure data completeness
+        logger.info(f"Ensuring data completeness for prediction for user {user_id} for date range {start_date} to {end_date}")
+        completeness_result = await metrics_service.ensure_data_completeness(
+            user_id=user_id,
+            start_date=start_date,
+            end_date=end_date,
+            force_refresh=force_refresh
+        )
+        
+        logger.info(f"Data completeness result: {completeness_result}")
+        
+        # Handle case when user doesn't have Facebook credentials
+        if completeness_result.get("no_credentials"):
+            logger.info(f"User {user_id} doesn't have Facebook credentials - continuing with existing data")
+            # We'll proceed with prediction using existing data, but log a warning
+        
+        # If we couldn't get complete data and have no historical data, return an error
+        if not completeness_result.get("has_complete_data") and not completeness_result.get("metrics_fetched"):
+            # Check if we already have some data in the database
+            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
+            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
+            has_any_data = await metrics_service.has_any_data_for_range(user_id, start_date_obj, end_date_obj)
+            
+            if not has_any_data:
+                return {
+                    "success": False,
+                    "message": "No historical data available for the selected date range. Please ensure you have ad data for the selected dates.",
+                    "predictions": [],
+                    "historical": []
+                }
         
         # Predict metrics for all ads and get the best one
         result = await prediction_service.predict_all_user_ads(

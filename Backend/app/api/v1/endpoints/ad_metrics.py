@@ -99,122 +99,53 @@ async def get_dashboard_metrics(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Get metrics dashboard for current user.
-    If we don't have complete data for the requested date range,
-    we'll fetch the latest data from Facebook.
+    Get metrics for the dashboard.
     """
+    logger.info(f"Dashboard metrics requested by user {current_user.id} for date range {start_date} to {end_date}")
+    
     try:
         # Parse dates
-        try:
-            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
-            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
-        except ValueError as e:
-            logger.error(f"Invalid date format: {str(e)}")
-            raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
-
-        logger.info(f"Dashboard request: start_date={start_date}, end_date={end_date}, force_refresh={force_refresh}")
+        start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
+        end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
         
-        # Initialize MetricsService
-        metrics_service = MetricsService()
-        
-        # Check if we have complete data for the requested period
-        has_complete_data = await metrics_service.has_complete_data_for_range(
-            current_user.id, start_date_obj, end_date_obj
-        )
-        logger.info(f"Has complete data for current period: {has_complete_data}")
-
-        # Calculate previous period dates (same length as current period)
-        period_length = (end_date_obj - start_date_obj).days
+        # Calculate previous period
+        date_diff = (end_date_obj - start_date_obj).days
         prev_end_date_obj = start_date_obj - timedelta(days=1)
-        prev_start_date_obj = prev_end_date_obj - timedelta(days=period_length)
+        prev_start_date_obj = prev_end_date_obj - timedelta(days=date_diff)
+        
         prev_start_date = prev_start_date_obj.strftime("%Y-%m-%d")
         prev_end_date = prev_end_date_obj.strftime("%Y-%m-%d")
         
-        # Check if we have complete data for the previous period
-        has_prev_complete_data = await metrics_service.has_complete_data_for_range(
-            current_user.id, prev_start_date_obj, prev_end_date_obj
-        )
-        logger.info(f"Has complete data for previous period: {has_prev_complete_data}")
-
-        # Get FB credentials for the user
-        user_service = UserService()
-        fb_credentials = await user_service.get_facebook_credentials(current_user.id)
+        logger.info(f"Previous period: {prev_start_date} to {prev_end_date}")
         
-        # Debug log the full credentials object to see what's happening
-        logger.info(f"Facebook credentials object for user {current_user.id}: {fb_credentials}")
+        # Check for Facebook credentials
+        fb_credentials = None
+        users_collection = await get_users_collection()
+        user = await users_collection.find_one({"_id": ObjectId(current_user.id)})
         
-        # Check what credential fields are present 
-        if hasattr(current_user, 'fb_graph_api_key'):
-            logger.info(f"User has fb_graph_api_key: {bool(current_user.fb_graph_api_key)}")
+        if user and "facebook_credentials" in user:
+            fb_credentials = user.get("facebook_credentials", {})
         
-        if hasattr(current_user, 'fb_ad_account_id'):
-            logger.info(f"User has fb_ad_account_id: {bool(current_user.fb_ad_account_id)}")
-        
-        if hasattr(current_user, 'facebook_credentials'):
-            logger.info(f"User has facebook_credentials: {bool(current_user.facebook_credentials)}")
-        
-        # We need both access_token and account_id for valid credentials
-        has_credentials = (
-            bool(fb_credentials) and 
-            'access_token' in fb_credentials and 
-            'account_id' in fb_credentials
-        )
-        
-        logger.info(f"User {current_user.id} has complete Facebook credentials: {has_credentials}")
-        
-        if has_credentials:
-            # Log details of the credentials (careful with sensitive data)
-            logger.info(f"Account ID: {fb_credentials.get('account_id')}")
-            token = fb_credentials.get('access_token', '')
-            if token:
-                masked_token = token[:5] + '*****' + token[-5:] if len(token) > 10 else '*****'
-                logger.info(f"Access token: {masked_token}")
-        else:
-            logger.warning(f"No Facebook credentials found for user {current_user.id} - will continue with available data only")
-            # Don't attempt to fetch from Facebook if no credentials available
-            need_to_fetch = False
-
-        # Determine if we need to fetch data from Facebook (only if we have credentials)
-        need_to_fetch = (force_refresh or not has_complete_data or not has_prev_complete_data) and has_credentials
-        logger.info(f"Need to fetch from Facebook: {need_to_fetch} (force_refresh={force_refresh}, has_complete_data={has_complete_data}, has_prev_complete_data={has_prev_complete_data}, has_credentials={has_credentials})")
-
+        # Check if we have metrics for current and previous periods
         metrics_fetched = False
         
-        # If we don't have complete data for either period and have credentials, try to fetch from Facebook
-        if need_to_fetch:
-            logger.info(f"Attempting to fetch metrics from Facebook for user {current_user.id}")
-            try:
-                # Fetch metrics for both periods in one go
-                # Convert dates to strings to avoid type comparison issues
-                prev_start_str = prev_start_date_obj.strftime("%Y-%m-%d")
-                start_str = start_date_obj.strftime("%Y-%m-%d")
-                prev_end_str = prev_end_date_obj.strftime("%Y-%m-%d") 
-                end_str = end_date_obj.strftime("%Y-%m-%d")
-                
-                # Find the earlier start date and later end date
-                fetch_start_date = prev_start_date_obj if prev_start_str < start_str else start_date_obj
-                fetch_end_date = end_date_obj if end_str > prev_end_str else prev_end_date_obj
-                
-                # Use time_increment=1 to get daily breakdown
-                num_metrics = await metrics_service.fetch_metrics_from_facebook(
-                    user_id=current_user.id,
-                    start_date=fetch_start_date,
-                    end_date=fetch_end_date,
-                    credentials=fb_credentials
-                )
-                
-                # Check if num_metrics is a list and get its length, otherwise treat as int
-                if isinstance(num_metrics, list):
-                    metrics_fetched = len(num_metrics) > 0
-                    logger.info(f"Fetched {len(num_metrics)} metrics (returned as list) from Facebook for date range {fetch_start_date} to {fetch_end_date}")
-                else:
-                    metrics_fetched = num_metrics > 0
-                    logger.info(f"Fetched {num_metrics} metrics from Facebook for date range {fetch_start_date} to {fetch_end_date}")
-            except Exception as e:
-                logger.error(f"Error fetching metrics from Facebook: {str(e)}")
-                # Continue with available data
-        else:
-            logger.info("Skipping Facebook fetch: Complete data already available for both periods")
+        # Use the new method to ensure data completeness for both time periods
+        current_period_status = await metrics_service.ensure_data_completeness(
+            user_id=current_user.id,
+            start_date=start_date_obj,
+            end_date=end_date_obj,
+            force_refresh=force_refresh
+        )
+        
+        previous_period_status = await metrics_service.ensure_data_completeness(
+            user_id=current_user.id,
+            start_date=prev_start_date_obj,
+            end_date=prev_end_date_obj,
+            force_refresh=force_refresh
+        )
+        
+        # Check if metrics were fetched in either period
+        metrics_fetched = current_period_status["metrics_fetched"] or previous_period_status["metrics_fetched"]
 
         # After potentially fetching from Facebook, calculate aggregated KPIs
         # Current period
@@ -342,14 +273,18 @@ async def get_metrics_by_ad(
     """
     try:
         # Parse dates
-        try:
-            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
-            end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
-        except ValueError as e:
-            logger.error(f"Invalid date format: {str(e)}")
-            raise HTTPException(status_code=400, detail=f"Invalid date format: {str(e)}")
-
-        logger.info(f"Metrics by ad request: start_date={start_date}, end_date={end_date}, force_refresh={force_refresh}")
+        start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
+        end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        # Calculate previous period
+        date_diff = (end_date_obj - start_date_obj).days
+        prev_end_date_obj = start_date_obj - timedelta(days=1)
+        prev_start_date_obj = prev_end_date_obj - timedelta(days=date_diff)
+        
+        prev_start_date = prev_start_date_obj.strftime("%Y-%m-%d")
+        prev_end_date = prev_end_date_obj.strftime("%Y-%m-%d")
+        
+        logger.info(f"Previous period: {prev_start_date} to {prev_end_date}")
         
         # Check if we have complete data for the requested period
         has_complete_data = await metrics_service.has_complete_data_for_range(

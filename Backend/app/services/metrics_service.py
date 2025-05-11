@@ -315,14 +315,39 @@ class MetricsService:
                     
                 # Extract credentials - check both formats (direct and nested)
                 db_credentials = {}
-                if "facebook_credentials" in user:
+                if "facebook_credentials" in user and isinstance(user["facebook_credentials"], dict):
                     db_credentials = user.get("facebook_credentials", {})
                 
                 access_token = access_token or db_credentials.get("access_token") or user.get("facebook_access_token")
                 account_id = account_id or db_credentials.get("ad_account_id") or db_credentials.get("account_id") or user.get("facebook_account_id")
+                
+                # Legacy format check
+                if not access_token or not account_id:
+                    access_token = user.get("facebook_access_token")
+                    account_id = user.get("facebook_account_id")
+                    
+                    if access_token and account_id:
+                        logger.info(f"Using fb_graph_api_key and fb_ad_account_id fields for user {user_id}")
+                        access_token = access_token
+                        account_id = account_id
+                
+                # Check for fb_graph_api_key and fb_ad_account_id fields
+                if not access_token or not account_id:
+                    graph_api_key = user.get("fb_graph_api_key")
+                    ad_account_id = user.get("fb_ad_account_id")
+                    
+                    if graph_api_key and ad_account_id:
+                        logger.info(f"Using fb_graph_api_key and fb_ad_account_id fields for user {user_id}")
+                        access_token = graph_api_key
+                        account_id = ad_account_id
             
             if not access_token or not account_id:
-                logger.error(f"User {user_id} has no Facebook credentials")
+                logger.warning(f"User {user_id} has no valid Facebook credentials")
+                return []
+                
+            # Validate the credentials format
+            if not isinstance(access_token, str) or not isinstance(account_id, str):
+                logger.error(f"Invalid credential format for user {user_id}: access_token={type(access_token).__name__}, account_id={type(account_id).__name__}")
                 return []
             
             # Log info about the credentials
@@ -695,4 +720,269 @@ class MetricsService:
         except Exception as e:
             error_msg = f"Error collecting and storing metrics for user {user_id}: {str(e)}"
             logger.error(error_msg)
-            raise ValueError(error_msg) 
+            raise ValueError(error_msg)
+
+    # Add a new method for ensuring data completeness
+    async def ensure_data_completeness(
+        self,
+        user_id: str,
+        start_date: str,
+        end_date: str,
+        force_refresh: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Ensure data completeness for the specified date range.
+        Checks if data is complete and fetches missing data from Facebook if needed.
+        
+        Args:
+            user_id: The user ID
+            start_date: Start date (string in format YYYY-MM-DD or datetime object)
+            end_date: End date (string in format YYYY-MM-DD or datetime object)
+            force_refresh: Whether to force refresh data even if it exists
+            
+        Returns:
+            Dictionary with status information
+        """
+        try:
+            # Convert string dates to datetime if needed
+            start_date_obj = start_date if isinstance(start_date, datetime) else datetime.strptime(start_date, "%Y-%m-%d")
+            end_date_obj = end_date if isinstance(end_date, datetime) else datetime.strptime(end_date, "%Y-%m-%d")
+            
+            # Initialize response
+            result = {
+                "metrics_fetched": False,
+                "has_complete_data": False,
+                "force_refresh_attempted": force_refresh,
+                "missing_dates": [],
+                "metrics_count": 0
+            }
+            
+            # Check if we need to refresh the data
+            need_to_fetch = force_refresh
+            
+            # If not forcing refresh, check if we have complete data
+            if not need_to_fetch:
+                has_complete_data = await self.has_complete_data_for_range(user_id, start_date_obj, end_date_obj)
+                result["has_complete_data"] = has_complete_data
+                need_to_fetch = not has_complete_data
+            
+            # Get a list of missing dates
+            if need_to_fetch:
+                missing_dates = await self._get_missing_dates(user_id, start_date_obj, end_date_obj)
+                result["missing_dates"] = [date.strftime("%Y-%m-%d") for date in missing_dates]
+                
+                # Only fetch if we actually have missing dates
+                need_to_fetch = len(missing_dates) > 0
+            
+            # Get Facebook credentials if we need to fetch
+            fb_credentials = None
+            if need_to_fetch:
+                logger.info(f"Need to fetch data for user {user_id} for date range {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')}")
+                
+                # Get user's Facebook credentials
+                users_collection = await get_users_collection()
+                
+                try:
+                    # Try with ObjectId first
+                    user = await users_collection.find_one({"_id": ObjectId(user_id)})
+                except Exception:
+                    # If conversion fails, try with string ID
+                    user = await users_collection.find_one({"_id": user_id})
+                
+                if not user:
+                    # Last attempt - try by string ID field
+                    user = await users_collection.find_one({"id": user_id})
+                
+                if not user:
+                    logger.warning(f"User not found: {user_id}")
+                    # Set result to indicate user not found but don't raise exception
+                    result["error"] = "User not found"
+                    return result
+                
+                # Check for credentials in various formats
+                if "facebook_credentials" in user and isinstance(user["facebook_credentials"], dict):
+                    fb_credentials = user["facebook_credentials"]
+                    
+                    # Verify credentials have required fields
+                    if not fb_credentials.get("access_token") or not fb_credentials.get("account_id"):
+                        logger.warning(f"Incomplete Facebook credentials for user {user_id}")
+                        fb_credentials = None
+                
+                # Legacy format check
+                if not fb_credentials:
+                    access_token = user.get("facebook_access_token")
+                    account_id = user.get("facebook_account_id")
+                    
+                    if access_token and account_id:
+                        fb_credentials = {
+                            "access_token": access_token,
+                            "account_id": account_id
+                        }
+                
+                # Check for fb_graph_api_key and fb_ad_account_id fields
+                if not fb_credentials:
+                    graph_api_key = user.get("fb_graph_api_key")
+                    ad_account_id = user.get("fb_ad_account_id")
+                    
+                    if graph_api_key and ad_account_id:
+                        logger.info(f"Using fb_graph_api_key and fb_ad_account_id fields for user {user_id}")
+                        fb_credentials = {
+                            "access_token": graph_api_key,
+                            "account_id": ad_account_id
+                        }
+                
+                if fb_credentials:
+                    logger.info(f"Found Facebook credentials for user {user_id}")
+                else:
+                    logger.info(f"No Facebook credentials found for user {user_id} - will use existing data only")
+                    # Set has_complete_data based on existing data
+                    result["has_complete_data"] = await self.has_any_data_for_range(user_id, start_date_obj, end_date_obj)
+                    result["no_credentials"] = True
+                    return result
+            
+            # Fetch data if needed and we have credentials
+            if need_to_fetch and fb_credentials:
+                logger.info(f"Attempting to fetch metrics from Facebook for user {user_id}")
+                try:
+                    # Fetch metrics for the date range
+                    num_metrics = await self.fetch_metrics_from_facebook(
+                        user_id=user_id,
+                        start_date=start_date_obj,
+                        end_date=end_date_obj,
+                        credentials=fb_credentials
+                    )
+                    
+                    # Check if num_metrics is a list and get its length, otherwise treat as int
+                    if isinstance(num_metrics, list):
+                        result["metrics_fetched"] = len(num_metrics) > 0
+                        result["metrics_count"] = len(num_metrics)
+                        logger.info(f"Fetched {len(num_metrics)} metrics from Facebook for date range {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')}")
+                    else:
+                        result["metrics_fetched"] = num_metrics > 0
+                        result["metrics_count"] = num_metrics
+                        logger.info(f"Fetched {num_metrics} metrics from Facebook for date range {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')}")
+                    
+                    # Check if we now have complete data
+                    result["has_complete_data"] = await self.has_complete_data_for_range(user_id, start_date_obj, end_date_obj)
+                    
+                except Exception as e:
+                    logger.error(f"Error fetching metrics from Facebook: {str(e)}")
+                    # Continue with available data
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error ensuring data completeness: {str(e)}")
+            return {
+                "metrics_fetched": False,
+                "has_complete_data": False,
+                "force_refresh_attempted": force_refresh,
+                "missing_dates": [],
+                "metrics_count": 0,
+                "error": str(e)
+            }
+    
+    async def _get_missing_dates(self, user_id: str, start_date: datetime, end_date: datetime) -> List[datetime]:
+        """
+        Get a list of dates in the range that don't have data.
+        
+        Args:
+            user_id: The user ID
+            start_date: Start date as datetime
+            end_date: End date as datetime
+            
+        Returns:
+            List of datetime objects representing dates without data
+        """
+        try:
+            # Get all dates in the range
+            all_dates = []
+            current_date = start_date
+            while current_date <= end_date:
+                all_dates.append(current_date)
+                current_date += timedelta(days=1)
+            
+            # Get dates that have data
+            collection = await get_metrics_collection()
+            dates_with_data = set()
+            
+            # Aggregate to get unique dates with data
+            pipeline = [
+                {
+                    "$match": {
+                        "user_id": user_id,
+                        "collected_at": {
+                            "$gte": start_date,
+                            "$lte": end_date
+                        }
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": {
+                            "$dateToString": {
+                                "format": "%Y-%m-%d",
+                                "date": "$collected_at"
+                            }
+                        }
+                    }
+                }
+            ]
+            
+            result = await collection.aggregate(pipeline).to_list(length=None)
+            
+            # Convert results to a set of date strings
+            for doc in result:
+                date_str = doc["_id"]
+                dates_with_data.add(date_str)
+            
+            # Find missing dates
+            missing_dates = []
+            for date in all_dates:
+                date_str = date.strftime("%Y-%m-%d")
+                if date_str not in dates_with_data:
+                    missing_dates.append(date)
+            
+            return missing_dates
+            
+        except Exception as e:
+            logger.error(f"Error getting missing dates: {str(e)}")
+            # Return all dates in range as missing
+            all_dates = []
+            current_date = start_date
+            while current_date <= end_date:
+                all_dates.append(current_date)
+                current_date += timedelta(days=1)
+            return all_dates 
+
+    async def has_any_data_for_range(self, user_id: str, start_date: datetime, end_date: datetime) -> bool:
+        """
+        Check if there is any data available for the specified date range.
+        Less strict than has_complete_data_for_range - only checks if we have at least one data point.
+        
+        Args:
+            user_id: The user ID
+            start_date: Start date as datetime
+            end_date: End date as datetime
+            
+        Returns:
+            True if there is at least one data point in the range, False otherwise
+        """
+        try:
+            # Get metrics collection
+            collection = await get_metrics_collection()
+            
+            # Check if there's at least one data point
+            count = await collection.count_documents({
+                "user_id": user_id,
+                "collected_at": {
+                    "$gte": start_date,
+                    "$lte": end_date
+                }
+            })
+            
+            return count > 0
+            
+        except Exception as e:
+            logger.error(f"Error checking if any data exists for range: {str(e)}")
+            return False 

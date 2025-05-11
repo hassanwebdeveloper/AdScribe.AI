@@ -371,7 +371,7 @@ class PredictionService:
                 ad_scores[ad_id] = {
                     "ad_id": ad_id,
                     "ad_name": ad_name,
-                    "ad_title": ad_title,
+                        "ad_title": ad_title,
                     "score": score,
                     "average_metrics": metrics_avg
                 }
@@ -549,7 +549,7 @@ class PredictionService:
             
         except Exception as e:
             logger.error(f"Error getting user ads: {str(e)}")
-            return []
+            return [] 
     
     async def _get_ad_details(self, user_id: str, ad_id: str) -> Dict[str, Any]:
         """Get ad details including title."""
