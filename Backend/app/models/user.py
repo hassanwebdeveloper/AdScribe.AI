@@ -113,6 +113,7 @@ class User(UserBase):
 class UserResponse(BaseModel):
     user: User
     token: str
+    refresh_token: Optional[str] = None
 
 
 class FacebookCredentialsUpdate(BaseModel):

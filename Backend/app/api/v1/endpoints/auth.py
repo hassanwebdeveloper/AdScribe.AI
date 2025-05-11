@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.database import get_database
 from app.models.user import UserCreate, UserResponse, User, FacebookCredentialsUpdate
 from app.services.user_service import UserService, create_user, authenticate_user, get_user_by_email, update_user_settings
-from app.core.security import get_current_user_email
+from app.core.security import get_current_user_email, create_access_token
 from app.core.deps import get_current_user
 from app.services.scheduler_service import SchedulerService
 from app.services.facebook_oauth_service import FacebookOAuthService
@@ -39,6 +39,9 @@ class UserSettingsUpdate(BaseModel):
 class FacebookAdAccountRequest(BaseModel):
     account_id: str
 
+class TokenRefreshRequest(BaseModel):
+    refresh_token: str
+
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(user: UserCreate):
     """
@@ -51,7 +54,18 @@ async def login(request: LoginRequest):
     """
     Authenticate a user with email and password.
     """
-    return await authenticate_user(request.email, request.password)
+    user_response = await authenticate_user(request.email, request.password)
+    
+    # Create refresh token with longer expiration
+    refresh_token = create_access_token(
+        data={"sub": request.email},
+        expires_delta=timedelta(days=30)  # Refresh token lasts 30 days
+    )
+    
+    # Add refresh token to response
+    user_response.refresh_token = refresh_token
+    
+    return user_response
 
 @router.get("/me", response_model=User)
 async def get_me(current_user: User = Depends(get_current_user)):
@@ -195,4 +209,45 @@ async def get_facebook_ad_accounts(current_user: User = Depends(get_current_user
     # Get ad accounts
     ad_accounts = await fb_oauth_service.get_ad_accounts(current_user.facebook_credentials.access_token)
     
-    return ad_accounts 
+    return ad_accounts
+
+@router.post("/refresh-token")
+async def refresh_token(request: TokenRefreshRequest):
+    """
+    Refresh the access token using a refresh token.
+    """
+    try:
+        # Verify the refresh token
+        payload = jwt.decode(request.refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token"
+            )
+        
+        # Get the user
+        user = await get_user_by_email(email)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Create new access token
+        access_token = create_access_token(data={"sub": email})
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer"
+        }
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has expired"
+        )
+    except jwt.JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token"
+        ) 

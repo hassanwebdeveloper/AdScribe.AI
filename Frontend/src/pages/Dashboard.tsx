@@ -6,11 +6,12 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PlotlyBarChart, PlotlyLineChart } from '@/components/ui/plotly-chart';
-import { Loader2, TrendingUp, TrendingDown, DollarSign, MousePointerClick, Eye, ShoppingCart, RefreshCcw } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, DollarSign, MousePointerClick, Eye, ShoppingCart, RefreshCcw, Award, ChevronRight } from 'lucide-react';
 import { formatCurrency, formatPercentage } from '@/lib/utils';
 import { addDays, format, subDays } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
+import PredictionService, { BestAdPrediction } from '@/services/PredictionService';
 
 interface DateRange {
   from: Date;
@@ -96,6 +97,10 @@ const Dashboard = () => {
   const [forceRefresh, setForceRefresh] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  
+  // New state for prediction data
+  const [isPredicting, setIsPredicting] = useState<boolean>(false);
+  const [bestAd, setBestAd] = useState<BestAdPrediction | null>(null);
 
   // Calculate previous date range
   const getPreviousRange = (from: Date, to: Date) => {
@@ -153,7 +158,10 @@ const Dashboard = () => {
 
   // Fetch metrics data based on date range
   const fetchMetrics = async () => {
-    if (!user) return;
+    if (!user) {
+      setError('User not authenticated');
+      return;
+    }
     
     setIsLoading(true);
     setError(null);
@@ -162,6 +170,17 @@ const Dashboard = () => {
       // Format dates for API
       const startDate = format(dateRange.from || new Date(), 'yyyy-MM-dd');
       const endDate = format(dateRange.to || new Date(), 'yyyy-MM-dd');
+      
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setError('Authentication token missing');
+        toast({
+          title: "Authentication Error",
+          description: "Please log in again to continue.",
+          variant: "destructive",
+        });
+        return;
+      }
       
       console.log(`Fetching metrics from ${startDate} to ${endDate}, force_refresh: ${forceRefresh}`);
       
@@ -173,7 +192,7 @@ const Dashboard = () => {
           force_refresh: forceRefresh
         },
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`
+          Authorization: `Bearer ${token}`
         },
         timeout: 60000 // 60 seconds timeout for Facebook data fetching
       });
@@ -219,20 +238,93 @@ const Dashboard = () => {
             });
           }
         }
+        
+        // After fetching metrics, get predictions for best ad
+        if (response.data.ad_metrics && response.data.ad_metrics.length > 0) {
+          predictBestPerformingAd();
+        }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching dashboard data:', err);
-      setError('Failed to load dashboard data');
       
-      toast({
-        title: "Error loading data",
-        description: "There was a problem loading your dashboard data. Please try again later.",
-        variant: "destructive",
-      });
+      if (err.response?.status === 401) {
+        setError('Authentication failed');
+        toast({
+          title: "Session Expired",
+          description: "Please log in again to continue.",
+          variant: "destructive",
+        });
+        // Optionally redirect to login
+        // navigate('/login');
+      } else {
+        setError('Failed to load dashboard data');
+        toast({
+          title: "Error loading data",
+          description: "There was a problem loading your dashboard data. Please try again later.",
+          variant: "destructive",
+        });
+      }
     } finally {
       setIsLoading(false);
       setIsFetchingFromFacebook(false);
       setForceRefresh(false); // Reset force refresh after attempt
+    }
+  };
+  
+  // Function to predict the best performing ad
+  const predictBestPerformingAd = async () => {
+    if (!user) return;
+    
+    setIsPredicting(true);
+    
+    try {
+      // Use the same date range as the dashboard
+      const startDate = format(dateRange.from || subDays(new Date(), 7), 'yyyy-MM-dd');
+      const endDate = format(dateRange.to || new Date(), 'yyyy-MM-dd');
+      
+      // Call prediction service with time series forecasting
+      const result = await PredictionService.getBestPerformingAd(
+        startDate, 
+        endDate, 
+        7, 
+        { useTimeSeries: true }
+      );
+      
+      if (result.success && result.best_ad) {
+        console.log('Best performing ad (time series prediction):', result.best_ad);
+        setBestAd(result.best_ad);
+        
+        // Show a toast notification about the prediction
+        toast({
+          title: "Prediction Complete",
+          description: "We've identified your best potential performing ad using time series forecasting.",
+          variant: "default",
+        });
+      } else {
+        console.log('No best ad prediction available:', result.message);
+        setBestAd(null);
+        
+        // Show a toast notification about the failed prediction if there's a message
+        if (result.message) {
+          toast({
+            title: "Prediction Unavailable",
+            description: result.message || "Could not predict the best performing ad at this time.",
+            variant: "destructive",
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error predicting best ad:', error);
+      setBestAd(null);
+      
+      // Show error toast
+      toast({
+        title: "Prediction Error",
+        description: "There was an error analyzing your ad data. Please try again later.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsPredicting(false);
     }
   };
 
@@ -678,38 +770,47 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="container mx-auto py-10 space-y-8 overflow-auto h-[calc(100vh-100px)]">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <div className="flex items-center gap-4">
-          <Tabs value={timeRange} onValueChange={handleTimeRangeChange} className="mr-4">
-            <TabsList>
-              <TabsTrigger value="today">Today</TabsTrigger>
-              <TabsTrigger value="last7Days">Last 7 Days</TabsTrigger>
-              <TabsTrigger value="last30Days">Last 30 Days</TabsTrigger>
-              <TabsTrigger value="custom">Custom</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <DateRangePicker
-            value={dateRange}
-            onChange={handleDateRangePickerChange}
-          />
-          <Button 
-            variant="outline" 
-            size="sm" 
+    <div className="container py-4 md:py-8 space-y-8">
+      {/* Dashboard header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Overview of your advertising performance
+          </p>
+        </div>
+        <div className="flex items-center gap-4 w-full md:w-auto">
+          <div className="flex items-center gap-3 flex-1 md:flex-none">
+            <Tabs value={timeRange} onValueChange={handleTimeRangeChange} className="w-[360px]">
+              <TabsList className="grid w-full grid-cols-4 h-9">
+                <TabsTrigger value="today" className="text-xs px-1">Today</TabsTrigger>
+                <TabsTrigger value="last7Days" className="text-xs px-1">Last 7 Days</TabsTrigger>
+                <TabsTrigger value="last30Days" className="text-xs px-1">Last 30 Days</TabsTrigger>
+                <TabsTrigger value="custom" className="text-xs px-1">Custom</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <DateRangePicker 
+              value={dateRange}
+              onChange={handleDateRangePickerChange}
+              className="w-[220px]"
+            />
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10"
             onClick={() => {
               setForceRefresh(true);
-              console.log("Forcing refresh of data");
-              toast({
-                title: "Refreshing data",
-                description: "Fetching latest data from Facebook...",
-                variant: "default",
-              });
+              setFetchAttempts(prev => prev + 1);
+              setIsFetchingFromFacebook(true);
             }}
-            disabled={isLoading}
+            disabled={isFetchingFromFacebook}
           >
-            <RefreshCcw className="mr-2 h-4 w-4" />
-            Refresh Data
+            {isFetchingFromFacebook ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <RefreshCcw className="h-5 w-5" />
+            )}
           </Button>
         </div>
       </div>
@@ -722,12 +823,18 @@ const Dashboard = () => {
           </span>
         </div>
       ) : (
-        <div className="pb-10"> {/* Add padding at bottom for better scrolling */}
+        <div className="space-y-6 pb-10" style={{ 
+          height: 'calc(100vh - 200px)',
+          overflowY: 'auto',
+          paddingRight: '24px',
+          marginRight: '-24px' // Compensate for the padding to align with container
+        }}>
           {/* Main Dashboard Tabs */}
-          <Tabs defaultValue="account" className="w-full mt-4">
+          <Tabs defaultValue="account" className="w-full">
             <TabsList className="mb-6">
               <TabsTrigger value="account">Account Performance</TabsTrigger>
               <TabsTrigger value="ads">Ad Performance</TabsTrigger>
+              <TabsTrigger value="best-ad">Best Ad Prediction</TabsTrigger>
             </TabsList>
             
             {/* Account Performance Tab */}
@@ -919,6 +1026,79 @@ const Dashboard = () => {
                   </CardContent>
                 </Card>
               </div>
+            </TabsContent>
+
+            {/* Best Ad Prediction Tab */}
+            <TabsContent value="best-ad" className="space-y-6">
+              {isPredicting ? (
+                <Card>
+                  <CardContent className="flex items-center justify-center py-6">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary mr-2" />
+                    <span>Analyzing your ad data to find the best performer...</span>
+                  </CardContent>
+                </Card>
+              ) : bestAd && bestAd.average_metrics ? (
+                <div className="space-y-6">
+                  <Card className="border-2 border-primary/20 bg-primary/5">
+                    <CardHeader>
+                      <div className="flex items-center">
+                        <Award className="h-5 w-5 text-primary mr-2" />
+                        <CardTitle className="text-xl">Best Performing Ad Prediction</CardTitle>
+                      </div>
+                      <CardDescription>
+                        Based on historical data and AI prediction for the next 7 days
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div>
+                          <h3 className="font-semibold text-lg mb-2">{bestAd.ad_title || bestAd.ad_name}</h3>
+                          <p className="text-sm text-muted-foreground mb-2">Ad ID: {bestAd.ad_id}</p>
+                          <p className="text-sm">This ad is predicted to outperform others based on historical data and forecasting analysis.</p>
+                          <Button 
+                            variant="outline" 
+                            className="mt-4"
+                            onClick={() => navigate(`/app/ad-metrics?ad_id=${bestAd.ad_id}`)}
+                          >
+                            View Detailed Metrics
+                            <ChevronRight className="h-4 w-4 ml-1" />
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 md:col-span-2">
+                          <div className="bg-background p-4 rounded-lg">
+                            <div className="text-sm font-medium text-muted-foreground mb-1">Predicted ROAS</div>
+                            <div className="text-2xl font-bold">{(bestAd.average_metrics.roas || 0).toFixed(2)}x</div>
+                            <div className="text-xs text-muted-foreground mt-1">Return on ad spend</div>
+                          </div>
+                          <div className="bg-background p-4 rounded-lg">
+                            <div className="text-sm font-medium text-muted-foreground mb-1">Predicted CTR</div>
+                            <div className="text-2xl font-bold">{formatPercentage((bestAd.average_metrics.ctr || 0) * 100)}</div>
+                            <div className="text-xs text-muted-foreground mt-1">Click-through rate</div>
+                          </div>
+                          <div className="bg-background p-4 rounded-lg">
+                            <div className="text-sm font-medium text-muted-foreground mb-1">Est. Revenue</div>
+                            <div className="text-2xl font-bold">${formatCurrency(bestAd.average_metrics.revenue || 0)}</div>
+                            <div className="text-xs text-muted-foreground mt-1">Per day average</div>
+                          </div>
+                          <div className="bg-background p-4 rounded-lg">
+                            <div className="text-sm font-medium text-muted-foreground mb-1">Est. Conversions</div>
+                            <div className="text-2xl font-bold">{(bestAd.average_metrics.conversions || 0).toFixed(0)}</div>
+                            <div className="text-xs text-muted-foreground mt-1">Conversions per day</div>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Add prediction charts here if needed */}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="flex items-center justify-center py-6">
+                    <p className="text-muted-foreground">No prediction data available. Try refreshing your data or selecting a different date range.</p>
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
           </Tabs>
         </div>
