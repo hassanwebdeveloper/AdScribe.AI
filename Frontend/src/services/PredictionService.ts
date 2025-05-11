@@ -53,6 +53,28 @@ interface PredictionOptions {
   useTimeSeries?: boolean;
 }
 
+interface AdMetrics {
+  date: string;
+  ad_id: string;
+  ad_name?: string;
+  ad_title?: string;
+  roas: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  conversions: number;
+  revenue: number;
+  spend: number;
+}
+
+interface PredictionResponse {
+  success: boolean;
+  message?: string;
+  predictions: AdMetrics[];
+  historical: AdMetrics[];
+  best_ad: BestAdPrediction | null;
+}
+
 class PredictionService {
   /**
    * Predict metrics for a specific ad
@@ -135,57 +157,36 @@ class PredictionService {
     startDate: string,
     endDate: string,
     daysToPredict: number = 7,
-    options: { useTimeSeries?: boolean } = {}
-  ): Promise<BestAdResponse> {
+    options: PredictionOptions = {}
+  ): Promise<PredictionResponse> {
     try {
-      // API endpoint for best ad prediction
-      const endpoint = `/api/v1/predictions/best-ad`;
+      const useTimeSeries = options.useTimeSeries !== undefined ? options.useTimeSeries : true;
       
-      // Call the API with parameters
-      const response = await axios.get(endpoint, {
+      const response = await axios.get('/api/v1/predictions/best-ad', {
         params: {
           start_date: startDate,
           end_date: endDate,
           days_to_predict: daysToPredict,
-          use_time_series: options.useTimeSeries || false
+          use_time_series: useTimeSeries
         },
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`
         }
       });
       
-      // Check if the response has the expected structure
-      if (response.data && response.data.best_ad) {
-        return {
-          success: true,
-          message: response.data.message || 'Successfully predicted best ad',
-          best_ad: response.data.best_ad
-        };
-      } 
-      
-      // Handle case where API returns a welcome message instead of predictions
-      if (response.data && response.data.message === "Welcome to AdScribe AI API") {
-        return {
-          success: false,
-          message: "The prediction service is not available at this time. Please try again later."
-        };
-      }
-      
-      // Handle other unexpected API responses
-      return {
-        success: false,
-        message: response.data?.message || 'No best ad prediction available'
-      };
+      return response.data;
     } catch (error) {
-      console.error('Error fetching best ad prediction:', error);
-      
+      console.error('Error in getBestPerformingAd:', error);
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Error fetching prediction'
+        message: error instanceof Error ? error.message : 'Unknown error',
+        predictions: [],
+        historical: [],
+        best_ad: null
       };
     }
   }
 }
 
 export default new PredictionService();
-export type { PredictionMetric, AdPrediction, BestAdPrediction, AllAdsPredictionResponse, BestAdResponse, PredictionOptions }; 
+export type { PredictionMetric, AdPrediction, BestAdPrediction, AllAdsPredictionResponse, BestAdResponse, PredictionOptions, AdMetrics, PredictionResponse }; 

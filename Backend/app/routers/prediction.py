@@ -125,14 +125,28 @@ async def get_best_performing_ad(
             user_id=user_id,
             start_date=start_date,
             end_date=end_date,
-            days_to_predict=days_to_predict
+            days_to_predict=days_to_predict,
+            use_time_series=use_time_series
         )
         
         # If we have a successful result with a best_ad, return it
         if result["success"] and result["best_ad"]:
+            # Get predictions and historical data for the best ad
+            best_ad_id = result["best_ad"]["ad_id"]
+            best_ad_data = None
+            
+            # Find the data for the best ad in the result predictions
+            for prediction in result["predictions"]:
+                if prediction["ad_id"] == best_ad_id:
+                    best_ad_data = prediction
+                    break
+                    
+            # Return the best ad with its predictions and historical data
             return {
                 "success": True,
-                "best_ad": result["best_ad"]
+                "best_ad": result["best_ad"],
+                "predictions": best_ad_data["predictions"] if best_ad_data else [],
+                "historical": best_ad_data["historical"] if best_ad_data else []
             }
         
         # If no best ad found but we have ads, try to generate a fallback best ad
@@ -161,7 +175,9 @@ async def get_best_performing_ad(
                         "ad_id": first_ad["ad_id"],
                         "ad_name": ad_name,
                         "average_metrics": metrics_avg
-                    }
+                    },
+                    "predictions": first_ad["predictions"],
+                    "historical": first_ad["historical"] if "historical" in first_ad else []
                 }
         
         # If we still don't have data, return an error message
@@ -173,13 +189,17 @@ async def get_best_performing_ad(
             # Return error message instead of sample data
             return {
                 "success": False,
-                "message": "No ad performance data available to make predictions. Please ensure you have ad data for the selected date range."
+                "message": "No ad performance data available to make predictions. Please ensure you have ad data for the selected date range.",
+                "predictions": [],
+                "historical": []
             }
         
         # For any other cases, return the original result
         return {
             "success": False,
-            "message": result.get("message", "Failed to find best performing ad")
+            "message": result.get("message", "Failed to find best performing ad"),
+            "predictions": [],
+            "historical": []
         }
         
     except ValueError as e:
@@ -188,5 +208,7 @@ async def get_best_performing_ad(
         # Return error instead of fallback sample data
         return {
             "success": False,
-            "message": f"Error finding best performing ad: {str(e)}"
+            "message": f"Error finding best performing ad: {str(e)}",
+            "predictions": [],
+            "historical": []
         } 

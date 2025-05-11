@@ -8,10 +8,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PlotlyBarChart, PlotlyLineChart } from '@/components/ui/plotly-chart';
 import { Loader2, TrendingUp, TrendingDown, DollarSign, MousePointerClick, Eye, ShoppingCart, RefreshCcw, Award, ChevronRight } from 'lucide-react';
 import { formatCurrency, formatPercentage } from '@/lib/utils';
-import { addDays, format, subDays } from 'date-fns';
+import { addDays, format, subDays, parseISO } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import PredictionService, { BestAdPrediction } from '@/services/PredictionService';
+import PredictionService, { BestAdPrediction, AdMetrics } from '@/services/PredictionService';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 
 interface DateRange {
   from: Date;
@@ -101,6 +103,11 @@ const Dashboard = () => {
   // New state for prediction data
   const [isPredicting, setIsPredicting] = useState<boolean>(false);
   const [bestAd, setBestAd] = useState<BestAdPrediction | null>(null);
+  const [useTimeSeries, setUseTimeSeries] = useState<boolean>(true);
+
+  // Add state for historical and prediction data
+  const [adPredictions, setAdPredictions] = useState<AdMetrics[]>([]);
+  const [historicalMetrics, setHistoricalMetrics] = useState<AdMetrics[]>([]);
 
   // Calculate previous date range
   const getPreviousRange = (from: Date, to: Date) => {
@@ -282,27 +289,31 @@ const Dashboard = () => {
       const startDate = format(dateRange.from || subDays(new Date(), 7), 'yyyy-MM-dd');
       const endDate = format(dateRange.to || new Date(), 'yyyy-MM-dd');
       
-      // Call prediction service with time series forecasting
+      // Call prediction service with time series option
       const result = await PredictionService.getBestPerformingAd(
         startDate, 
         endDate, 
         7, 
-        { useTimeSeries: true }
+        { useTimeSeries }
       );
       
       if (result.success && result.best_ad) {
-        console.log('Best performing ad (time series prediction):', result.best_ad);
+        console.log(`Best performing ad (${useTimeSeries ? 'time series' : 'frequency-based'} prediction):`, result.best_ad);
         setBestAd(result.best_ad);
+        setAdPredictions(result.predictions || []);
+        setHistoricalMetrics(result.historical || []);
         
         // Show a toast notification about the prediction
         toast({
           title: "Prediction Complete",
-          description: "We've identified your best potential performing ad using time series forecasting.",
+          description: `We've identified your best potential performing ad using ${useTimeSeries ? 'time series forecasting' : 'frequency-based analysis'}.`,
           variant: "default",
         });
       } else {
         console.log('No best ad prediction available:', result.message);
         setBestAd(null);
+        setAdPredictions([]);
+        setHistoricalMetrics([]);
         
         // Show a toast notification about the failed prediction if there's a message
         if (result.message) {
@@ -316,6 +327,8 @@ const Dashboard = () => {
     } catch (error) {
       console.error('Error predicting best ad:', error);
       setBestAd(null);
+      setAdPredictions([]);
+      setHistoricalMetrics([]);
       
       // Show error toast
       toast({
@@ -769,6 +782,95 @@ const Dashboard = () => {
     return dataArray;
   };
 
+  // Create a helper function to prepare chart data with both historical and prediction data
+  const getPredictionChartData = (metric: string, formatter?: (value: number) => number) => {
+    if (!bestAd || !adPredictions.length) return [];
+    
+    // Format dates for x-axis (historical + prediction dates)
+    const formattedHistorical = historicalMetrics.map(item => ({
+      ...item,
+      formattedDate: format(parseISO(item.date), 'MMM dd')
+    })).sort((a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime());
+    
+    const formattedPredictions = adPredictions.map(item => ({
+      ...item,
+      formattedDate: format(parseISO(item.date), 'MMM dd')
+    })).sort((a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime());
+    
+    // Historical line trace
+    const historicalTrace = {
+      x: formattedHistorical.map(d => d.formattedDate),
+      y: formattedHistorical.map(d => metric === 'ctr' && formatter ? formatter(d[metric]) : d[metric]),
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'Historical',
+      line: { color: 'rgba(99, 102, 241, 1)', width: 2 },
+      marker: { size: 5 }
+    };
+    
+    // Prediction line trace
+    const color = metric === 'roas' ? 'rgba(34, 197, 94, 1)' : 
+                 metric === 'ctr' ? 'rgba(99, 102, 241, 1)' :
+                 metric === 'revenue' ? 'rgba(236, 72, 153, 1)' : 'rgba(168, 85, 247, 1)';
+    
+    const predictionTrace = {
+      x: formattedPredictions.map(d => d.formattedDate),
+      y: formattedPredictions.map(d => metric === 'ctr' && formatter ? formatter(d[metric]) : d[metric]),
+      type: 'scatter',
+      mode: 'lines+markers',
+      name: 'Prediction',
+      line: { color, width: 3, dash: 'dot' },
+      marker: { size: 7 }
+    };
+    
+    // Add confidence intervals
+    const lowerBoundTrace = {
+      x: formattedPredictions.map(d => d.formattedDate),
+      y: formattedPredictions.map(d => {
+        let value = d[metric];
+        // Apply a reasonable error margin based on the metric type
+        const errorFactor = metric === 'roas' ? 0.25 : 
+                            metric === 'ctr' ? 0.2 :
+                            metric === 'conversions' ? 0.3 : 0.25;
+                            
+        // Apply the formatter if needed, but after the calculation
+        value = value * (1 - errorFactor);
+        return metric === 'ctr' && formatter ? formatter(value) : value;
+      }),
+      type: 'scatter',
+      mode: 'lines',
+      name: 'Lower Bound',
+      line: { width: 0 },
+      showlegend: false,
+      hoverinfo: 'none'
+    };
+    
+    const upperBoundTrace = {
+      x: formattedPredictions.map(d => d.formattedDate),
+      y: formattedPredictions.map(d => {
+        let value = d[metric];
+        // Apply a reasonable error margin based on the metric type
+        const errorFactor = metric === 'roas' ? 0.25 : 
+                            metric === 'ctr' ? 0.2 :
+                            metric === 'conversions' ? 0.3 : 0.25;
+                            
+        // Apply the formatter if needed, but after the calculation
+        value = value * (1 + errorFactor);
+        return metric === 'ctr' && formatter ? formatter(value) : value;
+      }),
+      type: 'scatter',
+      mode: 'lines',
+      name: 'Upper Bound',
+      fill: 'tonexty',
+      fillcolor: `${color.replace('1)', '0.15)')}`,
+      line: { width: 0 },
+      showlegend: false,
+      hoverinfo: 'none'
+    };
+    
+    return [historicalTrace, predictionTrace, lowerBoundTrace, upperBoundTrace];
+  };
+
   return (
     <div className="container py-4 md:py-8 space-y-8">
       {/* Dashboard header */}
@@ -1030,6 +1132,24 @@ const Dashboard = () => {
 
             {/* Best Ad Prediction Tab */}
             <TabsContent value="best-ad" className="space-y-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-2xl font-bold">Best Ad Prediction</h2>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="time-series-toggle" className="text-sm">Time Series Analysis</Label>
+                    <Switch
+                      id="time-series-toggle"
+                      checked={useTimeSeries}
+                      onCheckedChange={(checked) => {
+                        setUseTimeSeries(checked);
+                        // Trigger new prediction when toggle changes
+                        predictBestPerformingAd();
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+              
               {isPredicting ? (
                 <Card>
                   <CardContent className="flex items-center justify-center py-6">
@@ -1039,58 +1159,129 @@ const Dashboard = () => {
                 </Card>
               ) : bestAd && bestAd.average_metrics ? (
                 <div className="space-y-6">
+                  {/* Best Ad Metadata Card - Full Width */}
                   <Card className="border-2 border-primary/20 bg-primary/5">
                     <CardHeader>
-                      <div className="flex items-center">
-                        <Award className="h-5 w-5 text-primary mr-2" />
-                        <CardTitle className="text-xl">Best Performing Ad Prediction</CardTitle>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <Award className="h-5 w-5 text-primary mr-2" />
+                          <CardTitle className="text-xl">Best Performing Ad</CardTitle>
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          Using {useTimeSeries ? 'Time Series Analysis' : 'Frequency-Based Analysis'}
+                        </div>
                       </div>
                       <CardDescription>
-                        Based on historical data and AI prediction for the next 7 days
+                        {useTimeSeries 
+                          ? 'Based on historical data and AI prediction for the next 7 days'
+                          : 'Based on frequency of top performance across key metrics'}
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                         <div>
-                          <h3 className="font-semibold text-lg mb-2">{bestAd.ad_title || bestAd.ad_name}</h3>
-                          <p className="text-sm text-muted-foreground mb-2">Ad ID: {bestAd.ad_id}</p>
-                          <p className="text-sm">This ad is predicted to outperform others based on historical data and forecasting analysis.</p>
-                          <Button 
-                            variant="outline" 
-                            className="mt-4"
-                            onClick={() => navigate(`/app/ad-metrics?ad_id=${bestAd.ad_id}`)}
-                          >
-                            View Detailed Metrics
-                            <ChevronRight className="h-4 w-4 ml-1" />
-                          </Button>
+                          <h3 className="font-semibold text-lg">{bestAd.ad_title || bestAd.ad_name}</h3>
+                          <p className="text-sm text-muted-foreground">Ad ID: {bestAd.ad_id}</p>
+                          <p className="text-sm mt-2">This ad is predicted to outperform others in your account.</p>
                         </div>
-                        <div className="grid grid-cols-2 gap-4 md:col-span-2">
-                          <div className="bg-background p-4 rounded-lg">
-                            <div className="text-sm font-medium text-muted-foreground mb-1">Predicted ROAS</div>
-                            <div className="text-2xl font-bold">{(bestAd.average_metrics.roas || 0).toFixed(2)}x</div>
-                            <div className="text-xs text-muted-foreground mt-1">Return on ad spend</div>
-                          </div>
-                          <div className="bg-background p-4 rounded-lg">
-                            <div className="text-sm font-medium text-muted-foreground mb-1">Predicted CTR</div>
-                            <div className="text-2xl font-bold">{formatPercentage((bestAd.average_metrics.ctr || 0) * 100)}</div>
-                            <div className="text-xs text-muted-foreground mt-1">Click-through rate</div>
-                          </div>
-                          <div className="bg-background p-4 rounded-lg">
-                            <div className="text-sm font-medium text-muted-foreground mb-1">Est. Revenue</div>
-                            <div className="text-2xl font-bold">${formatCurrency(bestAd.average_metrics.revenue || 0)}</div>
-                            <div className="text-xs text-muted-foreground mt-1">Per day average</div>
-                          </div>
-                          <div className="bg-background p-4 rounded-lg">
-                            <div className="text-sm font-medium text-muted-foreground mb-1">Est. Conversions</div>
-                            <div className="text-2xl font-bold">{(bestAd.average_metrics.conversions || 0).toFixed(0)}</div>
-                            <div className="text-xs text-muted-foreground mt-1">Conversions per day</div>
-                          </div>
-                        </div>
+                        <Button 
+                          variant="outline" 
+                          onClick={() => navigate(`/app/ad-metrics?ad_id=${bestAd.ad_id}`)}
+                          className="shrink-0"
+                        >
+                          View Detailed Metrics
+                          <ChevronRight className="h-4 w-4 ml-1" />
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>
 
-                  {/* Add prediction charts here if needed */}
+                  {/* Prediction Charts Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* ROAS Prediction Chart */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">ROAS Prediction</CardTitle>
+                        <CardDescription>
+                          Predicted return on ad spend over time
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="h-[300px]">
+                        <PlotlyLineChart 
+                          data={getPredictionChartData('roas')}
+                          layout={{
+                            yaxis: { title: 'ROAS' },
+                            margin: { l: 50, r: 20, t: 10, b: 40 },
+                            xaxis: { title: 'Date' },
+                            legend: { orientation: 'h', y: 1.1, xanchor: 'center', x: 0.5 }
+                          }}
+                        />
+                      </CardContent>
+                    </Card>
+
+                    {/* CTR Prediction Chart */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">CTR Prediction</CardTitle>
+                        <CardDescription>
+                          Predicted click-through rate over time
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="h-[300px]">
+                        <PlotlyLineChart 
+                          data={getPredictionChartData('ctr', value => value * 100)}
+                          layout={{
+                            yaxis: { title: 'CTR (%)' },
+                            margin: { l: 50, r: 20, t: 10, b: 40 },
+                            xaxis: { title: 'Date' },
+                            legend: { orientation: 'h', y: 1.1, xanchor: 'center', x: 0.5 }
+                          }}
+                        />
+                      </CardContent>
+                    </Card>
+
+                    {/* Revenue Prediction Chart */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Revenue Prediction</CardTitle>
+                        <CardDescription>
+                          Predicted revenue over time
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="h-[300px]">
+                        <PlotlyLineChart 
+                          data={getPredictionChartData('revenue')}
+                          layout={{
+                            yaxis: { title: 'Revenue ($)' },
+                            margin: { l: 50, r: 20, t: 10, b: 40 },
+                            xaxis: { title: 'Date' },
+                            legend: { orientation: 'h', y: 1.1, xanchor: 'center', x: 0.5 }
+                          }}
+                        />
+                      </CardContent>
+                    </Card>
+
+                    {/* Conversions Prediction Chart */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-lg">Conversions Prediction</CardTitle>
+                        <CardDescription>
+                          Predicted conversions over time
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="h-[300px]">
+                        <PlotlyLineChart 
+                          data={getPredictionChartData('conversions')}
+                          layout={{
+                            yaxis: { title: 'Conversions' },
+                            margin: { l: 50, r: 20, t: 10, b: 40 },
+                            xaxis: { title: 'Date' },
+                            legend: { orientation: 'h', y: 1.1, xanchor: 'center', x: 0.5 }
+                          }}
+                        />
+                      </CardContent>
+                    </Card>
+                  </div>
                 </div>
               ) : (
                 <Card>

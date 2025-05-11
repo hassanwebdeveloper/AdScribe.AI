@@ -44,9 +44,12 @@ class TimeSeriesPredictionService:
             days_to_predict: Number of days to predict into the future
             
         Returns:
-            Dictionary with predicted metrics for each day
+            Dictionary with predicted metrics for each day and historical data
         """
         try:
+            # Suppress statsmodels convergence warnings
+            warnings.filterwarnings("ignore")
+            
             # First, get historical metrics for this ad
             historical_metrics = await self._get_ad_historical_metrics(user_id, ad_id, start_date, end_date)
             
@@ -55,6 +58,7 @@ class TimeSeriesPredictionService:
                 return {
                     "ad_id": ad_id,
                     "predictions": [],
+                    "historical": historical_metrics,
                     "success": False,
                     "message": "Not enough historical data to make predictions"
                 }
@@ -66,112 +70,197 @@ class TimeSeriesPredictionService:
             # Convert to DataFrame for easier manipulation
             df = pd.DataFrame(historical_metrics)
             
-            # Ensure we have date column as datetime
+            # Ensure dates are in datetime format and sort
             df['date'] = pd.to_datetime(df['date'])
             df = df.sort_values('date')
             
             # Set date as index for time series analysis
             df_ts = df.set_index('date')
             
-            # Create a numerical representation of dates for regression fallback
-            df['date_numeric'] = (df['date'] - df['date'].min()).dt.days
-            
-            # Convert missing values to 0
+            # Define metrics to predict
             metrics_to_predict = ['roas', 'ctr', 'cpc', 'cpm', 'conversions', 'revenue', 'spend']
+            
+            # For each metric, fill missing values with 0 or forward fill
             for metric in metrics_to_predict:
                 if metric not in df.columns:
                     df[metric] = 0
-                df[metric] = df[metric].fillna(0)
+                df[metric] = df[metric].fillna(method='ffill').fillna(0)
             
             # Prepare future dates to predict
             last_date = datetime.strptime(end_date, "%Y-%m-%d")
             future_dates = [last_date + timedelta(days=i+1) for i in range(days_to_predict)]
-            future_date_numeric = [(last_date + timedelta(days=i+1) - df['date'].min().to_pydatetime()).days 
-                                  for i in range(days_to_predict)]
             
             predictions = []
             
-            # Predict each metric
+            # Detect patterns in the data
+            has_weekly_pattern = False
+            days_count = len(df)
+            
+            if days_count >= 14:
+                # Check for weekly patterns if we have at least 2 weeks of data
+                for metric in metrics_to_predict:
+                    if metric in df.columns:
+                        # Calculate autocorrelation at lag 7 (weekly)
+                        series = df[metric].values
+                        if len(series) > 7:
+                            try:
+                                acf = np.corrcoef(series[7:], series[:-7])[0, 1]
+                                if abs(acf) > 0.3:  # If there's meaningful correlation
+                                    has_weekly_pattern = True
+                                    break
+                            except:
+                                pass
+            
+            # Predict each metric for each future date
             for i, future_date in enumerate(future_dates):
                 day_prediction = {
                     "date": future_date.strftime("%Y-%m-%d"),
                     "ad_id": ad_id,
-                    "ad_title": ad_title  # Add ad_title to each day prediction
+                    "ad_title": ad_title
                 }
                 
                 for metric in metrics_to_predict:
-                    # Only predict if we have enough non-zero data
-                    non_zero_data = df[df[metric] > 0]
-                    
-                    # For time series forecasting, we need enough data points
-                    if len(non_zero_data) >= 5:
-                        try:
-                            # Try to use ARIMA for time series with enough data
-                            ts_data = df_ts[metric].dropna()
-                            
-                            # Choose the best model based on data characteristics
-                            if len(ts_data) >= 10:
-                                # For longer time series, use ARIMA
-                                model = ARIMA(ts_data, order=(1,1,1))
-                                model_fit = model.fit()
-                                # Predict days ahead
-                                forecast_steps = i + 1
-                                forecast = model_fit.forecast(steps=forecast_steps)
+                    try:
+                        # Get time series data for this metric
+                        ts_data = df_ts[metric].copy()
+                        
+                        # Calculate variance and mean to check for volatility
+                        metric_variance = ts_data.var()
+                        metric_mean = ts_data.mean()
+                        
+                        # Calculate coefficient of variation to measure volatility
+                        cv = (metric_variance ** 0.5) / metric_mean if metric_mean > 0 else 0
+                        is_volatile = cv > 0.3  # If coefficient of variation > 30%
+                        
+                        # Check for recent trend by looking at last 3-5 data points
+                        recent_data = ts_data.tail(min(5, len(ts_data)))
+                        recent_slope = 0
+                        
+                        if len(recent_data) >= 3:
+                            x = np.arange(len(recent_data))
+                            y = recent_data.values
+                            # Simple linear regression to detect trend
+                            if np.std(y) > 0:  # Only if there's variation
+                                slope, _, _, _, _ = stats.linregress(x, y)
+                                recent_slope = slope
+                        
+                        # Select appropriate model based on data characteristics
+                        if days_count >= 14 and has_weekly_pattern:
+                            # Use SARIMA for data with weekly patterns
+                            try:
+                                # SARIMA with weekly seasonality (s=7)
+                                from statsmodels.tsa.statespace.sarimax import SARIMAX
+                                
+                                # Adjust parameters based on volatility
+                                p, d, q = (2, 1, 2) if is_volatile else (1, 1, 1)
+                                model = SARIMAX(ts_data, 
+                                               order=(p, d, q),
+                                               seasonal_order=(1, 0, 1, 7))
+                                model_fit = model.fit(disp=False)
+                                forecast = model_fit.forecast(steps=i+1)
                                 predicted_value = forecast.iloc[-1]
-                            else:
-                                # For shorter time series, use Exponential Smoothing
-                                model = ExponentialSmoothing(ts_data, trend='add', seasonal=None)
+                            except Exception as e:
+                                logger.warning(f"SARIMA forecast failed: {str(e)}, falling back to ARIMA")
+                                # Fall back to simpler model
+                                model = ARIMA(ts_data, order=(1, 1, 1))
                                 model_fit = model.fit()
-                                # Predict days ahead
-                                forecast_steps = i + 1
-                                forecast = model_fit.forecast(steps=forecast_steps)
+                                forecast = model_fit.forecast(steps=i+1)
                                 predicted_value = forecast.iloc[-1]
                                 
-                            # Ensure prediction doesn't go below zero for metrics that can't be negative
-                            predicted_value = max(0, predicted_value)
+                        elif days_count >= 10:
+                            # Adjust ARIMA parameters based on data characteristics
+                            if is_volatile:
+                                # More complex model for volatile data
+                                model = ARIMA(ts_data, order=(2, 1, 2))
+                            else:
+                                # Standard model for stable data
+                                model = ARIMA(ts_data, order=(1, 1, 1))
+                                
+                            model_fit = model.fit()
+                            forecast = model_fit.forecast(steps=i+1)
+                            predicted_value = forecast.iloc[-1]
                             
-                            day_prediction[metric] = float(predicted_value)
-                        except Exception as e:
-                            logger.warning(f"Time series prediction failed for {ad_id}, metric {metric}: {str(e)}")
-                            # Fall back to linear regression if time series fails
-                            X = non_zero_data[['date_numeric']].values
-                            y = non_zero_data[metric].values
+                        elif days_count >= 5:
+                            # Use Exponential Smoothing with trend component based on data
+                            if abs(recent_slope) > 0.1:  # If there's a noticeable trend
+                                model = ExponentialSmoothing(ts_data, trend='add', seasonal=None, damped=True)
+                            else:
+                                model = ExponentialSmoothing(ts_data, trend='add', seasonal=None)
+                                
+                            model_fit = model.fit()
+                            forecast = model_fit.forecast(steps=i+1)
+                            predicted_value = forecast.iloc[-1]
                             
-                            model = LinearRegression()
-                            model.fit(X, y)
-                            
-                            # Predict
-                            predicted_value = model.predict([[future_date_numeric[i]]])[0]
-                            predicted_value = max(0, predicted_value)
-                            day_prediction[metric] = float(predicted_value)
-                    elif len(non_zero_data) >= 3:
-                        # Use linear regression for basic prediction if we have at least 3 data points
-                        X = non_zero_data[['date_numeric']].values
-                        y = non_zero_data[metric].values
+                        else:
+                            # For very limited data, use simple average with trend
+                            base_value = ts_data.mean()
+                            trend_factor = recent_slope * (i + 1) if abs(recent_slope) > 0 else 0
+                            predicted_value = base_value + trend_factor
                         
-                        model = LinearRegression()
-                        model.fit(X, y)
+                        # Ensure continuity with historical data
+                        if i == 0 and len(ts_data) > 0:
+                            # For the first prediction, blend with the last historical value
+                            # to ensure continuity
+                            last_actual = ts_data.iloc[-1]
+                            # Weighted average: 30% last actual + 70% model prediction
+                            blended_value = 0.3 * last_actual + 0.7 * predicted_value
+                            predicted_value = blended_value
                         
-                        # Predict
-                        predicted_value = model.predict([[future_date_numeric[i]]])[0]
-                        
-                        # Ensure prediction doesn't go below zero for metrics that can't be negative
+                        # Ensure prediction is non-negative
                         predicted_value = max(0, predicted_value)
                             
+                        # Add to prediction
                         day_prediction[metric] = float(predicted_value)
-                    else:
-                        # Use average of last 3 days or whatever we have
-                        recent_values = df[metric].tail(min(3, len(df))).values
-                        if len(recent_values) > 0:
-                            day_prediction[metric] = float(np.mean(recent_values))
+                        
+                    except Exception as e:
+                        logger.warning(f"Error predicting {metric} for ad {ad_id}: {str(e)}")
+                        # Fall back to mean of last values with trend
+                        last_values = df[metric].tail(min(5, len(df))).values
+                        if len(last_values) > 0:
+                            # Simple trend-based prediction
+                            mean_value = np.mean(last_values)
+                            if len(last_values) >= 3:
+                                # Calculate trend
+                                x = np.arange(len(last_values))
+                                y = last_values
+                                if np.std(y) > 0:
+                                    try:
+                                        slope, _, _, _, _ = stats.linregress(x, y)
+                                        trend = slope * (i + 1)
+                                        day_prediction[metric] = float(mean_value + trend)
+                                    except:
+                                        day_prediction[metric] = float(mean_value)
+                                else:
+                                    day_prediction[metric] = float(mean_value)
+                            else:
+                                day_prediction[metric] = float(mean_value)
                         else:
                             day_prediction[metric] = 0.0
                 
                 predictions.append(day_prediction)
             
+            # Format historical data to match prediction format
+            formatted_historical = []
+            for _, row in df.iterrows():
+                historical_point = {
+                    "date": row['date'].strftime("%Y-%m-%d"),
+                    "ad_id": ad_id,
+                    "ad_title": ad_title
+                }
+                
+                for metric in metrics_to_predict:
+                    if metric in row:
+                        historical_point[metric] = float(row[metric])
+                
+                formatted_historical.append(historical_point)
+            
+            # Sort historical data by date
+            formatted_historical.sort(key=lambda x: x["date"])
+            
             return {
                 "ad_id": ad_id,
                 "predictions": predictions,
+                "historical": formatted_historical,
                 "success": True
             }
             
@@ -180,6 +269,7 @@ class TimeSeriesPredictionService:
             return {
                 "ad_id": ad_id,
                 "predictions": [],
+                "historical": [],
                 "success": False,
                 "message": f"Error making predictions: {str(e)}"
             }
@@ -189,7 +279,8 @@ class TimeSeriesPredictionService:
         user_id: str,
         start_date: str,
         end_date: str,
-        days_to_predict: int = 7
+        days_to_predict: int = 7,
+        use_time_series: bool = True  # Added parameter, will be ignored in this class
     ) -> Dict[str, Any]:
         """
         Predict metrics for all ads of a user using time series forecasting.
@@ -199,6 +290,7 @@ class TimeSeriesPredictionService:
             start_date: Start date for historical data (format: YYYY-MM-DD)
             end_date: End date for historical data (format: YYYY-MM-DD)
             days_to_predict: Number of days to predict into the future
+            use_time_series: Ignored in TimeSeriesPredictionService (always true)
             
         Returns:
             Dictionary with predictions for all ads and the best performing ad
