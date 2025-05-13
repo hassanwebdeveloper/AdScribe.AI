@@ -55,6 +55,7 @@ class AdAnalysis(BaseModel):
     campaign_id: Optional[str] = None
     campaign_name: Optional[str] = None
     adset_id: Optional[str] = None
+    ad_id: Optional[str] = None
     adset_name: Optional[str] = None
     adset_targeting: Optional[AdSetTargeting] = None
     video_id: Optional[str] = None

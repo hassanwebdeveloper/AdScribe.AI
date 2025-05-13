@@ -8,6 +8,7 @@ import pandas as pd
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import warnings
+import asyncio
 
 from app.core.database import get_database
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -297,7 +298,8 @@ class TimeSeriesPredictionService:
         start_date: str,
         end_date: str,
         days_to_predict: int = 7,
-        use_time_series: bool = True  # Added parameter, will be ignored in this class
+        use_time_series: bool = True,  # Added parameter, will be ignored in this class
+        only_analyzed_ads: bool = False  # Added parameter for filtering ads
     ) -> Dict[str, Any]:
         """
         Predict metrics for all ads of a user using time series forecasting.
@@ -308,6 +310,7 @@ class TimeSeriesPredictionService:
             end_date: End date for historical data (format: YYYY-MM-DD)
             days_to_predict: Number of days to predict into the future
             use_time_series: Ignored in TimeSeriesPredictionService (always true)
+            only_analyzed_ads: If True, only predict for ads that have entries in ad_analyses collection
             
         Returns:
             Dictionary with predictions for all ads and the best performing ad
@@ -324,6 +327,67 @@ class TimeSeriesPredictionService:
                     "predictions": [],
                     "best_ad": None
                 }
+            
+            # Filter ads to only those in ad_analyses if required
+            if only_analyzed_ads:
+                logger.info(f"Filtering {len(all_ads)} ads to only those with analyses in the database")
+                # Get all video_ids from ad_analyses
+                analyzed_ads = []
+                try:
+                    # Get unique ad_id or video_id from ad_analyses
+                    cursor = self.db.ad_analyses.find({"user_id": user_id})
+                    ad_analyses = await cursor.to_list(length=None)
+                    
+                    logger.info(f"Found {len(ad_analyses)} ad analyses in the database for user {user_id}")
+                    
+                    # Create a set of all video_ids and ad_ids
+                    analyzed_video_ids = set()
+                    for analysis in ad_analyses:
+                        if "video_id" in analysis and analysis["video_id"]:
+                            analyzed_video_ids.add(analysis["video_id"])
+                        if "ad_id" in analysis and analysis["ad_id"]:
+                            analyzed_video_ids.add(analysis["ad_id"])
+                    
+                    logger.info(f"Found {len(analyzed_video_ids)} unique video/ad IDs in ad_analyses")
+                    
+                    # Get matching ads from ad_metrics using campaign_id
+                    campaign_ids = set()
+                    for analysis in ad_analyses:
+                        if "campaign_id" in analysis and analysis["campaign_id"]:
+                            campaign_ids.add(analysis["campaign_id"])
+                    
+                    logger.info(f"Found {len(campaign_ids)} unique campaign IDs in ad_analyses")
+                    
+                    # Filter ads that match either by direct id or campaign_id
+                    for ad in all_ads:
+                        ad_id = ad["ad_id"]
+                        # Check if this ad's ID matches any video_id in ad_analyses
+                        if ad_id in analyzed_video_ids:
+                            analyzed_ads.append(ad)
+                            logger.info(f"Including ad {ad_id} - direct match with video_id")
+                            continue
+                            
+                        # Otherwise check if we can find this ad's campaign_id in ad_metrics
+                        try:
+                            ad_metric = await self.db.ad_metrics.find_one({"user_id": user_id, "ad_id": ad_id})
+                            if ad_metric and "campaign_id" in ad_metric and ad_metric["campaign_id"] in campaign_ids:
+                                analyzed_ads.append(ad)
+                                logger.info(f"Including ad {ad_id} - campaign match with {ad_metric['campaign_id']}")
+                        except Exception as e:
+                            logger.error(f"Error checking campaign_id for ad {ad_id}: {str(e)}")
+                    
+                    if not analyzed_ads:
+                        logger.warning(f"No analyzed ads found for user {user_id} after filtering")
+                        # Fallback to using all ads if none match
+                        analyzed_ads = all_ads
+                except Exception as e:
+                    logger.error(f"Error filtering for analyzed ads: {str(e)}")
+                    # On error, just use all ads
+                    analyzed_ads = all_ads
+                
+                # Use the filtered ads list
+                all_ads = analyzed_ads
+                logger.info(f"Filtered to {len(all_ads)} ads that have analyses")
             
             # Predict metrics for each ad
             all_predictions = []
@@ -424,7 +488,40 @@ class TimeSeriesPredictionService:
             return None
             
         best_ad_id = max(ad_scores.keys(), key=lambda x: ad_scores[x]["score"])
-        return ad_scores[best_ad_id]
+        
+        # Try to enhance the best ad with ad_title from ad_analyses if it's not already set
+        best_ad = ad_scores[best_ad_id]
+        
+        # If no ad_title is set, try to get it from ad_analyses
+        if not best_ad.get("ad_title"):
+            try:
+                # Get user_id from the first prediction
+                user_id = None
+                for prediction in all_predictions:
+                    if "user_id" in prediction:
+                        user_id = prediction["user_id"]
+                        break
+                
+                if user_id:
+                    # Try to find title in ad_analyses
+                    loop = asyncio.get_event_loop()
+                    analysis = loop.run_until_complete(
+                        self.db.ad_analyses.find_one({
+                            "user_id": user_id,
+                            "$or": [
+                                {"ad_id": best_ad_id},
+                                {"video_id": best_ad_id}
+                            ]
+                        })
+                    )
+                    
+                    if analysis and "ad_title" in analysis:
+                        best_ad["ad_title"] = analysis["ad_title"]
+                        logger.info(f"Enhanced best ad with title from ad_analyses: {analysis['ad_title']}")
+            except Exception as e:
+                logger.error(f"Error getting ad_title from ad_analyses in time series model: {str(e)}")
+        
+        return best_ad
     
     async def _get_ad_historical_metrics(
         self, 
@@ -546,6 +643,7 @@ class TimeSeriesPredictionService:
     async def _get_ad_details(self, user_id: str, ad_id: str) -> Dict[str, Any]:
         """Get ad details including title."""
         try:
+            # First check for ad information in ad_metrics
             cursor = self.db.ad_metrics.find({
                 "user_id": user_id,
                 "ad_id": ad_id
@@ -553,13 +651,42 @@ class TimeSeriesPredictionService:
             
             ad_info = await cursor.to_list(length=1)
             
-            if not ad_info:
-                return {"ad_title": "", "ad_name": "Unknown Ad"}
+            # Initialize with defaults
+            ad_title = ""
+            ad_name = "Unknown Ad"
+            
+            if ad_info:
+                metric = ad_info[0]
+                ad_title = metric.get("ad_title", "")
+                ad_name = metric.get("ad_name", "Unknown Ad")
+            
+            # If no ad_title was found, check in ad_analyses collection
+            if not ad_title:
+                # Try to find by ad_id first
+                analysis = await self.db.ad_analyses.find_one({
+                    "user_id": user_id,
+                    "ad_id": ad_id
+                })
                 
-            metric = ad_info[0]
+                # If not found, try by video_id
+                if not analysis:
+                    analysis = await self.db.ad_analyses.find_one({
+                        "user_id": user_id,
+                        "video_id": ad_id
+                    })
+                
+                # If we found an analysis, extract the title
+                if analysis:
+                    ad_title = analysis.get("ad_title", "")
+                    logger.info(f"Found ad_title '{ad_title}' from ad_analyses for ad {ad_id}")
+                    
+                    # If no name yet, use the ad_message as a fallback
+                    if ad_name == "Unknown Ad" and analysis.get("ad_message"):
+                        ad_name = analysis.get("ad_message")[:30] + "..." if len(analysis.get("ad_message", "")) > 30 else analysis.get("ad_message", "")
+            
             return {
-                "ad_title": metric.get("ad_title", ""),
-                "ad_name": metric.get("ad_name", "Unknown Ad")
+                "ad_title": ad_title,
+                "ad_name": ad_name
             }
         except Exception as e:
             logger.error(f"Error getting ad details for ad {ad_id}: {str(e)}")

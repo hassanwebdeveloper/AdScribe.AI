@@ -105,6 +105,7 @@ async def get_best_performing_ad(
     days_to_predict: int = Query(7, description="Number of days to predict into the future"),
     use_time_series: bool = Query(True, description="Whether to use time series forecasting"),
     force_refresh: bool = Query(False, description="Force refresh data from Facebook API"),
+    use_only_analyzed_ads: bool = Query(False, description="Only use ads that have entries in ad_analyses collection"),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -167,7 +168,8 @@ async def get_best_performing_ad(
             start_date=start_date,
             end_date=end_date,
             days_to_predict=days_to_predict,
-            use_time_series=use_time_series
+            use_time_series=use_time_series,
+            only_analyzed_ads=use_only_analyzed_ads
         )
         
         # If use_time_series is False, return only the best ad without predictions

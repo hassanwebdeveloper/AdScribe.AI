@@ -105,6 +105,8 @@ const Dashboard = () => {
   const [bestAd, setBestAd] = useState<BestAdPrediction | null>(null);
   const [useTimeSeries, setUseTimeSeries] = useState<boolean>(true);
   const [timeSeriesToggled, setTimeSeriesToggled] = useState<boolean>(false);
+  const [useOnlyAnalyzedAds, setUseOnlyAnalyzedAds] = useState<boolean>(true);
+  const [onlyAnalyzedAdsToggled, setOnlyAnalyzedAdsToggled] = useState<boolean>(false);
 
   // Add state for historical and prediction data
   const [adPredictions, setAdPredictions] = useState<AdMetrics[]>([]);
@@ -262,21 +264,24 @@ const Dashboard = () => {
     if (!user) return;
     
     setIsPredicting(true);
-    console.log(`⭐ Starting prediction with use_time_series=${useTimeSeries}`);
+    console.log(`⭐ Starting prediction with use_time_series=${useTimeSeries}, use_only_analyzed_ads=${useOnlyAnalyzedAds}`);
     
     try {
       // Use the same date range as the dashboard
       const startDate = format(dateRange.from || subDays(new Date(), 7), 'yyyy-MM-dd');
       const endDate = format(dateRange.to || new Date(), 'yyyy-MM-dd');
       
-      console.log(`🔍 API call params: startDate=${startDate}, endDate=${endDate}, useTimeSeries=${useTimeSeries}`);
+      console.log(`🔍 API call params: startDate=${startDate}, endDate=${endDate}, useTimeSeries=${useTimeSeries}, useOnlyAnalyzedAds=${useOnlyAnalyzedAds}`);
       
-      // Call prediction service with time series option
+      // Call prediction service with time series and only analyzed ads options
       const result = await PredictionService.getBestPerformingAd(
         startDate, 
         endDate, 
         7, 
-        { useTimeSeries }
+        { 
+          useTimeSeries,
+          useOnlyAnalyzedAds
+        }
       );
       
       console.log(`✅ API response received: success=${result.success}, predictions count=${result.predictions?.length || 0}, historical count=${result.historical?.length || 0}`);
@@ -334,7 +339,21 @@ const Dashboard = () => {
     }
   };
 
-  // New useEffect to handle the toggle state change
+  // New useEffect to handle the toggle state change for only analyzed ads
+  useEffect(() => {
+    // Skip on initial render by checking the onlyAnalyzedAdsToggled flag
+    if (onlyAnalyzedAdsToggled && user && !isLoading) {
+      console.log(`useOnlyAnalyzedAds state changed to: ${useOnlyAnalyzedAds}`);
+      predictBestPerformingAd();
+    }
+  }, [useOnlyAnalyzedAds, onlyAnalyzedAdsToggled]);
+
+  // Fetch metrics when date range changes
+  useEffect(() => {
+    fetchMetrics();
+  }, [dateRange, user, fetchAttempts, forceRefresh]);
+
+  // Existing useEffect to handle the toggle state change for time series
   useEffect(() => {
     // Skip on initial render by checking the timeSeriesToggled flag
     if (timeSeriesToggled && user && !isLoading) {
@@ -342,11 +361,6 @@ const Dashboard = () => {
       predictBestPerformingAd();
     }
   }, [useTimeSeries, timeSeriesToggled]);
-
-  // Fetch metrics when date range changes
-  useEffect(() => {
-    fetchMetrics();
-  }, [dateRange, user, fetchAttempts, forceRefresh]);
 
   // Helper to generate sample ad metrics data for testing
   const generateSampleAdData = () => {
@@ -1144,7 +1158,20 @@ const Dashboard = () => {
                 <h2 className="text-2xl font-bold">Best Ad Prediction</h2>
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
-                    <Label htmlFor="time-series-toggle" className="text-sm">Time Series Analysis</Label>
+                    <Label htmlFor="analyzed-ads-toggle" className="text-sm">Only Analyzed Ads</Label>
+                    <Switch
+                      id="analyzed-ads-toggle"
+                      checked={useOnlyAnalyzedAds}
+                      onCheckedChange={(checked) => {
+                        console.log(`Only Analyzed Ads toggle changed to: ${checked}`);
+                        setUseOnlyAnalyzedAds(checked);
+                        setOnlyAnalyzedAdsToggled(true);
+                        // The useEffect hook will handle the API call
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="time-series-toggle" className="text-sm">Use Forcasting</Label>
                     <Switch
                       id="time-series-toggle"
                       checked={useTimeSeries}
@@ -1189,7 +1216,12 @@ const Dashboard = () => {
                     <CardContent>
                       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                         <div>
-                          <h3 className="font-semibold text-lg">{bestAd.ad_title || bestAd.ad_name}</h3>
+                          <h3 className="font-semibold text-lg">
+                            {bestAd.ad_title || bestAd.ad_name || "Best Performing Ad"}
+                          </h3>
+                          {bestAd.ad_title && bestAd.ad_name && bestAd.ad_title !== bestAd.ad_name && (
+                            <p className="text-sm text-muted-foreground">{bestAd.ad_name}</p>
+                          )}
                           <p className="text-sm text-muted-foreground">Ad ID: {bestAd.ad_id}</p>
                           <p className="text-sm mt-2">This ad is predicted to outperform others in your account.</p>
                         </div>

@@ -51,6 +51,7 @@ interface BestAdResponse {
 
 interface PredictionOptions {
   useTimeSeries?: boolean;
+  useOnlyAnalyzedAds?: boolean;
 }
 
 interface AdMetrics {
@@ -158,24 +159,40 @@ class PredictionService {
     endDate: string,
     daysToPredict: number = 7,
     options: PredictionOptions = {}
-  ): Promise<PredictionResponse> {
+  ): Promise<{ 
+    success: boolean; 
+    message?: string; 
+    best_ad?: BestAdPrediction; 
+    predictions?: AdMetrics[];
+    historical?: AdMetrics[];
+  }> {
     try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        return { 
+          success: false, 
+          message: 'Authentication token missing',
+          predictions: [],
+          historical: []
+        };
+      }
+
+      // Set defaults for options
       const useTimeSeries = options.useTimeSeries !== undefined ? options.useTimeSeries : true;
-      console.log(`🚀 PredictionService.getBestPerformingAd - useTimeSeries: ${useTimeSeries}`);
-      
-      const params = {
-        start_date: startDate,
-        end_date: endDate,
-        days_to_predict: daysToPredict,
-        use_time_series: useTimeSeries
-      };
-      
-      console.log('🔄 API Request params:', params);
-      
+      const useOnlyAnalyzedAds = options.useOnlyAnalyzedAds !== undefined ? options.useOnlyAnalyzedAds : true;
+
+      console.log(`PredictionService: Getting best ad from ${startDate} to ${endDate} with useTimeSeries=${useTimeSeries}, useOnlyAnalyzedAds=${useOnlyAnalyzedAds}`);
+
       const response = await axios.get('/api/v1/predictions/best-ad', {
-        params,
+        params: {
+          start_date: startDate,
+          end_date: endDate,
+          days_to_predict: daysToPredict,
+          use_time_series: useTimeSeries,
+          use_only_analyzed_ads: useOnlyAnalyzedAds
+        },
         headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`
+          Authorization: `Bearer ${token}`
         }
       });
       
@@ -188,11 +205,20 @@ class PredictionService {
         message: error instanceof Error ? error.message : 'Unknown error',
         predictions: [],
         historical: [],
-        best_ad: null
+        best_ad: undefined
       };
     }
   }
 }
 
-export default new PredictionService();
+// Create a singleton instance
+const predictionService = new PredictionService();
+
+// Default export for direct usage
+export default predictionService;
+
+// Named export for more explicit imports
+export { predictionService as PredictionService };
+
+// Export types
 export type { PredictionMetric, AdPrediction, BestAdPrediction, AllAdsPredictionResponse, BestAdResponse, PredictionOptions, AdMetrics, PredictionResponse }; 
