@@ -146,6 +146,9 @@ async def get_ad_performance_segments(
 
         df_complete = pd.concat([df, placeholder_df], ignore_index=True)
 
+        # No need for dummy point since there's already an unprofitable item visible
+        # Just make sure all categories are included in the color parameter
+        
         color_discrete_map = {
             'Profitable': '#4CAF50',
             'Breakeven': '#FFC107',
@@ -192,9 +195,17 @@ async def get_ad_performance_segments(
                 yanchor="bottom",
                 y=1.02,
                 xanchor="center",
-                x=0.5
+                x=0.5,
+                itemsizing='constant'  # Ensure consistent legend item sizes
             ),
             margin=dict(l=100, r=40, t=80, b=80),
+            showlegend=True,
+            # Hide modebar - use only valid properties
+            modebar=dict(
+                remove=["zoom", "pan", "select", "zoomIn", "zoomOut", "autoScale", 
+                       "resetScale", "lasso2d", "toImage", "sendDataToCloud", 
+                       "toggleSpikelines", "resetViewMapbox"]
+            )
         )
 
         for annotation in fig.layout.annotations:
@@ -205,10 +216,62 @@ async def get_ad_performance_segments(
                 annotation.text = annotation.text.split('=')[-1]
                 annotation.font.size = 12
 
-        fig.update_xaxes(title_text="Date", tickformat="%b %d")
-        fig.update_yaxes(title_text="Revenue ($)")
+        # Ensure only legend entries for visible circles are shown
+        shown = set()
+        def legend_visible(trace):
+            # Check if trace has at least one visible marker
+            has_visible = hasattr(trace, 'x') and trace.x is not None and len(trace.x) > 0 and len(trace.hovertext) > 0 and trace.hovertext[0] != 'No Data'
+            if trace.name in shown or not has_visible:
+                trace.showlegend = False
+            else:
+                shown.add(trace.name)
+                trace.showlegend = True
+        fig.for_each_trace(legend_visible)
 
-        return {"figure": fig.to_json()}
+        # Format x-axis to show only month and day (e.g., 'Jun 01')
+        fig.update_xaxes(tickformat='%b %d')
+
+        # Clear any default axis titles to avoid overlap
+        fig.update_xaxes(title=None)
+        fig.update_yaxes(title=None)
+        
+        # Add a single x-axis title in the bottom row, center column
+        middle_col_idx = len(fatigue_risks) // 2
+        bottom_row_idx = len(engagement_types) - 1
+        
+        # Add custom x-axis title in the bottom center
+        fig.add_annotation(
+            text="Date",
+            x=0.5,  # Center of the figure
+            y=-0.08,  # Below the bottom row
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(size=14),
+            align="center"
+        )
+        
+        # Add custom y-axis title in the middle left
+        fig.add_annotation(
+            text="Revenue ($)",
+            x=-0.08,  # Left of the leftmost column
+            y=0.5,  # Middle of the figure
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            textangle=-90,  # Rotate for y-axis
+            font=dict(size=14),
+            align="center"
+        )
+
+        # Hide full modebar when displaying the plot in frontend
+        config = {
+            'displayModeBar': False,
+            'staticPlot': False,
+            'responsive': True
+        }
+
+        return {"figure": fig.to_json(), "config": config}
 
     except Exception as e:
         logger.error(f"Failed to generate visualization: {str(e)}")

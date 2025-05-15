@@ -108,7 +108,7 @@ const AdPerformanceSegments: React.FC<AdPerformanceSegmentsProps> = ({
         </div>
         
         {plotlyFigure ? (
-          <div className="h-[700px] w-full">
+          <div className="h-[1000px] w-full">
             <Plot
               data={plotlyFigure.data}
               layout={plotlyFigure.layout}
