@@ -66,6 +66,21 @@ def test_chat_settings():
         logging.error(f"Exception: {str(e)}")
         return None
 
+# Add a test for the visualization endpoint
+def test_visualization_endpoint(client, authenticate_client):
+    # First authenticate
+    auth_token = authenticate_client()
+    
+    # Test the visualization endpoint
+    response = client.get(
+        "/api/v1/visualization/ad-performance-segments?start_date=2023-01-01&end_date=2023-01-31",
+        headers={"Authorization": f"Bearer {auth_token}"}
+    )
+    
+    # Assert that the response is successful and contains expected data
+    assert response.status_code == 200
+    assert "figure" in response.json() or "message" in response.json()
+
 if __name__ == "__main__":
     logging.info("Starting API tests...")
     auth_result = test_auth_me()

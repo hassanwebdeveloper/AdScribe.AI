@@ -82,4 +82,15 @@ Project/
 ## Health Checks
 
 - `GET /api/v1/health`: Basic health check
-- `GET /api/v1/health/db`: Database connectivity check 
+- `GET /api/v1/health/db`: Database connectivity check
+
+## New Dependencies
+
+### Data Visualization
+- **plotly**: Used for creating interactive plots and visualizations
+- **kaleido**: Used for exporting Plotly figures to static images
+
+Make sure to install these dependencies using:
+```bash
+pip install -r requirements.txt
+``` 

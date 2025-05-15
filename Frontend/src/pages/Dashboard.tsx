@@ -14,6 +14,7 @@ import { useNavigate } from 'react-router-dom';
 import PredictionService, { BestAdPrediction, AdMetrics } from '@/services/PredictionService';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import AdPerformanceSegments from '@/components/AdPerformanceSegments';
 
 interface DateRange {
   from: Date;
@@ -959,6 +960,7 @@ const Dashboard = () => {
               <TabsTrigger value="account">Account Performance</TabsTrigger>
               <TabsTrigger value="ads">Ad Performance</TabsTrigger>
               <TabsTrigger value="best-ad">Best Ad Prediction</TabsTrigger>
+              <TabsTrigger value="ad-segments" className="hidden md:inline-flex">Ad Performance Segments</TabsTrigger>
             </TabsList>
             
             {/* Account Performance Tab */}
@@ -1347,6 +1349,14 @@ const Dashboard = () => {
                   </CardContent>
                 </Card>
               )}
+            </TabsContent>
+
+            {/* Ad Performance Segments Tab */}
+            <TabsContent value="ad-segments" className="space-y-4">
+              <AdPerformanceSegments 
+                startDate={format(dateRange.from || new Date(), 'yyyy-MM-dd')}
+                endDate={format(dateRange.to || new Date(), 'yyyy-MM-dd')}
+              />
             </TabsContent>
           </Tabs>
         </div>
