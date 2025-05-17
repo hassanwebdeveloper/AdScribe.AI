@@ -15,6 +15,7 @@ import PredictionService, { BestAdPrediction, AdMetrics } from '@/services/Predi
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import AdPerformanceSegments from '@/components/AdPerformanceSegments';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface DateRange {
   from: Date;
@@ -112,6 +113,9 @@ const Dashboard = () => {
   // Add state for historical and prediction data
   const [adPredictions, setAdPredictions] = useState<AdMetrics[]>([]);
   const [historicalMetrics, setHistoricalMetrics] = useState<AdMetrics[]>([]);
+
+  // Add new state for selected metric
+  const [selectedMetric, setSelectedMetric] = useState<string>('roas');
 
   // Calculate previous date range
   const getPreviousRange = (from: Date, to: Date) => {
@@ -607,7 +611,7 @@ const Dashboard = () => {
       .slice(0, 5); // Get top 5 ads
   };
 
-  // Get Ad Metrics Chart Data
+  // Get Ad Metrics Chart Data - updated to support ad-centric view
   const getAdMetricsChartData = (adMetrics: any[], metricName: string, formatter?: (value: number) => number) => {
     console.log(`getAdMetricsChartData called with ${adMetrics?.length || 0} items for metric: ${metricName}`);
     
@@ -733,7 +737,7 @@ const Dashboard = () => {
         y: [],
         type: 'scatter',
         mode: 'lines+markers',
-        name: displayName,
+        name: metricName.toUpperCase(),
         line: { color: adColors[adId], width: 2 },
         marker: { size: 6 },
         // Add customdata and hovertemplate for rich tooltips
@@ -743,7 +747,11 @@ const Dashboard = () => {
           'Campaign: %{customdata[1]}<br>Ad Set: %{customdata[2]}<br><br>' +
           'Purchases: %{customdata[3]}<br>Spend: $%{customdata[4]}<br>Revenue: $%{customdata[5]}<br>' +
           'Clicks: %{customdata[6]}<br>Impressions: %{customdata[7]}<br>ROAS: %{customdata[8]}x<br>' +
-          'CPC: $%{customdata[9]}<br>CPM: $%{customdata[10]}<extra></extra>'
+          'CPC: $%{customdata[9]}<br>CPM: $%{customdata[10]}<extra></extra>',
+        adId: adId,  // Store the ad ID for reference
+        adName: displayName, // Store the ad name for reference
+        campaignName: campaignName, // Store the campaign name
+        adsetName: adsetName // Store the adset name
       };
     });
     
@@ -797,6 +805,50 @@ const Dashboard = () => {
     
     console.log(`Returning ${dataArray.length} ads with data for charts`);
     return dataArray;
+  };
+
+  // Get formatted metric title
+  const getMetricTitle = (metric: string) => {
+    switch(metric) {
+      case 'roas': return 'ROAS';
+      case 'ctr': return 'CTR (%)';
+      case 'cpc': return 'CPC ($)';
+      case 'cpm': return 'CPM ($)';
+      case 'conversions': return 'Conversions';
+      case 'revenue': return 'Revenue ($)';
+      case 'spend': return 'Spend ($)';
+      default: return metric.toUpperCase();
+    }
+  };
+
+  // Get formatted metric description
+  const getMetricDescription = (metric: string) => {
+    switch(metric) {
+      case 'roas': return 'Return on ad spend';
+      case 'ctr': return 'Click-through rate';
+      case 'cpc': return 'Cost per click';
+      case 'cpm': return 'Cost per thousand impressions';
+      case 'conversions': return 'Number of conversions';
+      case 'revenue': return 'Total revenue generated';
+      case 'spend': return 'Total amount spent';
+      default: return '';
+    }
+  };
+
+  // Get formatter for a metric
+  const getMetricFormatter = (metric: string) => {
+    switch(metric) {
+      case 'ctr': return (value: number) => value * 100; // Convert to percentage
+      default: return undefined;
+    }
+  };
+
+  // NEW: Get the actual data field name for a given metric
+  const getMetricDataField = (metric: string) => {
+    switch(metric) {
+      case 'conversions': return 'purchases'; // Map 'conversions' to 'purchases' field
+      default: return metric;
+    }
   };
 
   // Prepare data for prediction charts with best performing ad
@@ -1063,94 +1115,184 @@ const Dashboard = () => {
               </div>
             </TabsContent>
             
-            {/* Ad Performance Tab */}
+            {/* Ad Performance Tab - UPDATED */}
             <TabsContent value="ads">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-2xl font-bold">Ad Performance</h2>
-                <Button
-                  variant="outline"
-                  onClick={() => navigate('/app/ad-metrics')}
-                >
-                  View Detailed Ad Metrics
-                </Button>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="metric-selector" className="text-sm">Metric</Label>
+                    <Select
+                      value={selectedMetric}
+                      onValueChange={setSelectedMetric}
+                    >
+                      <SelectTrigger className="w-[180px]">
+                        <SelectValue placeholder="Select metric" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="roas">ROAS</SelectItem>
+                        <SelectItem value="ctr">CTR</SelectItem>
+                        <SelectItem value="cpc">CPC</SelectItem>
+                        <SelectItem value="cpm">CPM</SelectItem>
+                        <SelectItem value="conversions">Conversions</SelectItem>
+                        <SelectItem value="revenue">Revenue</SelectItem>
+                        <SelectItem value="spend">Spend</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => navigate('/app/ad-metrics')}
+                  >
+                    View Detailed Ad Metrics
+                  </Button>
+                </div>
               </div>
               
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2 mb-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>ROAS by Ad</CardTitle>
-                    <CardDescription>
-                      Return on ad spend for each ad over time
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="h-[400px]">
-                    <PlotlyLineChart 
-                      data={getAdMetricsChartData(metrics?.ad_metrics || [], 'roas')}
-                      layout={{
-                        yaxis: { title: 'ROAS' },
-                        legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
-                        margin: { l: 50, r: 20, t: 30, b: 100 }
-                      }}
-                    />
-                  </CardContent>
-                </Card>
-                
-                <Card>
-                  <CardHeader>
-                    <CardTitle>CTR by Ad</CardTitle>
-                    <CardDescription>
-                      Click-through rate for each ad over time
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="h-[400px]">
-                    <PlotlyLineChart 
-                      data={getAdMetricsChartData(metrics?.ad_metrics || [], 'ctr', value => value * 100)}
-                      layout={{
-                        yaxis: { title: 'CTR (%)' },
-                        legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
-                        margin: { l: 50, r: 20, t: 30, b: 100 }
-                      }}
-                    />
-                  </CardContent>
-                </Card>
-                
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Spend by Ad</CardTitle>
-                    <CardDescription>
-                      Daily spend for each ad
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="h-[400px]">
-                    <PlotlyLineChart 
-                      data={getAdMetricsChartData(metrics?.ad_metrics || [], 'spend')}
-                      layout={{
-                        yaxis: { title: 'Spend ($)' },
-                        legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
-                        margin: { l: 50, r: 20, t: 30, b: 100 }
-                      }}
-                    />
-                  </CardContent>
-                </Card>
-                
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Revenue by Ad</CardTitle>
-                    <CardDescription>
-                      Daily revenue for each ad
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="h-[400px]">
-                    <PlotlyLineChart 
-                      data={getAdMetricsChartData(metrics?.ad_metrics || [], 'revenue')}
-                      layout={{
-                        yaxis: { title: 'Revenue ($)' },
-                        legend: { orientation: 'h', y: -0.3, xanchor: 'center', x: 0.5 },
-                        margin: { l: 50, r: 20, t: 30, b: 100 }
-                      }}
-                    />
-                  </CardContent>
-                </Card>
+                {/* Show a card for each unique ad with the selected metric */}
+                {(() => {
+                  // First, get all ad_metrics
+                  const allAdMetrics = metrics?.ad_metrics || [];
+                  
+                  // Create a map to collect data for each ad
+                  const adDataMap = new Map();
+                  
+                  // Get unique ad IDs from the metrics
+                  const uniqueAdIds = new Set();
+                  allAdMetrics.forEach(metric => {
+                    if (metric.ad_id) {
+                      uniqueAdIds.add(metric.ad_id);
+                    }
+                  });
+                  
+                  // Process each unique ad
+                  Array.from(uniqueAdIds).slice(0, 8).map(adId => {
+                    // Filter metrics for this ad
+                    const adMetrics = allAdMetrics.filter(m => m.ad_id === adId);
+                    
+                    // Skip if no metrics
+                    if (adMetrics.length === 0) return null;
+                    
+                    // Get ad details
+                    const adDetails = metrics?.unique_ads?.find(a => a.ad_id === adId) || 
+                                     adMetrics[0] || 
+                                     { ad_id: adId as string, ad_name: `Ad ${adId}` };
+                    
+                    // Store in map
+                    adDataMap.set(adId, {
+                      adId: adId as string,
+                      adName: adDetails.ad_title || adDetails.ad_name || `Ad ${adId}`,
+                      metrics: adMetrics
+                    });
+                  });
+                  
+                  // Convert map to array for rendering
+                  return Array.from(adDataMap.values()).map(ad => {
+                    const { adId, adName, metrics: adMetrics } = ad;
+                    const formatter = getMetricFormatter(selectedMetric);
+                    
+                    // Early check for data points
+                    const hasData = adMetrics.some(m => {
+                      const dataField = getMetricDataField(selectedMetric);
+                      // For conversions, check purchases field specifically
+                      if (selectedMetric === 'conversions') {
+                        return m.purchases !== undefined && m.purchases !== null;
+                      }
+                      return m[dataField] !== undefined;
+                    });
+                    
+                    if (!hasData) {
+                      console.log(`No ${selectedMetric} data for ad ${adId}`);
+                      return null;
+                    }
+                    
+                    // Sort by date (important!)
+                    const sortedMetrics = [...adMetrics].sort((a, b) => 
+                      new Date(a.date).getTime() - new Date(b.date).getTime()
+                    );
+                    
+                    // Create data points
+                    const dataPoints = sortedMetrics.map(m => {
+                      // Get the actual field name in the data
+                      const dataField = getMetricDataField(selectedMetric);
+                      
+                      // Get the value using the correct field
+                      let value;
+                      if (selectedMetric === 'conversions') {
+                        // Ensure purchases is treated as a number - Parse it explicitly
+                        const rawValue = m.purchases;
+                        
+                        // Convert to number if needed
+                        if (typeof rawValue === 'string') {
+                          value = parseFloat(rawValue);
+                        } else if (rawValue === null || rawValue === undefined) {
+                          value = 0;
+                        } else {
+                          value = Number(rawValue); // Ensure it's a number
+                        }
+                      } else {
+                        value = m[dataField] || 0;
+                      }
+                      
+                      // Ensure we never return NaN
+                      if (isNaN(value)) {
+                        value = 0;
+                      }
+                      
+                      return {
+                        x: format(new Date(m.date), 'MMM dd'),
+                        y: formatter ? formatter(value) : value
+                      };
+                    });
+                    
+                    // Skip if not enough variation in values
+                    const yValues = dataPoints.map(p => p.y);
+                    const hasVariation = yValues.length > 1 && Math.max(...yValues) !== Math.min(...yValues);
+                    
+                    // Log debugging info
+                    console.log(`Ad ${adId} (${adName}): ${dataPoints.length} points, variation: ${hasVariation}`);
+                    
+                    // Create chart data
+                    const chartData = [{
+                      x: dataPoints.map(p => p.x),
+                      y: dataPoints.map(p => p.y),
+                      type: 'scatter',
+                      mode: 'lines+markers',
+                      name: getMetricTitle(selectedMetric),
+                      line: { 
+                        color: 'rgba(99, 102, 241, 0.7)', 
+                        width: 2,
+                        shape: 'linear' // Ensure line shape is set to linear
+                      },
+                      marker: { size: 6 }
+                    }];
+                    
+                    return (
+                      <Card key={adId}>
+                        <CardHeader>
+                          <CardTitle>{adName}</CardTitle>
+                          <CardDescription>
+                            {getMetricDescription(selectedMetric)} over time
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="h-[300px]">
+                          <PlotlyLineChart 
+                            data={chartData}
+                            layout={{
+                              yaxis: { 
+                                title: getMetricTitle(selectedMetric),
+                                // Use auto range for better visualization of variation
+                                autorange: true
+                              },
+                              margin: { l: 50, r: 20, t: 10, b: 50 }
+                            }}
+                          />
+                        </CardContent>
+                      </Card>
+                    );
+                  }).filter(Boolean); // Filter out nulls
+                })()}
               </div>
             </TabsContent>
 
