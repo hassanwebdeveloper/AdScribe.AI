@@ -78,8 +78,8 @@ class TimeSeriesPredictionService:
             # Set date as index for time series analysis
             df_ts = df.set_index('date')
             
-            # Define metrics to predict
-            metrics_to_predict = ['roas', 'ctr', 'cpc', 'cpm', 'conversions', 'revenue', 'spend']
+            # Define metrics to predict - include all metrics expected by frontend
+            metrics_to_predict = ['roas', 'ctr', 'cpc', 'cpm', 'conversions', 'revenue', 'spend', 'impressions', 'clicks', 'purchases']
             
             # For each metric, fill missing values with 0 or forward fill
             for metric in metrics_to_predict:
@@ -134,6 +134,7 @@ class TimeSeriesPredictionService:
                 }
                 
                 for metric in metrics_to_predict:
+
                     try:
                         # Get time series data for this metric
                         ts_data = df_ts[metric].copy()
@@ -245,7 +246,12 @@ class TimeSeriesPredictionService:
                                     try:
                                         slope, _, _, _, _ = stats.linregress(x, y)
                                         trend = slope * (i + 1)
-                                        day_prediction[metric] = float(mean_value + trend)
+                                        predicted_value = float(mean_value + trend)
+                                        
+                                        # Ensure the value is not negative
+                                        predicted_value = max(0, predicted_value)
+                                            
+                                        day_prediction[metric] = float(predicted_value)
                                     except:
                                         day_prediction[metric] = float(mean_value)
                                 else:
@@ -253,7 +259,8 @@ class TimeSeriesPredictionService:
                             else:
                                 day_prediction[metric] = float(mean_value)
                         else:
-                            day_prediction[metric] = 0.0
+                            # If absolutely no historical data, use a very small positive value
+                            day_prediction[metric] = 0.001
                 
                 predictions.append(day_prediction)
             
@@ -536,41 +543,20 @@ class TimeSeriesPredictionService:
             start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
             end_date_obj = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
             
-            # Log query parameters for debugging
-            logger.info(f"Querying ad metrics for user_id={user_id}, ad_id={ad_id}, date range={start_date} to {end_date}")
+            logger.info(f"Fetching historical metrics for ad {ad_id} from {start_date} to {end_date}")
             
             # Query metrics for this specific ad
-            query = {
+            cursor = self.db.ad_metrics.find({
                 "user_id": user_id,
                 "ad_id": ad_id,
                 "collected_at": {
                     "$gte": start_date_obj,
                     "$lte": end_date_obj
                 }
-            }
-            
-            # First, count how many metrics match our query
-            count = await self.db.ad_metrics.count_documents(query)
-            logger.info(f"Found {count} metrics records for ad {ad_id}")
-            
-            # If we didn't find any records, try with a more inclusive query (without date range)
-            if count == 0:
-                logger.warning(f"No metrics found for ad {ad_id} in date range, trying without date restriction")
-                query = {
-                    "user_id": user_id,
-                    "ad_id": ad_id,
-                }
-                count = await self.db.ad_metrics.count_documents(query)
-                logger.info(f"Found {count} metrics records for ad {ad_id} without date restriction")
-                
-                # If we still don't have any records, we can't make predictions
-                if count == 0:
-                    return []
-            
-            # Proceed with query (either the original or updated one)
-            cursor = self.db.ad_metrics.find(query)
+            })
             
             metrics = await cursor.to_list(length=None)
+            logger.info(f"Found {len(metrics)} metrics entries for ad {ad_id}")
             
             # Process metrics to get daily values
             daily_metrics = {}
@@ -582,13 +568,18 @@ class TimeSeriesPredictionService:
                     daily_metrics[date_str] = {
                         "date": date_str,
                         "ad_id": ad_id,
+                        # Standard metrics
                         "roas": additional_metrics.get("roas", 0),
                         "ctr": additional_metrics.get("ctr", 0),
                         "cpc": additional_metrics.get("cpc", 0),
                         "cpm": additional_metrics.get("cpm", 0),
                         "conversions": metric.get("purchases", 0),
+                        "purchases": metric.get("purchases", 0),
                         "revenue": additional_metrics.get("purchases_value", 0),
-                        "spend": additional_metrics.get("spend", 0)
+                        "spend": additional_metrics.get("spend", 0),
+                        # Add metrics expected by frontend
+                        "impressions": additional_metrics.get("impressions", 0),
+                        "clicks": additional_metrics.get("clicks", 0)
                     }
                 else:
                     # If we have multiple entries for the same day, use the latest one
@@ -596,13 +587,25 @@ class TimeSeriesPredictionService:
                         if key in additional_metrics:
                             daily_metrics[date_str][key] = additional_metrics[key]
                     
-                    # Handle purchases and purchases_value separately
+                    # Handle other metrics separately
                     if "purchases" in metric:
                         daily_metrics[date_str]["conversions"] = metric["purchases"]
+                        daily_metrics[date_str]["purchases"] = metric["purchases"]
                     if "purchases_value" in additional_metrics:
                         daily_metrics[date_str]["revenue"] = additional_metrics["purchases_value"]
+                    if "impressions" in metric:
+                        daily_metrics[date_str]["impressions"] = metric["impressions"]
+                    if "clicks" in metric:
+                        daily_metrics[date_str]["clicks"] = metric["clicks"]
             
-            return list(daily_metrics.values())
+            result = list(daily_metrics.values())
+            logger.info(f"Returning {len(result)} days of metrics for ad {ad_id}")
+            
+            # Log available metrics for debugging
+            if result:
+                logger.info(f"Available metrics for first day: {list(result[0].keys())}")
+            
+            return result
             
         except Exception as e:
             logger.error(f"Error getting historical metrics for ad {ad_id}: {str(e)}")

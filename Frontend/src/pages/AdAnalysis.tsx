@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import axios from 'axios';
+import { Link } from 'react-router-dom';
 
 interface AdAnalysisDetail {
   hook?: string;
@@ -320,6 +321,8 @@ const AdAnalysis = () => {
         }
       });
       
+      console.log('Ad analyses response:', response.data); // Add this to see the actual response structure
+      
       // Validate response data is an array
       if (Array.isArray(response.data)) {
         setAdAnalyses(response.data);
@@ -475,7 +478,14 @@ const AdAnalysis = () => {
                 <Card key={analysis._id} className="overflow-hidden">
                   <CardHeader className="relative">
                     <div className="flex items-start justify-between">
-                      <CardTitle className="pr-20">{analysis.ad_title || 'Untitled Ad'}</CardTitle>
+                      <CardTitle className="pr-20">
+                        <Link 
+                          to={`/ad-detail/${analysis._id}`} 
+                          className="hover:text-blue-600 hover:underline transition-colors"
+                        >
+                          {analysis.ad_title || 'Untitled Ad'}
+                        </Link>
+                      </CardTitle>
                       <span className={`absolute top-4 right-6 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                         analysis.ad_status === 'ACTIVE' 
                           ? 'bg-green-100 text-green-800' 

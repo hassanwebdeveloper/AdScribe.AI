@@ -388,10 +388,10 @@ async def get_metrics_by_ad(
             current_revenue = float(additional.get("purchases_value", 0))
             
             # Calculate derived metrics
-            current_ctr = current_clicks / current_impressions if current_impressions > 0 else 0
-            current_cpc = current_spend / current_clicks if current_clicks > 0 else 0
-            current_cpm = (current_spend / current_impressions) * 1000 if current_impressions > 0 else 0
-            current_roas = current_revenue / current_spend if current_spend > 0 else 0
+            current_ctr = float(additional.get("ctr", 0))
+            current_cpc = float(additional.get("cpc", 0))
+            current_cpm = float(additional.get("cpm", 0))
+            current_roas = float(additional.get("roas", 0))
             
             # Get ad title from ad_analyses if available
             ad_title = None

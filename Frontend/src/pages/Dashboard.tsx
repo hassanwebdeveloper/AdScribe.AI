@@ -552,7 +552,7 @@ const Dashboard = () => {
   const ctrData = [
     {
       x: maxDailyMetrics.map(day => day.date),
-      y: maxDailyMetrics.map(day => day.ctr * 100), // Convert to percentage
+      y: maxDailyMetrics.map(day => day.ctr), // Convert to percentage
       type: 'scatter',
       mode: 'lines+markers',
       name: 'CTR',
@@ -838,7 +838,7 @@ const Dashboard = () => {
   // Get formatter for a metric
   const getMetricFormatter = (metric: string) => {
     switch(metric) {
-      case 'ctr': return (value: number) => value * 100; // Convert to percentage
+      case 'ctr': return (value: number) => value ; // Convert to percentage
       default: return undefined;
     }
   };
@@ -1032,7 +1032,7 @@ const Dashboard = () => {
                   value={metrics?.current_period?.ctr || 0} 
                   previousValue={metrics?.previous_period?.ctr || 0} 
                   icon={<MousePointerClick />} 
-                  formatter={(n) => formatPercentage(n * 100)}
+                  formatter={(n) => formatPercentage(n )}
                   suffix="%"
                 />
                 <MetricCard 
@@ -1422,7 +1422,7 @@ const Dashboard = () => {
                       </CardHeader>
                       <CardContent className="h-[300px]">
                         <PlotlyLineChart 
-                          data={getPredictionChartData('ctr', value => value * 100)}
+                          data={getPredictionChartData('ctr', value => value)}
                           layout={{
                             yaxis: { title: 'CTR (%)' },
                             margin: { l: 50, r: 20, t: 10, b: 40 },

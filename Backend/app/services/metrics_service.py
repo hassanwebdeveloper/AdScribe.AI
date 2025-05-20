@@ -568,7 +568,11 @@ class MetricsService:
                         "clicks": {"$max": {"$toInt": {"$ifNull": [{"$getField": {"field": "clicks", "input": "$additional_metrics"}}, 0]}}},
                         "impressions": {"$max": {"$toInt": {"$ifNull": [{"$getField": {"field": "impressions", "input": "$additional_metrics"}}, 0]}}},
                         "purchases": {"$max": {"$toInt": {"$ifNull": ["$purchases", 0]}}},
-                        "revenue": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "purchases_value", "input": "$additional_metrics"}}, 0]}}}
+                        "revenue": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "purchases_value", "input": "$additional_metrics"}}, 0]}}},
+                        "ctr": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "ctr", "input": "$additional_metrics"}}, 0]}}},
+                        "roas": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "roas", "input": "$additional_metrics"}}, 0]}}},
+                        "cpc": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "cpc", "input": "$additional_metrics"}}, 0]}}},
+                        "cpm": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "cpm", "input": "$additional_metrics"}}, 0]}}},
                     }
                 },
                 {
@@ -580,20 +584,23 @@ class MetricsService:
                         "clicks": 1,
                         "impressions": 1,
                         "purchases": 1,
-                        "ctr": {
-                            "$cond": [
-                                {"$gt": ["$impressions", 0]},
-                                {"$divide": ["$clicks", "$impressions"]},
-                                0
-                            ]
-                        },
-                        "roas": {
-                            "$cond": [
-                                {"$gt": ["$spend", 0]},
-                                {"$divide": ["$revenue", "$spend"]},
-                                0
-                            ]
-                        }
+                        "ctr": 1,
+                        # {
+                        #     "$cond": [
+                        #         {"$gt": ["$impressions", 0]},
+                        #         {"$divide": ["$clicks", "$impressions"]},
+                        #         0
+                        #     ]
+                        # }
+                        
+                        "roas": 1
+                        # {
+                        #     "$cond": [
+                        #         {"$gt": ["$spend", 0]},
+                        #         {"$divide": ["$revenue", "$spend"]},
+                        #         0
+                        #     ]
+                        # }
                     }
                 },
                 {
