@@ -252,7 +252,7 @@ const ChartTooltipContent = React.forwardRef<
     )
   }
 )
-ChartTooltipContent.displayName = "ChartTooltip"
+ChartTooltipContent.displayName = "ChartTooltipContent"
 
 const ChartLegend = RechartsPrimitive.Legend
 
@@ -320,37 +320,177 @@ function getPayloadConfigFromPayload(
   payload: unknown,
   key: string
 ) {
-  if (typeof payload !== "object" || payload === null) {
-    return undefined
+  if (payload && typeof payload === "object" && "dataKey" in payload) {
+    const dataKey = payload.dataKey
+    if (typeof dataKey === "string" && config[dataKey]) {
+      return config[dataKey]
+    }
   }
 
-  const payloadPayload =
-    "payload" in payload &&
-    typeof payload.payload === "object" &&
-    payload.payload !== null
-      ? payload.payload
-      : undefined
-
-  let configLabelKey: string = key
-
-  if (
-    key in payload &&
-    typeof payload[key as keyof typeof payload] === "string"
-  ) {
-    configLabelKey = payload[key as keyof typeof payload] as string
-  } else if (
-    payloadPayload &&
-    key in payloadPayload &&
-    typeof payloadPayload[key as keyof typeof payloadPayload] === "string"
-  ) {
-    configLabelKey = payloadPayload[
-      key as keyof typeof payloadPayload
-    ] as string
+  if (key && config[key]) {
+    return config[key]
   }
 
-  return configLabelKey in config
-    ? config[configLabelKey]
-    : config[key as keyof typeof config]
+  return null
+}
+
+// Add BarChart and LineChart exports for Dashboard.tsx
+interface CustomChartProps {
+  data: any[];
+  index: string;
+  categories: string[];
+  colors?: string[];
+  yAxisWidth?: number;
+  valueFormatter?: (value: number) => string;
+  height?: number;
+}
+
+export function BarChart({
+  data,
+  index,
+  categories,
+  colors = ["blue", "green", "red", "orange", "purple"],
+  yAxisWidth = 50,
+  valueFormatter = (value: number) => String(value),
+  height = 300,
+}: CustomChartProps) {
+  // Create config for chart
+  const config: ChartConfig = Object.fromEntries(
+    categories.map((category, i) => [
+      category,
+      { color: colors[i % colors.length], label: category },
+    ])
+  );
+
+  return (
+    <ChartContainer config={config} className="h-[300px]">
+      <RechartsPrimitive.BarChart
+        data={data}
+        margin={{ top: 10, right: 10, left: 10, bottom: 20 }}
+      >
+        <RechartsPrimitive.CartesianGrid strokeDasharray="3 3" vertical={false} />
+        <RechartsPrimitive.XAxis 
+          dataKey={index}
+          tick={{ fontSize: 12 }}
+          tickLine={false}
+          axisLine={false}
+        />
+        <RechartsPrimitive.YAxis
+          width={yAxisWidth}
+          tickFormatter={valueFormatter}
+          tick={{ fontSize: 12 }}
+          tickLine={false}
+          axisLine={false}
+        />
+        <RechartsPrimitive.Tooltip
+          content={({ active, payload }) => {
+            if (!active || !payload?.length) return null;
+            return (
+              <div className="rounded-lg border bg-background p-2 shadow-md">
+                <div className="grid gap-2">
+                  {payload.map((entry) => (
+                    <div key={`item-${entry.dataKey}`} className="flex items-center gap-2">
+                      <div
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: entry.color }}
+                      />
+                      <span className="font-medium">{entry.name}: </span>
+                      <span>{valueFormatter(entry.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          }}
+        />
+        <RechartsPrimitive.Legend />
+        {categories.map((category, index) => (
+          <RechartsPrimitive.Bar
+            key={category}
+            dataKey={category}
+            fill={colors[index % colors.length]}
+            radius={[4, 4, 0, 0]}
+            barSize={30}
+          />
+        ))}
+      </RechartsPrimitive.BarChart>
+    </ChartContainer>
+  );
+}
+
+export function LineChart({
+  data,
+  index,
+  categories,
+  colors = ["blue", "green", "red", "orange", "purple"],
+  yAxisWidth = 50,
+  valueFormatter = (value: number) => String(value),
+  height = 300,
+}: CustomChartProps) {
+  // Create config for chart
+  const config: ChartConfig = Object.fromEntries(
+    categories.map((category, i) => [
+      category,
+      { color: colors[i % colors.length], label: category },
+    ])
+  );
+
+  return (
+    <ChartContainer config={config} className="h-[300px]">
+      <RechartsPrimitive.LineChart
+        data={data}
+        margin={{ top: 10, right: 10, left: 10, bottom: 20 }}
+      >
+        <RechartsPrimitive.CartesianGrid strokeDasharray="3 3" vertical={false} />
+        <RechartsPrimitive.XAxis 
+          dataKey={index}
+          tick={{ fontSize: 12 }}
+          tickLine={false}
+          axisLine={false}
+        />
+        <RechartsPrimitive.YAxis
+          width={yAxisWidth}
+          tickFormatter={valueFormatter}
+          tick={{ fontSize: 12 }}
+          tickLine={false}
+          axisLine={false}
+        />
+        <RechartsPrimitive.Tooltip
+          content={({ active, payload }) => {
+            if (!active || !payload?.length) return null;
+            return (
+              <div className="rounded-lg border bg-background p-2 shadow-md">
+                <div className="grid gap-2">
+                  {payload.map((entry) => (
+                    <div key={`item-${entry.dataKey}`} className="flex items-center gap-2">
+                      <div
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: entry.color }}
+                      />
+                      <span className="font-medium">{entry.name}: </span>
+                      <span>{valueFormatter(entry.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          }}
+        />
+        <RechartsPrimitive.Legend />
+        {categories.map((category, index) => (
+          <RechartsPrimitive.Line
+            key={category}
+            type="monotone"
+            dataKey={category}
+            stroke={colors[index % colors.length]}
+            strokeWidth={2}
+            dot={{ r: 4, strokeWidth: 2 }}
+            activeDot={{ r: 6 }}
+          />
+        ))}
+      </RechartsPrimitive.LineChart>
+    </ChartContainer>
+  );
 }
 
 export {

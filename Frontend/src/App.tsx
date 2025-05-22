@@ -12,22 +12,33 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Chat from "./pages/Chat";
 import Settings from "./pages/Settings";
+import AdAnalysis from "./pages/AdAnalysis";
+import AdDetail from "./pages/AdDetail";
+import Dashboard from "./pages/Dashboard";
 import NotFound from "./pages/NotFound";
+import SelectAdAccount from "./pages/SelectAdAccount";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <AuthProvider>
-        <ChatProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
+      <BrowserRouter>
+        <AuthProvider>
+          <ChatProvider>
+            <Toaster />
+            <Sonner />
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
+              
+              {/* Facebook OAuth callback routes */}
+              <Route path="/auth/facebook/success" element={<Login />} />
+              <Route path="/auth/facebook/error" element={<Login />} />
+              
+              {/* Ad account selection */}
+              <Route path="/select-ad-account" element={<SelectAdAccount />} />
               
               <Route element={<ProtectedRoute />}>
                 <Route path="/chat" element={
@@ -40,13 +51,28 @@ const App = () => (
                     <Settings />
                   </Layout>
                 } />
+                <Route path="/ad-analysis" element={
+                  <Layout>
+                    <AdAnalysis />
+                  </Layout>
+                } />
+                <Route path="/ad-detail/:id" element={
+                  <Layout>
+                    <AdDetail />
+                  </Layout>
+                } />
+                <Route path="/dashboard" element={
+                  <Layout>
+                    <Dashboard />
+                  </Layout>
+                } />
               </Route>
               
               <Route path="*" element={<NotFound />} />
             </Routes>
-          </BrowserRouter>
-        </ChatProvider>
-      </AuthProvider>
+          </ChatProvider>
+        </AuthProvider>
+      </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>
 );

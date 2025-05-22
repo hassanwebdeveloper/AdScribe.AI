@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "lucide-react";
 import { useChat } from "@/contexts/ChatContext";
@@ -10,6 +10,7 @@ interface HeaderProps {
 
 export function Header({ className }: HeaderProps) {
   const { dateRange, toggleAnalysisPanel } = useChat();
+  const location = useLocation();
   
   // Calculate days between if dates are set
   const getDaysString = () => {
@@ -48,17 +49,59 @@ export function Header({ className }: HeaderProps) {
             <span className="text-xl font-bold">AdScribe.AI</span>
           </Link>
         </div>
-        <div className="ml-auto flex items-center gap-4">
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={toggleAnalysisPanel}
-            className="flex items-center gap-2"
-            data-panel-toggle="true"
+        
+        <div className="ml-8 flex space-x-4">
+          <Link 
+            to="/dashboard" 
+            className={cn(
+              "px-3 py-2 text-sm font-medium rounded-md",
+              location.pathname === "/dashboard" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
           >
-            <Calendar className="h-4 w-4" />
-            {getDaysString()}
-          </Button>
+            Dashboard
+          </Link>
+          <Link 
+            to="/chat" 
+            className={cn(
+              "px-3 py-2 text-sm font-medium rounded-md",
+              location.pathname === "/chat" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+          >
+            Chat
+          </Link>
+          <Link 
+            to="/ad-analysis" 
+            className={cn(
+              "px-3 py-2 text-sm font-medium rounded-md",
+              location.pathname === "/ad-analysis" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+          >
+            Analyze Ads
+          </Link>
+          <Link 
+            to="/settings" 
+            className={cn(
+              "px-3 py-2 text-sm font-medium rounded-md",
+              location.pathname === "/settings" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+          >
+            Settings
+          </Link>
+        </div>
+        
+        <div className="ml-auto flex items-center gap-4">
+          {location.pathname === "/chat" && (
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={toggleAnalysisPanel}
+              className="flex items-center gap-2"
+              data-panel-toggle="true"
+            >
+              <Calendar className="h-4 w-4" />
+              {getDaysString()}
+            </Button>
+          )}
         </div>
       </div>
     </header>

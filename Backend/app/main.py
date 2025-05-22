@@ -6,6 +6,10 @@ import os
 from app.core.config import settings
 from app.core.database import connect_to_mongodb, close_mongodb_connection, get_database
 from app.api.v1.router import api_router
+from app.services.scheduler_service import SchedulerService
+
+# Define variable for scheduler service
+scheduler_service = None
 
 app = FastAPI(
     title="AdScribe.AI API",
@@ -25,6 +29,9 @@ app.add_middleware(
 # Database connection events
 @app.on_event("startup")
 async def startup_db_client():
+    global scheduler_service
+    
+    # First establish database connection
     await connect_to_mongodb()
     
     # Ensure collections exist
@@ -43,9 +50,31 @@ async def startup_db_client():
     if "analysis_settings" not in collections:
         await db.create_collection("analysis_settings")
         await db.analysis_settings.create_index("user_id", unique=True)
+        
+    if "ad_analyses" not in collections:
+        await db.create_collection("ad_analyses")
+        await db.ad_analyses.create_index("user_id")
+        
+    if "ad_metrics" not in collections:
+        await db.create_collection("ad_metrics")
+        await db.ad_metrics.create_index([("user_id", 1), ("ad_id", 1), ("collected_at", -1)])
+
+    # Initialize scheduler service after database connection is established
+    scheduler_service = SchedulerService()
+    
+    # Start the scheduler and schedule metrics collection for all users
+    scheduler_service.start()
+    await scheduler_service.schedule_metrics_collection_for_all_users()
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    global scheduler_service
+    
+    # Shutdown the scheduler
+    if scheduler_service:
+        scheduler_service.shutdown()
+    
+    # Close MongoDB connection
     await close_mongodb_connection()
 
 # Include API routers

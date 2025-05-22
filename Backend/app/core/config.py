@@ -23,7 +23,18 @@ class Settings(BaseSettings):
     
     # N8N Configuration
     N8N_WEBHOOK_URL: str
-
+    N8N_WEBHOOK_URL_ANALYZE_ALL_ADS: str
+    
+    # Scheduler Configuration
+    METRICS_COLLECTION_INTERVAL_HOURS: float = 4.0  # Default to 4 hours if not specified
+    MIN_METRICS_COLLECTION_INTERVAL_HOURS: float = 4.0  # Minimum allowed interval in hours
+    
+    # Facebook OAuth Configuration
+    FACEBOOK_CLIENT_ID: str
+    FACEBOOK_CLIENT_SECRET: str
+    FACEBOOK_REDIRECT_URI: str
+    FRONTEND_URL: str
+    
     class Config:
         env_file = ".env"
 

@@ -5,6 +5,7 @@ from jose import jwt, JWTError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from app.core.config import settings
+from app.models.user import User
 
 # OAuth2 setup
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
@@ -30,11 +31,29 @@ async def get_current_user_email(token: str = Depends(oauth2_scheme)):
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    expired_token_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token has expired",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
+        
+        # Check token expiration
+        exp = payload.get("exp")
+        if exp is None:
+            raise credentials_exception
+        
+        # Convert exp to datetime for comparison
+        exp_datetime = datetime.fromtimestamp(exp)
+        if exp_datetime < datetime.utcnow():
+            raise expired_token_exception
+            
         return email
-    except JWTError:
+    except jwt.ExpiredSignatureError:
+        raise expired_token_exception
+    except jwt.JWTError:
         raise credentials_exception 

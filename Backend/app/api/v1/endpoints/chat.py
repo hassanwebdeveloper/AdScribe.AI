@@ -1,8 +1,8 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from typing import List, Optional, Any
-from app.core.security import get_current_user_email
-from app.services.user_service import get_user_by_email
+from app.core.deps import get_current_user
+from app.models.user import User
 from app.services.chat_service import (
     get_chat_sessions, 
     get_chat_session, 
@@ -42,63 +42,40 @@ class DateRangeUpdate(BaseModel):
 
 
 @router.get("/sessions", response_model=List[ChatSession])
-async def read_chat_sessions(email: str = Depends(get_current_user_email)):
+async def read_chat_sessions(current_user: User = Depends(get_current_user)):
     """
     Get all chat sessions for the current user.
     """
-    logger.info("🔍 [DEBUG] Getting chat sessions for user email: %s", email)
-    user = await get_user_by_email(email)
-    if not user:
-        logger.error("🚫 [ERROR] User not found for email: %s", email)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    sessions = await get_chat_sessions(user.id)
-    logger.info("🔍 [DEBUG] Found %d chat sessions for user %s", len(sessions), user.id)
+    logger.info("🔍 [DEBUG] Getting chat sessions for user: %s", current_user.id)
+    sessions = await get_chat_sessions(current_user.id)
+    logger.info("🔍 [DEBUG] Found %d chat sessions for user %s", len(sessions), current_user.id)
     return sessions
 
 
 @router.get("/sessions/{session_id}", response_model=ChatSession)
 async def read_chat_session(
     session_id: str,
-    email: str = Depends(get_current_user_email)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get a specific chat session.
     """
-    logger.info("🔍 [DEBUG] Getting chat session %s for user email: %s", session_id, email)
-    user = await get_user_by_email(email)
-    if not user:
-        logger.error("🚫 [ERROR] User not found for email: %s", email)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    return await get_chat_session(session_id, user.id)
+    logger.info("🔍 [DEBUG] Getting chat session %s for user: %s", session_id, current_user.id)
+    return await get_chat_session(session_id, current_user.id)
 
 
 @router.post("/sessions", response_model=ChatSession)
 async def create_new_chat_session(
     session_data: ChatSessionCreate,
-    email: str = Depends(get_current_user_email)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Create a new chat session.
     """
-    logger.info("🔍 [DEBUG] Creating new chat session with title '%s' for user email: %s", 
-                session_data.title, email)
-    user = await get_user_by_email(email)
-    if not user:
-        logger.error("🚫 [ERROR] User not found for email: %s", email)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    logger.info("🔍 [DEBUG] Creating new chat session with title '%s' for user: %s", 
+                session_data.title, current_user.id)
     
-    session = await create_chat_session(user.id, session_data.title)
+    session = await create_chat_session(current_user.id, session_data.title)
     logger.info("✅ [DEBUG] Created new chat session with ID: %s", session.id)
     return session
 
@@ -107,12 +84,12 @@ async def create_new_chat_session(
 async def update_existing_chat_session(
     session_id: str,
     session_data: ChatSessionUpdate,
-    email: str = Depends(get_current_user_email)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update an existing chat session.
     """
-    logger.info("🔍 [DEBUG] Updating chat session %s for user email: %s", session_id, email)
+    logger.info("🔍 [DEBUG] Updating chat session %s for user: %s", session_id, current_user.id)
     logger.info("🔍 [DEBUG] Received %d messages in update request", len(session_data.messages))
     
     # Log the first and last message for debugging
@@ -138,20 +115,12 @@ async def update_existing_chat_session(
         else:
             logger.info("⚠️ [WARNING] Last message has no end_date field")
     
-    user = await get_user_by_email(email)
-    if not user:
-        logger.error("🚫 [ERROR] User not found for email: %s", email)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    logger.info("🔍 [DEBUG] Found user with ID: %s", user.id)
+    logger.info("🔍 [DEBUG] Found user with ID: %s", current_user.id)
     
     try:
         updated_session = await update_chat_session(
             session_id,
-            user.id,
+            current_user.id,
             session_data.messages,
             session_data.title
         )
@@ -166,21 +135,14 @@ async def update_existing_chat_session(
 @router.delete("/sessions/{session_id}", response_model=dict)
 async def delete_existing_chat_session(
     session_id: str,
-    email: str = Depends(get_current_user_email)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Delete a chat session.
     """
-    logger.info("🔍 [DEBUG] Deleting chat session %s for user email: %s", session_id, email)
-    user = await get_user_by_email(email)
-    if not user:
-        logger.error("🚫 [ERROR] User not found for email: %s", email)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    logger.info("🔍 [DEBUG] Deleting chat session %s for user: %s", session_id, current_user.id)
     
-    await delete_chat_session(session_id, user.id)
+    await delete_chat_session(session_id, current_user.id)
     logger.info("✅ [DEBUG] Successfully deleted chat session %s", session_id)
     
     return {"message": "Chat session deleted successfully"}
@@ -188,50 +150,35 @@ async def delete_existing_chat_session(
 
 @router.get("/settings", response_model=AnalysisSettings)
 async def read_analysis_settings(
-    email: str = Depends(get_current_user_email)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Get analysis settings for the current user.
     """
-    logger.info("🔍 [DEBUG] Getting analysis settings for user email: %s", email)
-    user = await get_user_by_email(email)
-    if not user:
-        logger.error("🚫 [ERROR] User not found for email: %s", email)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    logger.info("🔍 [DEBUG] Getting analysis settings for user: %s", current_user.id)
     
-    settings = await get_analysis_settings(user.id)
+    settings = await get_analysis_settings(current_user.id)
     
     if not settings:
         logger.info("🔍 [DEBUG] No existing settings found, creating default settings")
         # Create default settings if none exist
         date_range = DateRange()
-        settings = await update_analysis_settings(user.id, date_range)
+        settings = await update_analysis_settings(current_user.id, date_range)
     
-    logger.info("🔍 [DEBUG] Retrieved analysis settings for user %s", user.id)
+    logger.info("🔍 [DEBUG] Retrieved analysis settings for user %s", current_user.id)
     return settings
 
 
 @router.put("/settings", response_model=AnalysisSettings)
 async def update_user_analysis_settings(
     date_range: DateRangeUpdate,
-    email: str = Depends(get_current_user_email)
+    current_user: User = Depends(get_current_user)
 ):
     """
     Update analysis settings for the current user.
     """
-    logger.info("🔍 [DEBUG] Updating analysis settings for user email: %s", email)
+    logger.info("🔍 [DEBUG] Updating analysis settings for user: %s", current_user.id)
     logger.info("🔍 [DEBUG] Date range: %s to %s", date_range.start_date, date_range.end_date)
-    
-    user = await get_user_by_email(email)
-    if not user:
-        logger.error("🚫 [ERROR] User not found for email: %s", email)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
     
     # Convert to DateRange model
     settings_date_range = DateRange(
@@ -239,6 +186,6 @@ async def update_user_analysis_settings(
         end_date=date_range.end_date
     )
     
-    updated_settings = await update_analysis_settings(user.id, settings_date_range)
-    logger.info("✅ [DEBUG] Successfully updated analysis settings for user %s", user.id)
+    updated_settings = await update_analysis_settings(current_user.id, settings_date_range)
+    logger.info("✅ [DEBUG] Successfully updated analysis settings for user %s", current_user.id)
     return updated_settings 
