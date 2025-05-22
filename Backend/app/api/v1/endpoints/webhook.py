@@ -368,7 +368,7 @@ async def process_webhook(
                     output_content = response_data
                 
                 # Construct the final response with output and ad content
-                result = {"output": output_content}
+                result["output"] = output_content
                 
                 # If ad content is not found in response, create it from database
                 if not ad_content and ad_analyses_data and len(ad_analyses_data) > 0:
@@ -409,12 +409,21 @@ async def process_webhook(
                         # Add metrics if available
                         if "metrics" in ad_analysis:
                             ad_metrics = ad_analysis["metrics"]
-                            # Add relevant metrics
-                            if "conversions" in ad_metrics:
-                                try:
-                                    ad_content["purchases"] = int(float(ad_metrics["conversions"]))
-                                except (ValueError, TypeError):
-                                    ad_content["purchases"] = 0
+                            # Calculate total purchases from historical data if available
+                            if result and result.get("historical"):
+                                total_purchases = 0
+                                for historical_point in result["historical"]:
+                                    if historical_point.get("ad_id") == best_ad_id:
+                                        total_purchases += int(historical_point.get("conversions", 0))
+                                ad_content["purchases"] = total_purchases
+                                logger.info(f"Calculated total purchases for best ad: {total_purchases}")
+                            else:
+                                # Fallback to metrics if historical data not available
+                                if "conversions" in ad_metrics:
+                                    try:
+                                        ad_content["purchases"] = int(float(ad_metrics["conversions"]))
+                                    except (ValueError, TypeError):
+                                        ad_content["purchases"] = 0
                             
                             if "revenue" in ad_metrics:
                                 try:
