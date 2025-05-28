@@ -134,7 +134,7 @@ async def analyze_ads(current_user: User = Depends(get_current_user)):
     try:
         logger.info(f"Calling N8N webhook with {len(existing_video_ids)} existing video IDs")
         # Call N8N webhook with increased timeout (15 minutes)
-        async with httpx.AsyncClient(timeout=900.0) as client:
+        async with httpx.AsyncClient(timeout=3600.0) as client:
             response = await client.post(n8n_webhook_url, json=payload)
             
             if response.status_code != 200:

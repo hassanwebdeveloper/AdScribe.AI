@@ -366,7 +366,7 @@ const AdAnalysis = () => {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        timeout: 900000 // 15 minute timeout
+        timeout: 3600000 // 1 hour timeout
       });
       
       // Validate response data is an array
