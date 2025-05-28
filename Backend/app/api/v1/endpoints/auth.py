@@ -11,7 +11,7 @@ from app.core.database import get_database
 from app.models.user import UserCreate, UserResponse, User, FacebookCredentialsUpdate
 from app.services.user_service import UserService, create_user, authenticate_user, get_user_by_email, update_user_settings
 from app.core.security import get_current_user_email, create_access_token
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, get_current_user_with_credentials, UserWithCredentials
 from app.services.scheduler_service import SchedulerService
 from app.services.facebook_oauth_service import FacebookOAuthService
 
@@ -87,20 +87,21 @@ async def update_settings(
 @router.post("/facebook-credentials")
 async def update_facebook_credentials(
     credentials: FacebookCredentialsUpdate, 
-    current_user: User = Depends(get_current_user)
+    user_with_creds: UserWithCredentials = Depends(get_current_user_with_credentials)
 ):
     """
     Update Facebook credentials for the current user and schedule metrics collection.
     """
-    user_id = current_user.id
+    user_id = user_with_creds.user.id
     db = get_database()
     
     # Calculate token expiration (90 days from now as a default)
     token_expires_at = datetime.utcnow() + timedelta(days=90)
     
-    # Update the user's Facebook credentials
+    # Update the user's Facebook credentials using ObjectId
+    obj_id = user_with_creds.get_object_id()
     result = await db.users.update_one(
-        {"_id": user_id},
+        {"_id": obj_id},
         {
             "$set": {
                 "facebook_credentials": {
@@ -177,76 +178,68 @@ async def facebook_callback(code: str, state: Optional[str] = None):
 @router.post("/facebook/ad-account", response_model=User)
 async def set_facebook_ad_account(
     request: FacebookAdAccountRequest,
-    current_user: User = Depends(get_current_user)
+    user_with_creds: UserWithCredentials = Depends(get_current_user_with_credentials)
 ):
     """
     Set the Facebook ad account to use for metrics collection.
     """
     # Update the ad account
-    updated_user = await user_service.update_facebook_ad_account(current_user.id, request.account_id)
+    updated_user = await user_service.update_facebook_ad_account(user_with_creds.user.id, request.account_id)
     
     # Schedule metrics collection
     scheduler_service = get_scheduler_service()
-    await scheduler_service.schedule_metrics_collection_for_user(current_user.id)
+    await scheduler_service.schedule_metrics_collection_for_user(user_with_creds.user.id)
     
     return updated_user
 
 @router.get("/facebook/ad-accounts")
-async def get_facebook_ad_accounts(current_user: User = Depends(get_current_user)):
+async def get_facebook_ad_accounts(user_with_creds: UserWithCredentials = Depends(get_current_user_with_credentials)):
     """
     Get the list of Facebook ad accounts for the current user.
     """
     # Check if user has Facebook credentials
-    if not current_user.facebook_credentials or not current_user.facebook_credentials.access_token:
+    if not user_with_creds.has_facebook_credentials():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Facebook credentials not configured"
+            detail="Facebook credentials not found. Please connect your Facebook account first."
         )
     
-    # Get Facebook OAuth service
-    fb_oauth_service = get_facebook_oauth_service()
+    # Import Facebook service here to avoid circular imports
+    from app.services.facebook_service import FacebookAdService
     
-    # Get ad accounts
-    ad_accounts = await fb_oauth_service.get_ad_accounts(current_user.facebook_credentials.access_token)
-    
-    return ad_accounts
+    try:
+        # Create Facebook service with user's credentials
+        fb_service = FacebookAdService(
+            access_token=user_with_creds.facebook_credentials["access_token"],
+            account_id=user_with_creds.facebook_credentials.get("account_id", "")
+        )
+        
+        # Get ad accounts
+        ad_accounts = await fb_service.get_ad_accounts()
+        
+        return {"ad_accounts": ad_accounts}
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch Facebook ad accounts: {str(e)}"
+        )
 
 @router.post("/refresh-token")
 async def refresh_token(request: TokenRefreshRequest):
     """
-    Refresh the access token using a refresh token.
+    Refresh an access token using a refresh token.
     """
     try:
         # Verify the refresh token
-        payload = jwt.decode(request.refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token"
-            )
+        email = await get_current_user_email(request.refresh_token)
         
-        # Get the user
-        user = await get_user_by_email(email)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
+        # Create a new access token
+        new_token = create_access_token(data={"sub": email})
         
-        # Create new access token
-        access_token = create_access_token(data={"sub": email})
+        return {"access_token": new_token, "token_type": "bearer"}
         
-        return {
-            "access_token": access_token,
-            "token_type": "bearer"
-        }
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token has expired"
-        )
-    except jwt.JWTError:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token"

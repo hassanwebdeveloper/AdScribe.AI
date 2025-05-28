@@ -6,7 +6,7 @@ from app.models.ad_metrics import AdMetrics, AdMetricsResponse
 from app.services.metrics_service import MetricsService
 from app.services.scheduler_service import SchedulerService
 from app.services.user_service import UserService
-from app.api.v1.endpoints.auth import get_current_user
+from app.core.deps import get_current_user, get_current_user_with_credentials, UserWithCredentials
 from app.models.user import User
 from bson import ObjectId
 import logging
@@ -96,12 +96,13 @@ async def get_dashboard_metrics(
     start_date: str = "2023-09-01",
     end_date: str = "2023-09-30",
     force_refresh: bool = False,
-    current_user: User = Depends(get_current_user),
+    user_with_creds: UserWithCredentials = Depends(get_current_user_with_credentials),
 ):
     """
     Get metrics for the dashboard.
     """
-    logger.info(f"Dashboard metrics requested by user {current_user.id} for date range {start_date} to {end_date}")
+    user_id = user_with_creds.user.id
+    logger.info(f"Dashboard metrics requested by user {user_id} for date range {start_date} to {end_date}")
     
     try:
         # Parse dates
@@ -118,30 +119,22 @@ async def get_dashboard_metrics(
         
         logger.info(f"Previous period: {prev_start_date} to {prev_end_date}")
         
-        # Check for Facebook credentials
-        fb_credentials = None
-        users_collection = await get_users_collection()
-        user = await users_collection.find_one({"_id": ObjectId(current_user.id)})
-        
-        if user and "facebook_credentials" in user:
-            fb_credentials = user.get("facebook_credentials", {})
-        
-        # Check if we have metrics for current and previous periods
-        metrics_fetched = False
-        
         # Use the new method to ensure data completeness for both time periods
+        # Pass user_data to avoid duplicate database queries
         current_period_status = await metrics_service.ensure_data_completeness(
-            user_id=current_user.id,
+            user_id=user_id,
             start_date=start_date_obj,
             end_date=end_date_obj,
-            force_refresh=force_refresh
+            force_refresh=force_refresh,
+            user_data=user_with_creds.raw_data
         )
         
         previous_period_status = await metrics_service.ensure_data_completeness(
-            user_id=current_user.id,
+            user_id=user_id,
             start_date=prev_start_date_obj,
             end_date=prev_end_date_obj,
-            force_refresh=force_refresh
+            force_refresh=force_refresh,
+            user_data=user_with_creds.raw_data
         )
         
         # Check if metrics were fetched in either period
@@ -150,21 +143,21 @@ async def get_dashboard_metrics(
         # After potentially fetching from Facebook, calculate aggregated KPIs
         # Current period
         current_agg_metrics = await metrics_service.get_aggregated_metrics(
-            user_id=current_user.id,
+            user_id=user_id,
             start_date=start_date_obj,
             end_date=end_date_obj,
         )
         
         # Previous period for comparison
         prev_agg_metrics = await metrics_service.get_aggregated_metrics(
-            user_id=current_user.id,
+            user_id=user_id,
             start_date=prev_start_date_obj,
             end_date=prev_end_date_obj,
         )
         
         # Get daily metrics for charts
         daily_metrics = await metrics_service.get_daily_metrics(
-            user_id=current_user.id,
+            user_id=user_id,
             start_date=start_date_obj,
             end_date=end_date_obj,
         )
@@ -174,7 +167,7 @@ async def get_dashboard_metrics(
             start_date=start_date,
             end_date=end_date,
             force_refresh=False,  # We already refreshed if needed
-            current_user=current_user
+            user_with_creds=user_with_creds
         )
         
         # Add ad_id and ad_name to daily metrics if available
@@ -198,29 +191,37 @@ async def get_dashboard_metrics(
                     if ad_lookup[date_str]:
                         daily_metric["ad_id"] = ad_lookup[date_str][0]["ad_id"]
                         daily_metric["ad_name"] = ad_lookup[date_str][0]["ad_name"]
-
-        # Return the dashboard data
-        response = {
-            "current_period": {"start_date": start_date, "end_date": end_date, **current_agg_metrics},
-            "previous_period": {"start_date": prev_start_date, "end_date": prev_end_date, **prev_agg_metrics},
-            "daily_metrics": enhanced_daily_metrics,
-            "refresh_status": {
-                "metrics_fetched": metrics_fetched,
-                "has_complete_data": await metrics_service.has_complete_data_for_range(
-                    current_user.id, start_date_obj, end_date_obj
-                ),
-                "force_refresh_attempted": force_refresh,
-            },
-            "ad_metrics": ad_metrics_response.ad_metrics if ad_metrics_response else [],
-            "unique_ads": ad_metrics_response.unique_ads if ad_metrics_response else []
-        }
         
-        logger.info(f"Dashboard response refresh_status: {response['refresh_status']}")
+        # Create response
+        response = DashboardResponse(
+            current_period=PeriodMetrics(
+                start_date=start_date,
+                end_date=end_date,
+                **current_agg_metrics
+            ),
+            previous_period=PeriodMetrics(
+                start_date=prev_start_date,
+                end_date=prev_end_date,
+                **prev_agg_metrics
+            ),
+            daily_metrics=[DailyMetric(**metric) for metric in enhanced_daily_metrics],
+            refresh_status=RefreshStatus(
+                metrics_fetched=metrics_fetched,
+                has_complete_data=current_period_status.get("has_complete_data", False),
+                force_refresh_attempted=force_refresh
+            ),
+            ad_metrics=ad_metrics_response.ad_metrics if ad_metrics_response else [],
+            unique_ads=ad_metrics_response.unique_ads if ad_metrics_response else []
+        )
+        
         return response
-
+        
     except Exception as e:
-        logger.error(f"Error in dashboard endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting dashboard metrics: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting dashboard metrics: {str(e)}"
+        )
 
 @router.get("/{ad_id}", response_model=List[AdMetricsResponse])
 async def get_ad_metrics_history(
@@ -233,209 +234,100 @@ async def get_ad_metrics_history(
     Get historical metrics for a specific ad.
     """
     metrics = await metrics_service.get_ad_metrics_history(ad_id, skip, limit)
-    
-    # Check if metrics belong to the current user
-    if metrics and metrics[0]["user_id"] != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access these metrics"
-        )
-    
     return metrics
 
 @router.post("/collect", status_code=status.HTTP_202_ACCEPTED)
-async def trigger_metrics_collection(current_user: User = Depends(get_current_user)):
+async def trigger_metrics_collection(user_with_creds: UserWithCredentials = Depends(get_current_user_with_credentials)):
     """
-    Manually trigger metrics collection for the current user.
+    Trigger immediate metrics collection for the current user.
     """
-    if not current_user.facebook_credentials:
+    # Check if user has Facebook credentials
+    if not user_with_creds.has_facebook_credentials():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Facebook credentials not configured"
+            detail="Facebook credentials not found. Please configure them first."
         )
     
-    # Get scheduler service instance and schedule metrics collection
+    # Get scheduler service and trigger collection
     scheduler_service = get_scheduler_service()
-    await scheduler_service.schedule_metrics_collection_for_user(current_user.id)
+    await scheduler_service.schedule_metrics_collection_for_user(user_with_creds.user.id)
     
-    return {"message": "Metrics collection scheduled"}
+    return {"message": "Metrics collection triggered"}
 
 @router.get("/by-ad/", response_model=AdMetricsByAdResponse)
 async def get_metrics_by_ad(
     start_date: str,
     end_date: str,
     force_refresh: bool = False,
-    current_user: User = Depends(get_current_user),
+    user_with_creds: UserWithCredentials = Depends(get_current_user_with_credentials),
 ):
     """
-    Get daily metrics broken down by ad for the specified date range.
-    Returns metrics for each ad for each day in the range.
+    Get metrics grouped by ad for a specific date range.
     """
+    user_id = user_with_creds.user.id
+    logger.info(f"Ad metrics requested by user {user_id} for date range {start_date} to {end_date}")
+    
     try:
         # Parse dates
         start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
         end_date_obj = datetime.strptime(end_date, "%Y-%m-%d")
         
-        # Calculate previous period
-        date_diff = (end_date_obj - start_date_obj).days
-        prev_end_date_obj = start_date_obj - timedelta(days=1)
-        prev_start_date_obj = prev_end_date_obj - timedelta(days=date_diff)
-        
-        prev_start_date = prev_start_date_obj.strftime("%Y-%m-%d")
-        prev_end_date = prev_end_date_obj.strftime("%Y-%m-%d")
-        
-        logger.info(f"Previous period: {prev_start_date} to {prev_end_date}")
-        
-        # Check if we have complete data for the requested period
-        has_complete_data = await metrics_service.has_complete_data_for_range(
-            current_user.id, start_date_obj, end_date_obj
-        )
-        logger.info(f"Has complete data for requested period: {has_complete_data}")
-
-        # Get FB credentials for the user
-        user_service = UserService()
-        fb_credentials = await user_service.get_facebook_credentials(current_user.id)
-        
-        # Check if credentials are valid
-        has_credentials = (
-            bool(fb_credentials) and 
-            'access_token' in fb_credentials and 
-            'account_id' in fb_credentials
-        )
-        
-        # Determine if we need to fetch data from Facebook (only if we have credentials)
-        need_to_fetch = (force_refresh or not has_complete_data) and has_credentials
-        
-        # If we don't have complete data and have credentials, try to fetch from Facebook
-        if need_to_fetch:
-            logger.info(f"Attempting to fetch metrics from Facebook for user {current_user.id}")
-            try:
-                # Use time_increment=1 to get daily breakdown
-                await metrics_service.fetch_metrics_from_facebook(
-                    user_id=current_user.id,
-                    start_date=start_date_obj,
-                    end_date=end_date_obj,
-                    credentials=fb_credentials
-                )
-            except Exception as e:
-                logger.error(f"Error fetching metrics from Facebook: {str(e)}")
-                # Continue with available data
-        
-        # Get raw metrics for the date range
-        metrics = await metrics_service.get_metrics_by_date_range(current_user.id, start_date, end_date)
-        
-        if not metrics:
-            return AdMetricsByAdResponse(
-                ad_metrics=[],
-                unique_ads=[],
-                date_range={"start_date": start_date, "end_date": end_date}
+        # Ensure data completeness if needed, passing user_data to avoid duplicate queries
+        if force_refresh:
+            await metrics_service.ensure_data_completeness(
+                user_id=user_id,
+                start_date=start_date_obj,
+                end_date=end_date_obj,
+                force_refresh=force_refresh,
+                user_data=user_with_creds.raw_data
             )
         
-        # Fetch ad titles from ad_analyses collection
-        db = get_database()
-        ad_analyses = await db.ad_analyses.find({"user_id": str(current_user.id)}).to_list(length=1000)
+        # Get metrics by date range
+        metrics = await metrics_service.get_metrics_by_date_range(
+            user_id=user_id,
+            start_date=start_date,
+            end_date=end_date
+        )
         
-        # Create a map of ad_id to ad_title
-        ad_titles = {}
-        for analysis in ad_analyses:
-            if "campaign_id" in analysis and analysis["campaign_id"]:
-                # Map both by ad_id and campaign_id to increase match chances
-                ad_titles[analysis.get("campaign_id")] = analysis.get("ad_title")
-        
-        logger.info(f"Found {len(ad_titles)} ad titles from ad_analyses for user {current_user.id}")
-        
-        # Process metrics to get daily values by ad
+        # Process metrics to group by ad
         ad_metrics = []
-        unique_ads = {}  # Keep track of unique ads
-
-        # Group metrics by date and ad_id
-        metrics_by_date_and_ad = {}
+        unique_ads = {}
         
         for metric in metrics:
-            collected_at = metric.get("collected_at")
-            date_str = collected_at.strftime("%Y-%m-%d") if isinstance(collected_at, datetime) else str(collected_at).split("T")[0]
-            ad_id = metric.get("ad_id", "unknown")
-            ad_name = metric.get("ad_name", "Unknown Ad")
+            # Create ad daily metric
+            ad_metric = AdDailyMetric(
+                date=metric.get("collected_at", datetime.utcnow()).strftime("%Y-%m-%d"),
+                ad_id=metric.get("ad_id", ""),
+                ad_name=metric.get("ad_name", ""),
+                ad_title=metric.get("ad_title"),
+                campaign_id=metric.get("campaign_id"),
+                campaign_name=metric.get("campaign_name"),
+                adset_id=metric.get("adset_id"),
+                adset_name=metric.get("adset_name"),
+                spend=metric.get("spend", 0),
+                revenue=metric.get("revenue", 0),
+                clicks=metric.get("clicks", 0),
+                impressions=metric.get("impressions", 0),
+                purchases=metric.get("purchases", 0),
+                ctr=metric.get("ctr", 0),
+                cpc=metric.get("cpc", 0),
+                cpm=metric.get("cpm", 0),
+                roas=metric.get("roas", 0)
+            )
+            ad_metrics.append(ad_metric)
             
             # Track unique ads
-            if ad_id not in unique_ads:
-                # Get ad title from ad_analyses if available
-                ad_title = None
-                campaign_id = metric.get("campaign_id")
-                if campaign_id and campaign_id in ad_titles:
-                    ad_title = ad_titles[campaign_id]
-                elif ad_id in ad_titles:
-                    ad_title = ad_titles[ad_id]
-                
+            ad_id = metric.get("ad_id", "")
+            if ad_id and ad_id not in unique_ads:
                 unique_ads[ad_id] = {
-                    "ad_id": ad_id, 
-                    "ad_name": ad_name,
-                    "ad_title": ad_title or "",  # Empty string instead of None
-                    "campaign_id": metric.get("campaign_id", None),
-                    "campaign_name": metric.get("campaign_name", None),
-                    "adset_id": metric.get("adset_id", None),
-                    "adset_name": metric.get("adset_name", None)
-                }
-            
-            # Create key for grouping
-            key = f"{date_str}_{ad_id}"
-            
-            additional = metric.get("additional_metrics", {})
-            current_spend = float(additional.get("spend", 0))
-            current_clicks = int(additional.get("clicks", 0))
-            current_impressions = int(additional.get("impressions", 0))
-            current_purchases = int(metric.get("purchases", 0))
-            current_revenue = float(additional.get("purchases_value", 0))
-            
-            # Calculate derived metrics
-            current_ctr = float(additional.get("ctr", 0))
-            current_cpc = float(additional.get("cpc", 0))
-            current_cpm = float(additional.get("cpm", 0))
-            current_roas = float(additional.get("roas", 0))
-            
-            # Get ad title from ad_analyses if available
-            ad_title = None
-            campaign_id = metric.get("campaign_id")
-            if campaign_id and campaign_id in ad_titles:
-                ad_title = ad_titles[campaign_id]
-            elif ad_id in ad_titles:
-                ad_title = ad_titles[ad_id]
-            
-            if key not in metrics_by_date_and_ad:
-                metrics_by_date_and_ad[key] = {
-                    "date": date_str,
                     "ad_id": ad_id,
-                    "ad_name": ad_name,
-                    "ad_title": ad_title or "",  # Empty string instead of None
-                    "campaign_id": metric.get("campaign_id", None),
-                    "campaign_name": metric.get("campaign_name", None),
-                    "adset_id": metric.get("adset_id", None),
-                    "adset_name": metric.get("adset_name", None),
-                    "spend": current_spend,
-                    "clicks": current_clicks,
-                    "impressions": current_impressions,
-                    "purchases": current_purchases,
-                    "revenue": current_revenue,
-                    "ctr": current_ctr,
-                    "cpc": current_cpc,
-                    "cpm": current_cpm,
-                    "roas": current_roas
+                    "ad_name": metric.get("ad_name", ""),
+                    "ad_title": metric.get("ad_title"),
+                    "campaign_id": metric.get("campaign_id"),
+                    "campaign_name": metric.get("campaign_name"),
+                    "adset_id": metric.get("adset_id"),
+                    "adset_name": metric.get("adset_name")
                 }
-            else:
-                # Take the highest value for each metric
-                metrics_by_date_and_ad[key]["spend"] = max(metrics_by_date_and_ad[key]["spend"], current_spend)
-                metrics_by_date_and_ad[key]["clicks"] = max(metrics_by_date_and_ad[key]["clicks"], current_clicks)
-                metrics_by_date_and_ad[key]["impressions"] = max(metrics_by_date_and_ad[key]["impressions"], current_impressions)
-                metrics_by_date_and_ad[key]["purchases"] = max(metrics_by_date_and_ad[key]["purchases"], current_purchases)
-                metrics_by_date_and_ad[key]["revenue"] = max(metrics_by_date_and_ad[key]["revenue"], current_revenue)
-                metrics_by_date_and_ad[key]["ctr"] = max(metrics_by_date_and_ad[key]["ctr"], current_ctr)
-                metrics_by_date_and_ad[key]["cpc"] = max(metrics_by_date_and_ad[key]["cpc"], current_cpc)
-                metrics_by_date_and_ad[key]["cpm"] = max(metrics_by_date_and_ad[key]["cpm"], current_cpm)
-                metrics_by_date_and_ad[key]["roas"] = max(metrics_by_date_and_ad[key]["roas"], current_roas)
-        
-        # Convert to list and sort by date and ad_id
-        ad_metrics = list(metrics_by_date_and_ad.values())
-        ad_metrics.sort(key=lambda x: (x["date"], x["ad_id"]))
         
         return AdMetricsByAdResponse(
             ad_metrics=ad_metrics,
@@ -444,5 +336,8 @@ async def get_metrics_by_ad(
         )
         
     except Exception as e:
-        logger.error(f"Error getting metrics by ad: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e)) 
+        logger.error(f"Error getting ad metrics: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error getting ad metrics: {str(e)}"
+        ) 
