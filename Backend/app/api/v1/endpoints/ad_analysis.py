@@ -15,6 +15,8 @@ from app.models.ad_analysis import AdAnalysis, AdAnalysisResponse
 from app.services.scheduler_service import SchedulerService
 from app.services.metrics_service import MetricsService
 from app.services.user_service import UserService
+# Import the AI Agent service
+from app.services.ai_agent_service import AIAgentService
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -84,7 +86,7 @@ async def toggle_collection(current_user: User = Depends(get_current_user)):
 @router.post("/analyze/", response_model=List[AdAnalysisResponse], status_code=status.HTTP_201_CREATED)
 async def analyze_ads(current_user: User = Depends(get_current_user)):
     """
-    Analyze ads by calling the N8N webhook and storing the results in MongoDB.
+    Analyze ads using the AI Agent and storing the results in MongoDB.
     Requires the user to have a Facebook Graph API key and Ad Account ID.
     """
     # Check if user has Facebook Graph API key and Ad Account ID
@@ -94,132 +96,38 @@ async def analyze_ads(current_user: User = Depends(get_current_user)):
             detail="Facebook Graph API key and Ad Account ID are required. Please configure them in settings."
         )
     
-    # Get database connection
-    db = get_database()
-    
-    # Get existing video IDs from the database for this user
-    existing_video_ids = []
-    try:
-        existing_analyses = await db.ad_analyses.find(
-            {"user_id": str(current_user.id)}, 
-            {"video_id": 1}
-        ).to_list(length=1000)
+    try:       
         
-        # Extract video IDs from results
-        existing_video_ids = [
-            analysis.get("video_id") for analysis in existing_analyses 
-            if analysis.get("video_id") is not None
-        ]
-        logger.info(f"Found {len(existing_video_ids)} existing video IDs for user {current_user.id}")
-    except Exception as e:
-        logger.error(f"Error retrieving existing video IDs: {e}", exc_info=True)
-        # Continue anyway - we'll just analyze all ads
-    
-    # Prepare payload for N8N with existing video IDs
-    payload = {
-        "fb_graph_api_key": current_user.fb_graph_api_key,
-        "fb_ad_account_id": current_user.fb_ad_account_id,
-        "existing_video_ids": existing_video_ids
-    }
-    
-    # Get N8N webhook URL from settings
-    n8n_webhook_url = settings.N8N_WEBHOOK_URL_ANALYZE_ALL_ADS
-    if not n8n_webhook_url:
-        logger.error("N8N webhook URL not configured in environment")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="N8N webhook URL not configured"
+        logger.info(f"Starting AI Agent analysis for user {current_user.id}")
+        
+        # Initialize the AI Agent service
+        ai_agent_service = AIAgentService()
+        
+        # Run the AI Agent analysis
+        stored_analyses = await ai_agent_service.analyze_ads_with_ai_agent(
+            user_id=str(current_user.id),
+            access_token=current_user.fb_graph_api_key,
+            account_id=current_user.fb_ad_account_id
         )
-    
-    try:
-        logger.info(f"Calling N8N webhook with {len(existing_video_ids)} existing video IDs")
-        # Call N8N webhook with increased timeout (15 minutes)
-        async with httpx.AsyncClient(timeout=3600.0) as client:
-            response = await client.post(n8n_webhook_url, json=payload)
-            
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to analyze ads: {response.text}"
-                )
-            
-            # Parse response and ensure it's an array
-            try:
-                response_data = response.json()
-                if not isinstance(response_data, list):
-                    logger.error(f"Expected list but got {type(response_data)}: {response_data}")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Invalid response format from N8N webhook: expected a list"
-                    )
-                
-                logger.info(f"Received {len(response_data)} new ad analyses from N8N")
-                
-                # If no new ads were found, return empty list
-                if len(response_data) == 0:
-                    logger.info("No new ads to analyze")
-                    return []
-                
-                ad_analyses = response_data
-            except json.JSONDecodeError:
-                logger.error(f"Failed to decode JSON response: {response.text}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Invalid JSON response from N8N webhook"
-                )
-            
-            # Store ad analyses in MongoDB
-            stored_analyses = []
-            for ad_analysis_data in ad_analyses:
-                try:
-                    # Check if this ad's video_id already exists to avoid duplicates
-                    # (This is a safeguard even though we sent the IDs to N8N)
-                    video_id = ad_analysis_data.get("video_id")
-                    if video_id and video_id in existing_video_ids:
-                        logger.info(f"Skipping already analyzed video: {video_id}")
-                        continue
-                    
-                    # Create AdAnalysis object
-                    ad_analysis = AdAnalysis(
-                        user_id=str(current_user.id),
-                        **ad_analysis_data
-                    )
-                    
-                    # Insert into database
-                    result = await db.ad_analyses.insert_one(ad_analysis.model_dump(by_alias=True))
-                    
-                    # Get the inserted document
-                    stored_analysis = await db.ad_analyses.find_one({"_id": result.inserted_id})
-                    stored_analyses.append(stored_analysis)
-                    
-                    # Add to existing IDs to prevent duplicates in this batch
-                    if video_id:
-                        existing_video_ids.append(video_id)
-                        
-                except Exception as e:
-                    logger.error(f"Error storing ad analysis: {e}", exc_info=True)
-                    # Continue with the next item instead of failing completely
-                    continue
-            
-            logger.info(f"Stored {len(stored_analyses)} new ad analyses in database")
-            return stored_analyses
-            
-    except httpx.RequestError as e:
-        logger.error(f"HTTP request error: {e}", exc_info=True)
         
+        logger.info(f"AI Agent analysis completed. Stored {len(stored_analyses)} new ad analyses")
+        return stored_analyses
+        
+    except Exception as e:
+        logger.error(f"Error in AI Agent analysis: {e}", exc_info=True)
+        
+        # Provide more specific error messages
         error_message = str(e)
-        if isinstance(e, httpx.ReadTimeout) or isinstance(e, httpx.TimeoutException):
-            error_message = "The ad analysis request timed out. This could be due to a large number of ads or slow response from Facebook API. Please try again later."
-            
+        if "timeout" in error_message.lower():
+            error_message = "The ad analysis request timed out. This could be due to a large number of ads or slow processing. Please try again later."
+        elif "facebook" in error_message.lower() or "graph api" in error_message.lower():
+            error_message = "Error accessing Facebook API. Please check your access token and ad account ID."
+        elif "openai" in error_message.lower():
+            error_message = "Error with AI analysis service. Please try again later."
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error calling N8N webhook: {error_message}"
-        )
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error analyzing ads: {str(e)}"
+            detail=f"Error analyzing ads: {error_message}"
         )
 
 @router.get("/", response_model=List[AdAnalysisResponse])

@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     
+    # OpenAI Configuration
+    openai_api_key: str
+    
     # N8N Configuration
     N8N_WEBHOOK_URL: str
     N8N_WEBHOOK_URL_ANALYZE_ALL_ADS: str

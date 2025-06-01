@@ -106,7 +106,7 @@ class FacebookAdService:
             
             response.raise_for_status()
             return response.json()
-        except httpx.TimeoutError:
+        except httpx.TimeoutException:
             if retry_count < self.MAX_RETRIES:
                 # Use a longer delay for timeouts
                 delay = (self.RATE_LIMIT_DELAY * 2 * (2 ** retry_count)) + random.uniform(1, 5)
