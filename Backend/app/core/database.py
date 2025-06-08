@@ -8,8 +8,14 @@ mongodb_client: AsyncIOMotorClient = None
 async def connect_to_mongodb():
     global mongodb_client
     try:
+        print(f"Before connection - mongodb_client: {mongodb_client}")
         mongodb_client = AsyncIOMotorClient(settings.MONGODB_URL)
-        print("Connected to MongoDB.")
+        print(f"After assignment - mongodb_client: {mongodb_client}")
+        print(f"MongoDB URL: {settings.MONGODB_URL}")
+        
+        # Test the connection
+        await mongodb_client.admin.command('ping')
+        print("Connected to MongoDB and ping successful.")
     except Exception as e:
         print(f"Could not connect to MongoDB: {e}")
         raise e
@@ -20,8 +26,15 @@ async def close_mongodb_connection():
         mongodb_client.close()
         print("MongoDB connection closed.")
 
+def get_mongodb_client():
+    """Get the MongoDB client instance."""
+    return mongodb_client
+
 def get_database():
-    return mongodb_client[settings.MONGODB_DB_NAME]
+    client = get_mongodb_client()
+    if client is None:
+        raise RuntimeError("MongoDB client is not initialized. Please ensure connect_to_mongodb() was called.")
+    return client[settings.MONGODB_DB_NAME]
 
 async def get_metrics_collection() -> AsyncIOMotorCollection:
     """Get the ad_metrics collection from MongoDB."""

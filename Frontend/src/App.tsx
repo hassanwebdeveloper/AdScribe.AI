@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ChatProvider } from "@/contexts/ChatContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import PrerequisiteGuard from "@/components/PrerequisiteGuard";
 import { Layout } from "@/components/ui/layout";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
@@ -42,9 +43,11 @@ const App = () => (
               
               <Route element={<ProtectedRoute />}>
                 <Route path="/chat" element={
-                  <Layout>
-                    <Chat />
-                  </Layout>
+                  <PrerequisiteGuard pageName="Chat">
+                    <Layout>
+                      <Chat />
+                    </Layout>
+                  </PrerequisiteGuard>
                 } />
                 <Route path="/settings" element={
                   <Layout>
@@ -62,9 +65,11 @@ const App = () => (
                   </Layout>
                 } />
                 <Route path="/dashboard" element={
-                  <Layout>
-                    <Dashboard />
-                  </Layout>
+                  <PrerequisiteGuard pageName="Dashboard">
+                    <Layout>
+                      <Dashboard />
+                    </Layout>
+                  </PrerequisiteGuard>
                 } />
               </Route>
               

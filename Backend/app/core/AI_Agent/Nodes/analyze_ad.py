@@ -2,38 +2,11 @@ import os
 import json
 import re
 import logging
-from openai import OpenAI
 from pathlib import Path
-from dotenv import load_dotenv
 from typing import Dict, Any
-from app.core.config import settings
+from app.services.openai_service import openai_service
 
 logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client with settings
-client = OpenAI(api_key=settings.openai_api_key)
-
-def get_user_ad_analysis_dir(user_id: str) -> Path:
-    """
-    Create and return user-specific ad analysis directory outside the app folder.
-    
-    Args:
-        user_id (str): The user ID
-        
-    Returns:
-        Path: User-specific ad analysis directory path
-    """
-    # Get the Backend directory (4 levels up from current file)
-    # Current: Backend/app/core/AI_Agent/Nodes/analyze_ad.py
-    # Target:  Backend/
-    backend_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
-    
-    # Create user-specific ad analysis directory: Backend/ad_analysis_<user_id>/
-    user_analysis_dir = backend_dir / f"ad_analysis_{user_id}"
-    user_analysis_dir.mkdir(exist_ok=True)
-    
-    logger.debug(f"[📁] Using ad analysis directory: {user_analysis_dir}")
-    return user_analysis_dir
 
 # Prompt template
 AD_ANALYSIS_PROMPT = (
@@ -64,32 +37,60 @@ def clean_json_string(text: str) -> str:
 
     return text
 
-def analyze_combined_ad(transcription: str, visual_summary: str) -> Dict[str, str]:
+async def analyze_combined_ad(transcription: str, visual_summary: str, cancellation_token=None) -> Dict[str, str]:
+    # Check for cancellation before making request
+    if cancellation_token and cancellation_token.get("cancelled", False):
+        logger.info("Job cancelled before ad analysis")
+        return {}
+        
     prompt = AD_ANALYSIS_PROMPT.format(
         transcription=transcription,
         visual_summary=visual_summary
     )
+    
     try:
-        response = client.chat.completions.create(
+        # Use the robust OpenAI service with rate limiting
+        messages = [{"role": "user", "content": prompt}]
+        
+        result = await openai_service._make_chat_completion(
+            messages=messages,
             model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.4
+            temperature=0.4,
+            cancellation_token=cancellation_token
         )
-        raw_text = response.choices[0].message.content or ""
+        
+        if not result:
+            return {}
+        
+        raw_text = result.strip()
         try:
             return json.loads(raw_text)
         except json.JSONDecodeError:
             logger.warning("[⚠️] Raw OpenAI response not valid JSON. Attempting cleanup...")
             cleaned = clean_json_string(raw_text)
             return json.loads(cleaned)
+    except ValueError as e:
+        if "cancelled" in str(e).lower():
+            logger.info("Ad analysis cancelled")
+            return {}
+        else:
+            logger.error(f"[❌] Final ad analysis error: {e}", exc_info=True)
+            return {}
     except Exception as e:
         logger.error(f"[❌] Final ad analysis error: {e}", exc_info=True)
         return {}
 
 async def final_ad_analysis(state: Dict[str, Any]) -> Dict[str, Any]:
+    # Check for cancellation at the start
+    cancellation_token = state.get("cancellation_token")
+    if cancellation_token and cancellation_token.get("cancelled", False):
+        logger.info("Job cancelled during final_ad_analysis")
+        return {"errors": ["Job was cancelled"]}
+    
     transcription_results = state.get("transcription_analysis", [])
     frame_results = state.get("frame_analysis", [])
     user_id = state.get("user_id")
+    analyzed_video_ids = state.get("analyzed_video_ids", [])
     
     if not transcription_results or not frame_results:
         logger.warning("[⚠️] Missing inputs — skipping ad analysis.")
@@ -100,24 +101,32 @@ async def final_ad_analysis(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(error_msg)
         return {"errors": [error_msg]}
 
-    # Get user-specific ad analysis directory
-    ad_analysis_dir = get_user_ad_analysis_dir(user_id)
-
     logger.info(f"[🧠] Starting final analysis for {len(transcription_results)} transcriptions and {len(frame_results)} frame analyses...")
 
     combined_results = []
 
-    for transcript in transcription_results:
+    for i, transcript in enumerate(transcription_results):
         try:
+            # Check for cancellation before each final analysis
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Job cancelled during final analysis (transcript {i+1}/{len(transcription_results)})")
+                return {"errors": ["Job was cancelled"]}
+            
+            video_id = transcript.get("video_id")
             video_name = Path(transcript.get("file", "")).stem
             transcript_text = transcript.get("analysis", "")
             
-            if not video_name or not transcript_text:
-                logger.warning(f"[⚠️] Missing video name or transcript text in: {transcript}")
+            if not video_id or not video_name or not transcript_text:
+                logger.warning(f"[⚠️] Missing data in transcript: {transcript}")
+                continue
+
+            # Skip if already analyzed
+            if video_id in analyzed_video_ids:
+                logger.info(f"[⏩] Skipping {video_name} (already analyzed)")
                 continue
 
             matching_frame = next(
-                (item for item in frame_results if Path(item.get("video", "")).stem == video_name),
+                (item for item in frame_results if item.get("video_id") == video_id),
                 None
             )
             
@@ -128,26 +137,27 @@ async def final_ad_analysis(state: Dict[str, Any]) -> Dict[str, Any]:
             visual_text = " | ".join(matching_frame.get("analysis", {}).values())
             logger.info(f"[🧠] Running final analysis for: {video_name}")
             
-            result = analyze_combined_ad(transcript_text, visual_text)
+            # Check for cancellation before calling OpenAI API
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Job cancelled before final analysis of {video_name}")
+                return {"errors": ["Job was cancelled"]}
+            
+            result = await analyze_combined_ad(transcript_text, visual_text, cancellation_token)
 
             if result:
-                output_path = ad_analysis_dir / f"{video_name}_final.json"
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(result, f, indent=2, ensure_ascii=False)
-                logger.info(f"[✅] Saved: {output_path.name}")
                 combined_results.append({
+                    "video_id": video_id,
                     "video": video_name,
                     "final_analysis": result
                 })
+                logger.info(f"[✅] Completed analysis for: {video_name}")
             else:
                 error_msg = f"Could not generate analysis for {video_name}"
                 logger.error(error_msg)
-                # Note: accumulate errors but don't return early
 
         except Exception as e:
             error_msg = f"Error processing final analysis for {transcript.get('file', 'unknown')}: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            # Note: accumulate errors but don't return early
 
     logger.info(f"[🧠] Completed final analysis for {len(combined_results)} videos")
     return {"final_ad_analysis": combined_results}

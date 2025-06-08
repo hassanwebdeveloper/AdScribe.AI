@@ -49,6 +49,17 @@ class FacebookAdService:
             )
         return self._client
     
+    async def cleanup(self):
+        """Clean up resources, especially HTTP client and its thread pools."""
+        if self._client is not None:
+            try:
+                await self._client.aclose()
+                logger.debug("FacebookAdService HTTP client closed successfully")
+            except Exception as e:
+                logger.debug(f"Error closing FacebookAdService HTTP client: {e}")
+            finally:
+                self._client = None
+    
     @classmethod
     def _track_request_rate(cls):
         """Track request rate to help debug rate limiting."""
@@ -67,26 +78,42 @@ class FacebookAdService:
             requests_per_minute = len(cls._request_times)
             logger.warning(f"Facebook API request rate: {requests_per_minute} requests in the last minute")
     
-    async def _make_request(self, url: str, params: Dict[str, Any], retry_count: int = 0) -> Dict[str, Any]:
-        """Make a request to Facebook API with improved rate limiting."""
-        # Check quota before making request
-        user_id = params.get("user_id", "unknown")
+    async def _make_request(self, url: str, params: Dict[str, Any], retry_count: int = 0, cancellation_token: Dict[str, bool] = None) -> Dict[str, Any]:
+        """
+        Make a request to the Facebook API with proper error handling and rate limiting.
         
-        # First, track our own request rate
-        self._track_request_rate()
+        Args:
+            url: The URL to request
+            params: Request parameters
+            retry_count: Current retry attempt (internal use)
+            cancellation_token: Optional cancellation token to check for job cancellation
         
-        # Wait for quota if needed (max 2 minutes)
-        if not await self.quota_manager.wait_for_quota(user_id, max_wait_seconds=120):
-            raise ValueError(f"Facebook API quota exceeded, please try again later")
+        Returns:
+            JSON response data
+        """
+        # Check for cancellation before making request
+        if cancellation_token and cancellation_token.get("cancelled", False):
+            logger.info(f"Request to {url.split('?')[0]} cancelled before execution")
+            raise ValueError("Request cancelled")
         
         try:
-            # Add delay between requests
-            current_time = datetime.utcnow().timestamp()
-            time_since_last_request = current_time - self._last_request_time
-            if time_since_last_request < self.REQUEST_DELAY:
-                delay = self.REQUEST_DELAY - time_since_last_request
-                logger.debug(f"Adding delay of {delay:.2f}s between requests")
-                await asyncio.sleep(delay)
+            # Increment and track global request count
+            self.__class__._request_count += 1
+            self._track_request_rate()
+            
+            # Wait for rate limit before making the request
+            now = datetime.utcnow().timestamp()
+            if hasattr(self, '_last_request_time'):
+                time_since_last = now - self._last_request_time
+                if time_since_last < self.REQUEST_DELAY:
+                    wait_time = self.REQUEST_DELAY - time_since_last
+                    logger.debug(f"Rate limiting: waiting {wait_time:.2f} seconds before request")
+                    await asyncio.sleep(wait_time)
+            
+            # Check for cancellation after rate limit wait
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Request to {url.split('?')[0]} cancelled after rate limit wait")
+                raise ValueError("Request cancelled")
             
             self._last_request_time = datetime.utcnow().timestamp()
             
@@ -100,19 +127,35 @@ class FacebookAdService:
             timeout = 30.0 * (retry_count + 1)
             response = await client.get(url, params=params, timeout=timeout)
             
+            # Check for cancellation after receiving response
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Request to {url.split('?')[0]} cancelled after receiving response")
+                raise ValueError("Request cancelled")
+            
             # Log response time
             request_time = time.time() - request_start
             logger.debug(f"Response received in {request_time:.2f}s with status {response.status_code}")
             
             response.raise_for_status()
             return response.json()
+        except ValueError as e:
+            # Don't retry for cancellation errors
+            if "cancelled" in str(e).lower():
+                raise e
+            # Re-raise other ValueError exceptions
+            raise e
         except httpx.TimeoutException:
+            # Check if timeout was due to cancellation
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Request timeout for {url.split('?')[0]} - job was cancelled")
+                raise ValueError("Request cancelled")
+            
             if retry_count < self.MAX_RETRIES:
                 # Use a longer delay for timeouts
                 delay = (self.RATE_LIMIT_DELAY * 2 * (2 ** retry_count)) + random.uniform(1, 5)
                 logger.warning(f"Request timeout for URL {url.split('?')[0]}, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
                 await asyncio.sleep(delay)
-                return await self._make_request(url, params, retry_count + 1)
+                return await self._make_request(url, params, retry_count + 1, cancellation_token)
             else:
                 error_msg = f"Max retries reached after timeouts: {url.split('?')[0]}"
                 logger.error(error_msg)
@@ -125,7 +168,7 @@ class FacebookAdService:
                     logger.warning(f"Rate limit hit for URL {url.split('?')[0]}, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
                     logger.warning(f"Rate limit response: {e.response.text[:200]}")
                     await asyncio.sleep(delay)
-                    return await self._make_request(url, params, retry_count + 1)
+                    return await self._make_request(url, params, retry_count + 1, cancellation_token)
                 else:
                     error_msg = f"Max retries reached for rate limit: {url.split('?')[0]}"
                     logger.error(error_msg)

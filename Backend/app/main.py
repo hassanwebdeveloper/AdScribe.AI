@@ -58,6 +58,13 @@ async def startup_db_client():
     if "ad_metrics" not in collections:
         await db.create_collection("ad_metrics")
         await db.ad_metrics.create_index([("user_id", 1), ("ad_id", 1), ("collected_at", -1)])
+    
+    # Create background_jobs collection for job tracking
+    if "background_jobs" not in collections:
+        await db.create_collection("background_jobs")
+        await db.background_jobs.create_index("user_id")
+        await db.background_jobs.create_index("status")
+        await db.background_jobs.create_index("created_at")
 
     # Initialize scheduler service after database connection is established
     scheduler_service = SchedulerService()

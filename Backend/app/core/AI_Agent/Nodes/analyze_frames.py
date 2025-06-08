@@ -2,38 +2,11 @@ import os
 import json
 import base64
 import logging
-from openai import OpenAI
 from pathlib import Path
-from dotenv import load_dotenv
 from typing import Dict, Any
-from app.core.config import settings
+from app.services.openai_service import openai_service
 
 logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client with settings
-client = OpenAI(api_key=settings.openai_api_key)
-
-def get_user_frame_analysis_dir(user_id: str) -> Path:
-    """
-    Create and return user-specific frame analysis directory outside the app folder.
-    
-    Args:
-        user_id (str): The user ID
-        
-    Returns:
-        Path: User-specific frame analysis directory path
-    """
-    # Get the Backend directory (4 levels up from current file)
-    # Current: Backend/app/core/AI_Agent/Nodes/analyze_frames.py
-    # Target:  Backend/
-    backend_dir = Path(__file__).resolve().parent.parent.parent.parent.parent
-    
-    # Create user-specific frame analysis directory: Backend/frame_analysis_<user_id>/
-    user_analysis_dir = backend_dir / f"frame_analysis_{user_id}"
-    user_analysis_dir.mkdir(exist_ok=True)
-    
-    logger.debug(f"[📁] Using frame analysis directory: {user_analysis_dir}")
-    return user_analysis_dir
 
 # Prompt
 ANALYSIS_PROMPT = (
@@ -85,45 +58,69 @@ def analyze_frame(image_path: Path) -> str:
         logger.error(f"[❌] Error analyzing {image_path.name}: {e}", exc_info=True)
         return "Error"
 
-def analyze_frame_from_base64(frame_b64: str, frame_name: str) -> str:
+async def analyze_frame_from_base64(frame_b64: str, frame_name: str, cancellation_token=None) -> str:
     """
-    Analyzes a single frame from base64 data using GPT-4o and returns the analysis result.
+    Analyzes a single frame from base64 data using OpenAI service with rate limiting.
 
     Args:
         frame_b64 (str): Base64 encoded image data.
         frame_name (str): Name of the frame for logging.
+        cancellation_token: Cancellation token to check for job cancellation.
 
     Returns:
         str: Analysis result for the image.
     """
+    # Check for cancellation before making request
+    if cancellation_token and cancellation_token.get("cancelled", False):
+        logger.info(f"Job cancelled before analyzing frame {frame_name}")
+        return "Cancelled"
+        
     try:
-        response = client.chat.completions.create(
+        # Use the robust OpenAI service with rate limiting
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": ANALYSIS_PROMPT},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{frame_b64}"}}
+                ]
+            }
+        ]
+        
+        result = await openai_service._make_chat_completion(
+            messages=messages,
             model="gpt-4o",
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": ANALYSIS_PROMPT},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{frame_b64}"}}
-                    ]
-                }
-            ],
-            max_tokens=50
+            max_tokens=50,
+            cancellation_token=cancellation_token
         )
-        return response.choices[0].message.content.strip()
+        
+        return result.strip() if result else "Error"
+    except ValueError as e:
+        if "cancelled" in str(e).lower():
+            logger.info(f"Frame analysis cancelled for {frame_name}")
+            return "Cancelled"
+        else:
+            logger.error(f"[❌] Error analyzing frame {frame_name}: {e}", exc_info=True)
+            return "Error"
     except Exception as e:
         logger.error(f"[❌] Error analyzing frame {frame_name}: {e}", exc_info=True)
         return "Error"
 
 async def analyze_all_frames(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    LangGraph-compatible node to analyze all frames from extracted_frames state
-    and skip videos that already have frame analysis.
+    LangGraph-compatible node to analyze all frames and return analysis in memory only.
     """
+    # Check for cancellation at the start
+    cancellation_token = state.get("cancellation_token")
+    if cancellation_token and cancellation_token.get("cancelled", False):
+        logger.info("Job cancelled during analyze_all_frames")
+        return {"errors": ["Job was cancelled"]}
+    
     frame_analysis_results = []
 
     extracted_frames = state.get("extracted_frames", [])
     user_id = state.get("user_id")
+    analyzed_video_ids = state.get("analyzed_video_ids", [])
     
     if not extracted_frames:
         logger.warning("[⚠️] No extracted frames found in state. Skipping frame analysis.")
@@ -134,49 +131,54 @@ async def analyze_all_frames(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(error_msg)
         return {"errors": [error_msg]}
 
-    # Get user-specific frame analysis directory
-    analysis_dir = get_user_frame_analysis_dir(user_id)
-
     logger.info(f"[🎞️] Starting analysis of frames from {len(extracted_frames)} videos...")
 
-    for frame_data in extracted_frames:
+    for j, frame_data in enumerate(extracted_frames):
         try:
+            # Check for cancellation before each video
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Job cancelled during frame analysis (video {j+1}/{len(extracted_frames)})")
+                return {"errors": ["Job was cancelled"]}
+            
+            video_id = frame_data.get("video_id")
             video_name = frame_data.get("video", "")
             frames = frame_data.get("frames", [])
             
-            if not video_name or not frames:
-                logger.warning(f"[⚠️] Missing video name or frames in data: {frame_data}")
+            if not video_id or not video_name or not frames:
+                logger.warning(f"[⚠️] Missing data in frame_data: {frame_data}")
+                continue
+
+            # Skip if already analyzed
+            if video_id in analyzed_video_ids:
+                logger.info(f"[⏩] Skipping {video_name} (already analyzed)")
                 continue
 
             # Use video name without extension as folder name
             folder_name = Path(video_name).stem
-            output_path = analysis_dir / f"{folder_name}_analysis.json"
-
-            # ✅ Skip if analysis file already exists
-            if output_path.exists():
-                logger.debug(f"[⏩] Skipping {folder_name} — already analyzed.")
-                with open(output_path, "r", encoding="utf-8") as f:
-                    existing_analysis = json.load(f)
-                frame_analysis_results.append({
-                    "video": folder_name,
-                    "analysis": existing_analysis
-                })
-                continue
 
             logger.info(f"[🎞️] Analyzing frames for: {folder_name}")
             analysis = {}
 
             for i, frame_b64 in enumerate(frames):
+                # Check for cancellation before each frame
+                if cancellation_token and cancellation_token.get("cancelled", False):
+                    logger.info(f"Job cancelled during frame analysis (frame {i+1}/{len(frames)} of {folder_name})")
+                    return {"errors": ["Job was cancelled"]}
+                
                 frame_name = f"frame_{i+1}.jpg"
                 logger.debug(f"[🧠] Analyzing: {frame_name}")
-                result = analyze_frame_from_base64(frame_b64, frame_name)
+                
+                # Check for cancellation before calling OpenAI API
+                if cancellation_token and cancellation_token.get("cancelled", False):
+                    logger.info(f"Job cancelled before analyzing frame {frame_name} of {folder_name}")
+                    return {"errors": ["Job was cancelled"]}
+                
+                result = await analyze_frame_from_base64(frame_b64, frame_name, cancellation_token)
                 analysis[frame_name] = result
 
-            with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(analysis, f, indent=2, ensure_ascii=False)
-
-            logger.info(f"[✅] Saved: {output_path.name}")
+            logger.info(f"[✅] Analyzed frames for: {folder_name}")
             frame_analysis_results.append({
+                "video_id": video_id,
                 "video": folder_name,
                 "analysis": analysis
             })
@@ -184,7 +186,6 @@ async def analyze_all_frames(state: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as e:
             error_msg = f"Error processing frames for video {frame_data.get('video', 'unknown')}: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            # Note: accumulate errors but don't return early
 
     logger.info(f"[🎞️] Completed frame analysis for {len(frame_analysis_results)} videos")
     return {"frame_analysis": frame_analysis_results}

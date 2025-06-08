@@ -20,6 +20,7 @@ class GraphState(TypedDict):
     user_id: str
     access_token: str
     account_id: str
+    analyzed_video_ids: List[str]  # List of already analyzed video IDs to skip
     
     # Processing state (these can be updated by nodes)
     ads: Annotated[list, operator.add]
@@ -31,11 +32,16 @@ class GraphState(TypedDict):
     frame_analysis: Annotated[list, operator.add]
     final_ad_analysis: Annotated[list, operator.add]
     
+    # Cancellation and progress
+    cancelled: bool  # Flag to indicate if the job should be cancelled
+    progress_callback: Any  # Progress callback function
+    cancellation_token: Any  # Cancellation token to check for external cancellation
+    
     # Error handling
     errors: Annotated[list, operator.add]
 
 # ---- Import all nodes ----
-from ..Nodes.get_ads import get_facebook_ads
+from ..Nodes.get_ads import get_ads_from_facebook
 from ..Nodes.get_video_urls import get_video_urls_from_ads
 from ..Nodes.download_video import download_videos
 from ..Nodes.transcribe_video import transcribe_all_videos
@@ -44,11 +50,22 @@ from ..Nodes.analyze_transcription import analyze_all_transcriptions
 from ..Nodes.analyze_frames import analyze_all_frames
 from ..Nodes.analyze_ad import final_ad_analysis
 
+# ---- Cancellation support ----
+class CancellationError(Exception):
+    """Custom exception for job cancellation"""
+    pass
+
+def check_cancellation(state: Dict[str, Any]):
+    """Check if the job has been cancelled and raise exception if so."""
+    if state.get("cancelled", False):
+        logger.info("Job cancellation detected, stopping execution")
+        raise CancellationError("Job was cancelled")
+
 # ---- Build the Graph ----
 def build_graph():
     builder = StateGraph(GraphState)
 
-    builder.add_node("Get Facebook Ads", get_facebook_ads)
+    builder.add_node("Get Facebook Ads", get_ads_from_facebook)
     builder.add_node("Get Video URLs", get_video_urls_from_ads)
     builder.add_node("Download Video", download_videos)
     builder.add_node("Transcribe Video", transcribe_all_videos)
@@ -75,7 +92,10 @@ def build_graph():
 async def run_ad_analysis_graph(
     user_id: str,
     access_token: str,
-    account_id: str
+    account_id: str,
+    analyzed_video_ids: Optional[List[str]] = None,
+    progress_callback = None,
+    cancellation_token = None  # Add cancellation token parameter
 ) -> List[Dict[str, Any]]:
     """
     Run the ad analysis graph and return the results in the format expected by the database.
@@ -84,12 +104,30 @@ async def run_ad_analysis_graph(
         user_id: The user ID
         access_token: Facebook access token
         account_id: Facebook ad account ID
+        analyzed_video_ids: List of video IDs that are already analyzed (to skip)
+        progress_callback: Optional callback function to report progress (progress, message)
+        cancellation_token: Optional cancellation token to stop execution
         
     Returns:
         List of ad analysis results in the format expected by the database
     """
     try:
         logger.info(f"[🚀] Starting Ad Analysis Graph for user {user_id}...")
+        
+        # Set default for analyzed_video_ids if not provided
+        if analyzed_video_ids is None:
+            analyzed_video_ids = []
+        
+        logger.info(f"[📋] Skipping {len(analyzed_video_ids)} already analyzed videos")
+        
+        if progress_callback:
+            await progress_callback(25, "Building analysis workflow...")
+        
+        # Check for cancellation at the start
+        if cancellation_token and cancellation_token.get("cancelled", False):
+            logger.info("Job was cancelled before starting")
+            raise CancellationError("Job was cancelled")
+        
         graph = build_graph()
 
         # Initialize state with required parameters
@@ -97,6 +135,7 @@ async def run_ad_analysis_graph(
             "user_id": user_id,
             "access_token": access_token,
             "account_id": account_id,
+            "analyzed_video_ids": analyzed_video_ids,
             "ads": [],
             "video_urls": [],
             "downloaded_videos": [],
@@ -105,13 +144,79 @@ async def run_ad_analysis_graph(
             "transcription_analysis": [],
             "frame_analysis": [],
             "final_ad_analysis": [],
-            "errors": []
+            "errors": [],
+            "progress_callback": progress_callback,  # Pass progress callback to nodes
+            "cancelled": False,  # Initialize cancellation flag
+            "cancellation_token": cancellation_token  # Pass cancellation token to nodes
         }
 
-        # Start the graph execution
-        final_state = await graph.ainvoke(initial_state)
+        if progress_callback:
+            await progress_callback(30, "Starting workflow execution...")
+
+        # Start the graph execution with cancellation handling
+        try:
+            # Create a cancellation monitor task that updates the graph state
+            async def monitor_cancellation():
+                while True:
+                    if cancellation_token and cancellation_token.get("cancelled", False):
+                        logger.info("Cancellation detected by monitor - updating graph state")
+                        # Update the state to indicate cancellation
+                        if hasattr(monitor_cancellation, 'graph_state_ref'):
+                            monitor_cancellation.graph_state_ref["cancelled"] = True
+                        break
+                    await asyncio.sleep(0.1)  # Check every 100ms
+            
+            # Start the monitoring task
+            cancellation_monitor = asyncio.create_task(monitor_cancellation())
+            
+            # Add reference to graph state for the monitor
+            monitor_cancellation.graph_state_ref = initial_state
+            
+            # Execute the graph with timeout and cancellation
+            graph_task = asyncio.create_task(graph.ainvoke(initial_state))
+            
+            # Wait for either graph completion or cancellation
+            done, pending = await asyncio.wait(
+                [graph_task, cancellation_monitor],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Cancel the remaining task
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Check if cancellation happened
+            if cancellation_monitor in done:
+                logger.info("Graph execution cancelled by external cancellation token")
+                graph_task.cancel()
+                try:
+                    await graph_task
+                except asyncio.CancelledError:
+                    pass
+                raise CancellationError("Job was cancelled")
+            
+            # Get the final state from the completed graph
+            final_state = graph_task.result()
+            
+        except CancellationError:
+            logger.info("Ad analysis graph was cancelled")
+            if progress_callback:
+                await progress_callback(0, "Analysis was cancelled")
+            raise
+        except asyncio.CancelledError:
+            logger.info("Ad analysis graph task was cancelled")
+            if progress_callback:
+                await progress_callback(0, "Analysis was cancelled")
+            raise CancellationError("Job was cancelled")
 
         logger.info("[🎉] Workflow complete.")
+
+        if progress_callback:
+            await progress_callback(85, "Processing analysis results...")
 
         # Process results and convert to database format
         final_results = final_state.get("final_ad_analysis", [])
@@ -203,6 +308,12 @@ async def run_ad_analysis_graph(
         
         return database_results
 
+    except CancellationError:
+        logger.info(f"[❌] Ad analysis graph was cancelled for user {user_id}")
+        raise
+    except asyncio.CancelledError:
+        logger.info(f"[❌] Ad analysis graph task was cancelled for user {user_id}")
+        raise CancellationError("Job was cancelled")
     except Exception as e:
         logger.error(f"[❌] Error in ad analysis graph: {str(e)}", exc_info=True)
         raise

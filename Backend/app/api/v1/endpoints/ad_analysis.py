@@ -1,22 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from fastapi.responses import JSONResponse
 import httpx
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import json
 import logging
 from pydantic import BaseModel
 from bson import ObjectId
+import redis
 
 from app.core.database import get_database
 from app.core.deps import get_current_user
 from app.core.config import settings
 from app.models.user import User
 from app.models.ad_analysis import AdAnalysis, AdAnalysisResponse
+from app.models.job_status import BackgroundJobResponse, JobStartResponse, JobStatus, BackgroundJob, JobType
 from app.services.scheduler_service import SchedulerService
 from app.services.metrics_service import MetricsService
 from app.services.user_service import UserService
-# Import the AI Agent service
+# Import the AI Agent service and background job service
 from app.services.ai_agent_service import AIAgentService
+from app.services.background_job_service import BackgroundJobService
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -25,6 +28,19 @@ router = APIRouter()
 
 class CollectionStatusRequest(BaseModel):
     is_collecting: bool
+
+# Global singleton instance of BackgroundJobService
+_background_job_service_instance = None
+
+def get_background_job_service() -> BackgroundJobService:
+    """Get a singleton BackgroundJobService instance with lazy initialization."""
+    global _background_job_service_instance
+    if _background_job_service_instance is None:
+        logger.info("Creating new BackgroundJobService singleton instance")
+        _background_job_service_instance = BackgroundJobService()
+    else:
+        logger.debug(f"Returning existing BackgroundJobService instance with {len(_background_job_service_instance._running_jobs)} running jobs and {len(_background_job_service_instance._cancellation_tokens)} cancellation tokens")
+    return _background_job_service_instance
 
 @router.get("/collection-status")
 async def get_collection_status(current_user: User = Depends(get_current_user)):
@@ -83,11 +99,177 @@ async def toggle_collection(current_user: User = Depends(get_current_user)):
         logger.error(f"Error toggling collection: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error toggling collection: {str(e)}")
 
-@router.post("/analyze/", response_model=List[AdAnalysisResponse], status_code=status.HTTP_201_CREATED)
-async def analyze_ads(current_user: User = Depends(get_current_user)):
+@router.get("/", response_model=List[AdAnalysisResponse])
+async def get_ad_analyses(current_user: User = Depends(get_current_user)):
     """
+    Get all ad analyses for the current user.
+    """
+    try:
+        db = get_database()
+        
+        # Fetch ad analyses for the current user
+        cursor = db.ad_analyses.find({"user_id": str(current_user.id)}).sort("created_at", -1)
+        ad_analyses = await cursor.to_list(length=None)
+        
+        logger.info(f"Retrieved {len(ad_analyses)} ad analyses for user {current_user.id}")
+        return ad_analyses
+        
+    except Exception as e:
+        logger.error(f"Error retrieving ad analyses: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving ad analyses"
+        )
+
+@router.post("/start-analysis/", response_model=JobStartResponse, status_code=status.HTTP_202_ACCEPTED)
+async def start_ad_analysis(current_user: User = Depends(get_current_user)):
+    """
+    Start ad analysis as a background job and return immediately.
+    Returns a job ID that can be used to track progress.
+    """
+    # Check if user has Facebook Graph API key and Ad Account ID
+    if not current_user.fb_graph_api_key or not current_user.fb_ad_account_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Facebook Graph API key and Ad Account ID are required. Please configure them in settings."
+        )
+    
+    try:
+        logger.info(f"Starting background ad analysis for user {current_user.id}")
+        
+        # Get background job service instance
+        background_job_service = get_background_job_service()
+        
+        # Check if there's already a running job for this user
+        recent_jobs = await background_job_service.get_user_jobs(str(current_user.id), limit=1)
+        if recent_jobs and recent_jobs[0].status in [JobStatus.PENDING, JobStatus.RUNNING]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An analysis job is already {recent_jobs[0].status.value}. Please wait for it to complete or cancel it first."
+            )
+        
+        # Start the background job
+        job_id = await background_job_service.start_ad_analysis_job(
+            user_id=str(current_user.id),
+            access_token=current_user.fb_graph_api_key,
+            account_id=current_user.fb_ad_account_id
+        )
+        
+        logger.info(f"Started background job {job_id} for user {current_user.id}")
+        
+        return JobStartResponse(
+            job_id=job_id,
+            status=JobStatus.PENDING,
+            message="Ad analysis job started successfully. Use the job ID to track progress.",
+            estimated_duration_seconds=300
+        )
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
+    except Exception as e:
+        logger.error(f"Error starting background ad analysis: {e}", exc_info=True)
+        
+        # Provide more specific error messages
+        error_message = str(e)
+        if "timeout" in error_message.lower():
+            error_message = "The request timed out. Please try again later."
+        elif "facebook" in error_message.lower() or "graph api" in error_message.lower():
+            error_message = "Error accessing Facebook API. Please check your access token and ad account ID."
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error starting ad analysis: {error_message}"
+        )
+
+@router.get("/job-status/{job_id}", response_model=BackgroundJobResponse)
+async def get_job_status(job_id: str, current_user: User = Depends(get_current_user)):
+    """
+    Get the status of a background analysis job.
+    """
+    try:
+        # Validate job_id
+        if not job_id or job_id in ['undefined', 'null', '']:
+            logger.warning(f"Invalid job ID provided: '{job_id}' for user {current_user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid job ID provided"
+            )
+        
+        logger.info(f"Getting job status for job_id: {job_id}, user: {current_user.id}")
+        
+        background_job_service = get_background_job_service()
+        job_status = await background_job_service.get_job_status(job_id, str(current_user.id))
+        
+        if not job_status:
+            logger.warning(f"Job {job_id} not found for user {current_user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Job {job_id} not found for the current user"
+            )
+        
+        logger.debug(f"Successfully retrieved job status for {job_id}: {job_status.status}")
+        return job_status
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
+    except Exception as e:
+        logger.error(f"Error getting job status {job_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving job status"
+        )
+
+@router.get("/jobs/", response_model=List[BackgroundJobResponse])
+async def get_user_jobs(current_user: User = Depends(get_current_user)):
+    """
+    Get recent background jobs for the current user.
+    """
+    try:
+        background_job_service = get_background_job_service()
+        jobs = await background_job_service.get_user_jobs(str(current_user.id), limit=20)
+        return jobs
+        
+    except Exception as e:
+        logger.error(f"Error getting user jobs: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving user jobs"
+        )
+
+@router.delete("/job/{job_id}")
+async def cancel_job(job_id: str, current_user: User = Depends(get_current_user)):
+    """
+    Cancel a running background job.
+    """
+    try:
+        background_job_service = get_background_job_service()
+        success = await background_job_service.cancel_job(job_id, str(current_user.id))
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Job not found or could not be cancelled"
+            )
+        
+        return {"success": True, "message": "Job cancelled successfully"}
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
+    except Exception as e:
+        logger.error(f"Error cancelling job {job_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error cancelling job"
+        )
+
+# Keep the old endpoint for backward compatibility but mark it as deprecated
+@router.post("/analyze/", response_model=List[AdAnalysisResponse], status_code=status.HTTP_201_CREATED, deprecated=True)
+async def analyze_ads_deprecated(current_user: User = Depends(get_current_user)):
+    """
+    DEPRECATED: Use /start-analysis/ instead for better performance.
+    
     Analyze ads using the AI Agent and storing the results in MongoDB.
-    Requires the user to have a Facebook Graph API key and Ad Account ID.
+    This endpoint blocks until analysis is complete.
     """
     # Check if user has Facebook Graph API key and Ad Account ID
     if not current_user.fb_graph_api_key or not current_user.fb_ad_account_id:
@@ -97,8 +279,7 @@ async def analyze_ads(current_user: User = Depends(get_current_user)):
         )
     
     try:       
-        
-        logger.info(f"Starting AI Agent analysis for user {current_user.id}")
+        logger.info(f"Starting synchronous AI Agent analysis for user {current_user.id}")
         
         # Initialize the AI Agent service
         ai_agent_service = AIAgentService()
@@ -128,32 +309,6 @@ async def analyze_ads(current_user: User = Depends(get_current_user)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error analyzing ads: {error_message}"
-        )
-
-@router.get("/", response_model=List[AdAnalysisResponse])
-async def get_ad_analyses(current_user: User = Depends(get_current_user)):
-    """
-    Get all ad analyses for the current user.
-    """
-    try:
-        db = get_database()
-        ad_analyses = await db.ad_analyses.find({"user_id": str(current_user.id)}).to_list(length=100)
-        
-        # Log information about the found analyses
-        if ad_analyses:
-            logger.info(f"Found {len(ad_analyses)} ad analyses for user {current_user.id}")
-            for i, analysis in enumerate(ad_analyses[:3]):  # Log details for first 3 analyses
-                logger.info(f"Analysis {i+1} ID: {analysis.get('_id')}")
-                logger.info(f"Analysis {i+1} fields: {list(analysis.keys())}")
-        else:
-            logger.warning(f"No ad analyses found for user {current_user.id}")
-        
-        return ad_analyses or []  # Return empty list if None
-    except Exception as e:
-        logger.error(f"Error getting ad analyses: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving ad analyses: {str(e)}"
         )
 
 @router.get("/get/{analysis_id}", response_model=AdAnalysisResponse)
@@ -330,4 +485,86 @@ async def get_ad_analysis(analysis_id: str, current_user: User = Depends(get_cur
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving ad analysis: {str(e)}"
-        ) 
+        )
+
+@router.post("/debug-database")
+async def debug_database_operations(current_user: dict = Depends(get_current_user)):
+    """
+    Debug endpoint to test database operations.
+    """
+    try:
+        user_id = str(current_user["_id"])
+        logger.info(f"Testing database operations for user {user_id}")
+        
+        # Test database connection
+        background_job_service = get_background_job_service()
+        is_connected = await background_job_service.test_database_connection()
+        
+        if not is_connected:
+            return {
+                "success": False,
+                "error": "Database connection test failed",
+                "details": "Unable to connect to MongoDB"
+            }
+        
+        # Test creating a simple job record (but don't start the actual job)
+        from app.models.job_status import BackgroundJob, JobStatus, JobType
+        from datetime import datetime
+        
+        test_job = BackgroundJob(
+            user_id=user_id,
+            job_type=JobType.AD_ANALYSIS,
+            status=JobStatus.PENDING,
+            message="Test job for debugging",
+            parameters={"test": True},
+            estimated_duration_seconds=60
+        )
+        
+        # Try to insert and then immediately delete the test job
+        db = background_job_service.db
+        
+        async def test_insert():
+            return await db.background_jobs.insert_one(test_job.model_dump(by_alias=True))
+        
+        result = await background_job_service._safe_db_operation("test_insert", test_insert)
+        test_job_id = result.inserted_id
+        
+        # Test update operation
+        async def test_update():
+            return await db.background_jobs.update_one(
+                {"_id": test_job_id},
+                {"$set": {"message": "Test job updated", "progress": 50}}
+            )
+        
+        update_result = await background_job_service._safe_db_operation("test_update", test_update)
+        
+        # Test find operation
+        async def test_find():
+            return await db.background_jobs.find_one({"_id": test_job_id})
+        
+        found_job = await background_job_service._safe_db_operation("test_find", test_find)
+        
+        # Clean up test job
+        async def test_delete():
+            return await db.background_jobs.delete_one({"_id": test_job_id})
+        
+        delete_result = await background_job_service._safe_db_operation("test_delete", test_delete)
+        
+        return {
+            "success": True,
+            "database_connected": True,
+            "operations": {
+                "insert": {"success": True, "inserted_id": str(test_job_id)},
+                "update": {"success": True, "modified_count": update_result.modified_count},
+                "find": {"success": True, "found": found_job is not None, "message": found_job.get("message") if found_job else None},
+                "delete": {"success": True, "deleted_count": delete_result.deleted_count}
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Database debug operations failed: {e}", exc_info=True)
+        return {
+            "success": False,
+            "error": str(e),
+            "details": "Database operations test failed"
+        } 

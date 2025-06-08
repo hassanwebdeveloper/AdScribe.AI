@@ -3,6 +3,7 @@ import { AuthState, User, FacebookAdAccount } from '@/types';
 import { useToast } from '@/components/ui/use-toast';
 import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { prerequisiteService } from '@/services/prerequisiteService';
 
 // Create an axios instance with the base URL
 const api = axios.create({
@@ -456,6 +457,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user: updatedUser,
         isLoading: false,
       });
+      
+      // Clear prerequisite cache since credentials may have changed
+      if (settings.fbGraphApiKey !== undefined || settings.fbAdAccountId !== undefined) {
+        prerequisiteService.clearCache();
+      }
       
       toast({
         title: "Success",
