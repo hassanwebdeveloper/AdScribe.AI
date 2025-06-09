@@ -399,6 +399,45 @@ async def get_single_ad_analysis(analysis_id: str, current_user: User = Depends(
             detail=f"Error retrieving ad analysis: {str(e)}"
         )
 
+@router.get("/products", response_model=Dict[str, List[str]])
+async def get_unique_products(current_user: User = Depends(get_current_user)):
+    """
+    Get unique products and product types from user's ad analyses
+    """
+    try:
+        db = get_database()
+        
+        # Aggregate unique products and product types
+        pipeline = [
+            {"$match": {"user_id": str(current_user.id)}},
+            {"$group": {
+                "_id": None,
+                "products": {"$addToSet": "$ad_analysis.product"},
+                "product_types": {"$addToSet": "$ad_analysis.product_type"}
+            }}
+        ]
+        
+        result = await db.ad_analyses.aggregate(pipeline).to_list(length=1)
+        
+        if result and len(result) > 0:
+            products = [p for p in result[0].get("products", []) if p and p.strip()]
+            product_types = [pt for pt in result[0].get("product_types", []) if pt and pt.strip()]
+        else:
+            products = []
+            product_types = []
+        
+        return {
+            "products": sorted(list(set(products))),
+            "product_types": sorted(list(set(product_types)))
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching unique products: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching products: {str(e)}"
+        )
+
 @router.get("/{analysis_id}", response_model=AdAnalysisResponse)
 async def get_ad_analysis(analysis_id: str, current_user: User = Depends(get_current_user)):
     """

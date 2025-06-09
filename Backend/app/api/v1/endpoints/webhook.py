@@ -35,6 +35,10 @@ class UserInfo(BaseModel):
     fbGraphApiKey: Optional[str] = None
     fbAdAccountId: Optional[str] = None
 
+class ProductInfo(BaseModel):
+    product: Optional[str] = None
+    product_type: Optional[str] = None
+
 class Message(BaseModel):
     role: str
     content: str
@@ -44,6 +48,7 @@ class WebhookRequest(BaseModel):
     previousMessages: List[Message] = []
     dateRange: Optional[DateRange] = None
     userInfo: Optional[UserInfo] = None
+    productInfo: Optional[ProductInfo] = None
 
 @router.post("/chat")
 async def process_webhook(
@@ -249,7 +254,8 @@ async def process_webhook(
             "video_description": analysis.get("video_description") or "",
             "video_url": analysis.get("video_url") or "",
             "ad_description": analysis.get("ad_message") or "",
-            "video_title": analysis.get("ad_title") or ""  # Add video title from ad_title
+            "video_title": analysis.get("ad_title") or "",  # Add video title from ad_title
+            "ad_analysis": analysis.get("ad_analysis", {})  # Add detailed analysis components
         }
         
         # Add best ad metrics to the ad analysis data
@@ -271,7 +277,8 @@ async def process_webhook(
                     "video_description": analysis.get("video_description") or "",
                     "video_url": analysis.get("video_url") or "",
                     "ad_description": analysis.get("ad_message") or "",
-                    "video_title": analysis.get("ad_title") or ""  # Add video title from ad_title
+                    "video_title": analysis.get("ad_title") or "",  # Add video title from ad_title
+                    "ad_analysis": analysis.get("ad_analysis", {})  # Add detailed analysis components
                 }
                 
                 # Add best ad metrics to the ad analysis data
@@ -334,7 +341,8 @@ async def process_webhook(
         agent_response = await ad_script_generator_agent.process_request(
             user_message=cleaned_message,
             previous_messages=previous_messages,
-            ad_analyses=ad_analyses_data
+            ad_analyses=ad_analyses_data,
+            product_info=request.productInfo.model_dump() if request.productInfo else None
         )
         
         logger.info(f"Ad Script Generator Agent response: {agent_response}")

@@ -183,7 +183,9 @@ class AIAgentService:
                     hook=ai_result["ad_analysis"].get("hook"),
                     tone=ai_result["ad_analysis"].get("tone"),
                     power_phrases=ai_result["ad_analysis"].get("power_phrases"),
-                    visual=ai_result["ad_analysis"].get("visual")
+                    visual=ai_result["ad_analysis"].get("visual"),
+                    product=ai_result["ad_analysis"].get("product"),
+                    product_type=ai_result["ad_analysis"].get("product_type")
                 )
             
             # Extract adset_targeting if present

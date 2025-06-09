@@ -41,8 +41,13 @@ class GeneralResponseNode:
             # Add previous conversation context
             if state.get("previous_messages"):
                 for msg in state["previous_messages"]:
+                    # Map 'bot' role to 'assistant' for OpenAI API compatibility
+                    role = msg.get("role", "user")
+                    if role == "bot":
+                        role = "assistant"
+                    
                     messages.append({
-                        "role": msg.get("role", "user"),
+                        "role": role,
                         "content": msg.get("content", "")
                     })
             

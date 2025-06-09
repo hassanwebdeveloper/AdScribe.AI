@@ -28,6 +28,8 @@ class AdAnalysisDetail(BaseModel):
     tone: Optional[str] = None
     power_phrases: Optional[str] = None
     visual: Optional[str] = None
+    product: Optional[str] = None
+    product_type: Optional[str] = None
 
 
 class AdSetTargeting(BaseModel):

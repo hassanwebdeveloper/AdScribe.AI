@@ -159,6 +159,9 @@ async def analyze_all_frames(state: Dict[str, Any]) -> Dict[str, Any]:
             logger.info(f"[🎞️] Analyzing frames for: {folder_name}")
             analysis = {}
 
+            # Keep track of seen results to avoid duplicates
+            seen_results = set()
+            
             for i, frame_b64 in enumerate(frames):
                 # Check for cancellation before each frame
                 if cancellation_token and cancellation_token.get("cancelled", False):
@@ -174,13 +177,26 @@ async def analyze_all_frames(state: Dict[str, Any]) -> Dict[str, Any]:
                     return {"errors": ["Job was cancelled"]}
                 
                 result = await analyze_frame_from_base64(frame_b64, frame_name, cancellation_token)
-                analysis[frame_name] = result
+                
+                # Only include result if we haven't seen it before
+                if result not in seen_results:
+                    analysis[frame_name] = result
+                    seen_results.add(result)
 
             logger.info(f"[✅] Analyzed frames for: {folder_name}")
+            
+            # Also extract product information from the frames
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Job cancelled before product extraction for {folder_name}")
+                return {"errors": ["Job was cancelled"]}
+            
+            product_info = await extract_product_from_frames(frames, folder_name, cancellation_token)
+            
             frame_analysis_results.append({
                 "video_id": video_id,
                 "video": folder_name,
-                "analysis": analysis
+                "analysis": analysis,
+                "product_info": product_info  # Add product information
             })
 
         except Exception as e:
@@ -189,6 +205,75 @@ async def analyze_all_frames(state: Dict[str, Any]) -> Dict[str, Any]:
 
     logger.info(f"[🎞️] Completed frame analysis for {len(frame_analysis_results)} videos")
     return {"frame_analysis": frame_analysis_results}
+
+async def extract_product_from_frames(frames: list, video_name: str, cancellation_token=None) -> dict:
+    """
+    Extract product name and product type from the video frames.
+    """
+    # Check for cancellation before making request
+    if cancellation_token and cancellation_token.get("cancelled", False):
+        logger.info(f"Job cancelled before product extraction from frames for {video_name}")
+        return {"product": "", "product_type": ""}
+    
+    if not frames:
+        return {"product": "", "product_type": ""}
+    
+    # Use the first few frames for product analysis (max 3 to avoid too many API calls)
+    sample_frames = frames
+    
+    prompt = """
+Analyze these advertisement video frames and extract the product information:
+
+1. What is the exact product name being advertised? (Look for any text, brand names, or product labels visible in the frames)
+2. What category does this product belong to? (e.g., islamic product, cosmetic, fashion, tech, food, health, education, clothing, jewelry, electronics, etc.)
+
+Return only a JSON with "product" and "product_type" fields.
+"""
+
+    try:
+        # Prepare messages with multiple frames
+        message_content = [{"type": "text", "text": prompt}]
+        
+        for i, frame_b64 in enumerate(sample_frames):
+            message_content.append({
+                "type": "image_url", 
+                "image_url": {"url": f"data:image/jpeg;base64,{frame_b64}"}
+            })
+        
+        messages = [{"role": "user", "content": message_content}]
+        
+        result = await openai_service._make_chat_completion(
+            messages=messages,
+            model="gpt-4o",
+            temperature=0.3,
+            cancellation_token=cancellation_token
+        )
+        
+        if result:
+            try:
+                import json
+                # Clean the result if it has markdown formatting
+                cleaned_result = result.strip().removeprefix("```json").removesuffix("```").strip()
+                product_info = json.loads(cleaned_result)
+                return {
+                    "product": product_info.get("product", ""),
+                    "product_type": product_info.get("product_type", "")
+                }
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse product JSON from frames: {result}")
+                return {"product": "", "product_type": ""}
+        else:
+            return {"product": "", "product_type": ""}
+    except ValueError as e:
+        if "cancelled" in str(e).lower():
+            logger.info(f"Product extraction from frames cancelled for {video_name}")
+            return {"product": "", "product_type": ""}
+        else:
+            logger.error(f"❌ Error extracting product from frames for {video_name}: {e}", exc_info=True)
+            return {"product": "", "product_type": ""}
+    except Exception as e:
+        logger.error(f"❌ Error extracting product from frames for {video_name}: {e}", exc_info=True)
+        return {"product": "", "product_type": ""}
 
 
 

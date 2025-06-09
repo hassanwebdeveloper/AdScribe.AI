@@ -9,7 +9,7 @@ const BACKEND_CHAT_ENDPOINT = '/webhook/chat';
 const CHAT_API_ENDPOINT = '/chat';
 
 interface ChatContextType extends ChatState {
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, productInfo?: { product?: string; product_type?: string }) => Promise<void>;
   createNewSession: () => void;
   selectSession: (sessionId: string) => void;
   deleteSession: (sessionId: string) => void;
@@ -393,10 +393,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Helper function to send messages to webhook
-  const sendMessageToWebhook = async (content: string, session: ChatSession) => {
+  const sendMessageToWebhook = async (content: string, session: ChatSession, productInfo?: { product?: string; product_type?: string }) => {
     console.log('🔍 [DEBUG] sendMessageToWebhook called with content:', content.substring(0, 50) + '...');
     console.log('🔍 [DEBUG] Current session ID:', session.id);
     console.log('🔍 [DEBUG] Current session _id:', session._id);
+    console.log('🔍 [DEBUG] Product info:', productInfo);
     
     try {
       // Ensure we're authenticated
@@ -456,6 +457,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           endDate: effectiveDateRange.endDate,
           daysToAnalyze
         },
+        productInfo: productInfo || null
       };
       
       console.log('🔍 [DEBUG] Sending to backend API:', payload);
@@ -839,7 +841,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return result;
   };
 
-  const sendMessage = async (content: string) => {
+  const sendMessage = async (content: string, productInfo?: { product?: string; product_type?: string }) => {
     console.log('🔍 [DEBUG] sendMessage called with content:', content.substring(0, 50) + '...');
     
     if (!user || !user._id) {
@@ -946,7 +948,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Call the webhook endpoint with the message content
       console.log('🔍 [DEBUG] Calling sendMessageToWebhook');
       
-      const result = await sendMessageToWebhook(content, updatedSession);
+      const result = await sendMessageToWebhook(content, updatedSession, productInfo);
       
       // Update the session with the final messages (including API response)
       setChatState(prev => ({

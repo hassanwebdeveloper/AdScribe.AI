@@ -270,7 +270,9 @@ async def run_ad_analysis_graph(
                         "hook": analysis.get("hook", ""),
                         "tone": analysis.get("tone", ""),
                         "power_phrases": analysis.get("power_phrases", ""),
-                        "visual": analysis.get("visual", "")
+                        "visual": analysis.get("visual", ""),
+                        "product": analysis.get("product", ""),
+                        "product_type": analysis.get("product_type", "")
                     },
                     "created_at": datetime.utcnow()
                 }

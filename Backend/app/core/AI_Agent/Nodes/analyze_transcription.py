@@ -60,6 +60,66 @@ Transcript:
         logger.error(f"❌ Error analyzing transcription: {e}", exc_info=True)
         return None
 
+async def extract_product_from_transcript(text: str, cancellation_token=None) -> dict:
+    """
+    Extract product name and product type from the transcription text.
+    """
+    # Check for cancellation before making request
+    if cancellation_token and cancellation_token.get("cancelled", False):
+        logger.info("Job cancelled before product extraction from transcript")
+        return {"product": "", "product_type": ""}
+        
+    prompt = f"""
+Analyze this advertisement transcript and extract the product information:
+
+1. What is the exact product name being advertised? (Give the specific name/brand if mentioned, otherwise describe the product briefly)
+2. What category does this product belong to? (e.g., islamic product, cosmetic, fashion, tech, food, health, education, clothing, jewelry, electronics, etc.)
+
+Return only a JSON with "product" and "product_type" fields.
+
+Transcript:
+{text}
+"""
+
+    try:
+        # Use the robust OpenAI service with rate limiting
+        messages = [
+            {"role": "user", "content": prompt}
+        ]
+        
+        result = await openai_service._make_chat_completion(
+            messages=messages,
+            model="gpt-4o",
+            temperature=0.3,
+            cancellation_token=cancellation_token
+        )
+        
+        if result:
+            try:
+                import json
+                # Clean the result if it has markdown formatting
+                cleaned_result = result.strip().removeprefix("```json").removesuffix("```").strip()
+                product_info = json.loads(cleaned_result)
+                return {
+                    "product": product_info.get("product", ""),
+                    "product_type": product_info.get("product_type", "")
+                }
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse product JSON: {result}")
+                return {"product": "", "product_type": ""}
+        else:
+            return {"product": "", "product_type": ""}
+    except ValueError as e:
+        if "cancelled" in str(e).lower():
+            logger.info("Product extraction from transcript cancelled")
+            return {"product": "", "product_type": ""}
+        else:
+            logger.error(f"❌ Error extracting product from transcript: {e}", exc_info=True)
+            return {"product": "", "product_type": ""}
+    except Exception as e:
+        logger.error(f"❌ Error extracting product from transcript: {e}", exc_info=True)
+        return {"product": "", "product_type": ""}
+
 async def analyze_all_transcriptions(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     LangGraph-compatible node that analyzes each transcription and returns results in memory only.
@@ -114,14 +174,22 @@ async def analyze_all_transcriptions(state: Dict[str, Any]) -> Dict[str, Any]:
                 return {"errors": ["Job was cancelled"]}
             
             analysis_text = await analyze_transcript_text(text, cancellation_token)
+            
+            # Also extract product information from the transcription
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Job cancelled before product extraction for {filename}")
+                return {"errors": ["Job was cancelled"]}
+            
+            product_info = await extract_product_from_transcript(text, cancellation_token)
 
             if analysis_text:
                 results.append({
                     "video_id": video_id,
                     "file": filename,
-                    "analysis": analysis_text
+                    "analysis": analysis_text,
+                    "product_info": product_info  # Add product information
                 })
-                logger.info(f"[✅] Analyzed transcription: {filename}")
+                logger.info(f"[✅] Analyzed transcription and extracted product info: {filename}")
             else:
                 error_msg = f"Failed to analyze transcription for {filename}"
                 logger.error(error_msg)

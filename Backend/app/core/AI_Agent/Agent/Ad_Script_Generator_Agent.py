@@ -11,6 +11,7 @@ class AgentState(TypedDict):
     user_message: str
     previous_messages: List[Dict[str, str]]
     ad_analyses: List[Dict[str, Any]]
+    product_info: Optional[Dict[str, str]]
     classification: Optional[str]
     final_response: Optional[str]
     error: Optional[str]
@@ -92,7 +93,8 @@ class AdScriptGeneratorAgent:
         self, 
         user_message: str, 
         previous_messages: List[Dict[str, str]] = None,
-        ad_analyses: List[Dict[str, Any]] = None
+        ad_analyses: List[Dict[str, Any]] = None,
+        product_info: Dict[str, str] = None
     ) -> Dict[str, Any]:
         """
         Process a user request through the LangGraph workflow
@@ -101,6 +103,7 @@ class AdScriptGeneratorAgent:
             user_message: The user's message/query
             previous_messages: List of previous conversation messages
             ad_analyses: List of ad analysis data (if available)
+            product_info: Dictionary containing product information
             
         Returns:
             Dict containing the response and any additional data
@@ -111,6 +114,7 @@ class AdScriptGeneratorAgent:
                 "user_message": user_message,
                 "previous_messages": previous_messages or [],
                 "ad_analyses": ad_analyses or [],
+                "product_info": product_info,
                 "classification": None,
                 "final_response": None,
                 "error": None

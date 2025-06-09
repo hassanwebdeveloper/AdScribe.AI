@@ -17,6 +17,8 @@ interface AdAnalysisDetail {
   tone?: string;
   power_phrases?: string;
   visual?: string;
+  product?: string;
+  product_type?: string;
 }
 
 interface AdSetTargeting {
@@ -1108,7 +1110,7 @@ const AdDetail = () => {
               {/* Analysis Results */}
               <div>
                 <h3 className="text-xl font-bold mb-3">Analysis Results</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50 p-4 rounded-md">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-gray-50 p-4 rounded-md">
                   <div>
                     <p className="font-bold text-gray-800 mb-1">Hook</p>
                     <p className="text-base">{adAnalysis.ad_analysis?.hook || 'N/A'}</p>
@@ -1118,12 +1120,20 @@ const AdDetail = () => {
                     <p className="text-base">{adAnalysis.ad_analysis?.tone || 'N/A'}</p>
                   </div>
                   <div>
+                    <p className="font-bold text-gray-800 mb-1">Product</p>
+                    <p className="text-base">{adAnalysis.ad_analysis?.product || 'N/A'}</p>
+                  </div>
+                  <div>
                     <p className="font-bold text-gray-800 mb-1">Power Phrases</p>
                     <p className="text-base">{adAnalysis.ad_analysis?.power_phrases || 'N/A'}</p>
                   </div>
                   <div>
                     <p className="font-bold text-gray-800 mb-1">Visual</p>
                     <p className="text-base">{adAnalysis.ad_analysis?.visual || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="font-bold text-gray-800 mb-1">Product Type</p>
+                    <p className="text-base">{adAnalysis.ad_analysis?.product_type || 'N/A'}</p>
                   </div>
                 </div>
               </div>

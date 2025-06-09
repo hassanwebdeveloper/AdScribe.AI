@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Send, X, Check } from 'lucide-react';
+import { Send, X, Check, ChevronDown, Package } from 'lucide-react';
 import { useChat } from '@/contexts/ChatContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
@@ -12,6 +12,13 @@ import {
   DialogDescription, 
   DialogFooter 
 } from '@/components/ui/dialog';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Link } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import api from '@/utils/api';
@@ -25,6 +32,15 @@ const CHAT_API_ENDPOINT = '/chat';
 const ChatInput: React.FC = () => {
   const [message, setMessage] = useState('');
   const [showSettingsAlert, setShowSettingsAlert] = useState(false);
+  const [showProductPopover, setShowProductPopover] = useState(false);
+  const [showProductTypePopover, setShowProductTypePopover] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState('');
+  const [selectedProductType, setSelectedProductType] = useState('');
+  const [customProduct, setCustomProduct] = useState('');
+  const [customProductType, setCustomProductType] = useState('');
+  const [availableProducts, setAvailableProducts] = useState<string[]>([]);
+  const [availableProductTypes, setAvailableProductTypes] = useState<string[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const { toast } = useToast();
   const { 
     sendMessage, 
@@ -44,9 +60,20 @@ const ChatInput: React.FC = () => {
   
   const isSettingsComplete = user?.fbGraphApiKey && user?.fbAdAccountId;
   const currentSession = getCurrentSession();
-  const isFirstPrompt = currentSession?.messages.length === 0;
+  const isFirstPrompt = !currentSession || (currentSession && currentSession.messages.length === 0);
   const showQuestionnaireInChat = isFirstPrompt && currentSession?.messages.length === 0;
   const isEditing = !!editingMessageId;
+
+  // Debug logging
+  useEffect(() => {
+    console.log('ChatInput Debug:', {
+      currentSession: currentSession?.id,
+      messagesLength: currentSession?.messages.length,
+      isFirstPrompt,
+      isEditing,
+      shouldShowProductSelection: isFirstPrompt && !isEditing
+    });
+  }, [currentSession, isFirstPrompt, isEditing]);
 
   // If we're in editing mode, populate the input with the message content
   useEffect(() => {
@@ -67,6 +94,32 @@ const ChatInput: React.FC = () => {
       textareaRef.current.focus();
     }
   }, []);
+
+  // Fetch available products and product types
+  const fetchProducts = async () => {
+    if (isLoadingProducts) return;
+    
+    setIsLoadingProducts(true);
+    try {
+      const response = await api.get('/ad-analysis/products');
+      setAvailableProducts(response.data.products || []);
+      setAvailableProductTypes(response.data.product_types || []);
+    } catch (error) {
+      console.error('Error fetching products:', error);
+      toast({
+        title: "Error",
+        description: "Failed to load product suggestions",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  };
+
+  // Load products when component mounts or when starting a new chat
+  useEffect(() => {
+    fetchProducts();
+  }, [currentSession]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -282,6 +335,12 @@ const ChatInput: React.FC = () => {
       return;
     }
     
+    // Prepare product information if selected
+    const productInfo = {
+      product: selectedProduct || customProduct || '',
+      product_type: selectedProductType || customProductType || ''
+    };
+    
     // Check for date range on first message, but don't append it to the message
     if (isFirstPrompt) {
       if (!dateRange.startDate || !dateRange.endDate) {
@@ -289,11 +348,13 @@ const ChatInput: React.FC = () => {
         return;
       }
       
-      // Send the message without modifying it - date range will be sent separately
-      await sendMessage(message);
+      // Send the message with product info if provided
+      const hasProductInfo = productInfo.product || productInfo.product_type;
+      await sendMessage(message, hasProductInfo ? productInfo : undefined);
     } else {
-      // Regular message
-      await sendMessage(message);
+      // Regular message - include product info if provided
+      const hasProductInfo = productInfo.product || productInfo.product_type;
+      await sendMessage(message, hasProductInfo ? productInfo : undefined);
     }
     
     setMessage('');
@@ -353,6 +414,196 @@ const ChatInput: React.FC = () => {
             </Button>
           </div>
         )}
+        
+        {/* Product Selection - show for all messages */}
+        {!isEditing && (
+          <div className="mb-3 space-y-2">
+            <div className="text-xs text-muted-foreground mb-2">
+              Product Information (Optional)
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Product Name Selection */}
+              <div>
+                <Popover open={showProductPopover} onOpenChange={setShowProductPopover}>
+                  <PopoverTrigger asChild>
+                    <Button 
+                      variant="outline" 
+                      className="w-full justify-between text-left h-9"
+                      type="button"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Package className="h-4 w-4" />
+                        <span className="truncate">
+                          {(selectedProduct || customProduct) || 'Select Product'}
+                        </span>
+                      </div>
+                      <ChevronDown className="h-4 w-4 flex-shrink-0" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80" align="start">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <h4 className="font-medium">Product Name</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Select from your existing products or enter a custom one.
+                        </p>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <div>
+                          {isLoadingProducts ? (
+                            <div className="text-sm text-muted-foreground">Loading products...</div>
+                          ) : availableProducts.length > 0 ? (
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                              <div className="text-xs text-muted-foreground mb-1">From your ads:</div>
+                              {availableProducts.map((product) => (
+                                <Button
+                                  key={product}
+                                  variant={selectedProduct === product ? "default" : "ghost"}
+                                  size="sm"
+                                  className="w-full justify-start text-left h-8"
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedProduct(product);
+                                    setCustomProduct('');
+                                  }}
+                                >
+                                  <span className="truncate">{product}</span>
+                                </Button>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-muted-foreground">No products found in your ads</div>
+                          )}
+                          
+                          <Input
+                            placeholder="Or enter custom product name"
+                            value={customProduct}
+                            onChange={(e) => {
+                              setCustomProduct(e.target.value);
+                              if (e.target.value) setSelectedProduct('');
+                            }}
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          onClick={() => {
+                            setSelectedProduct('');
+                            setCustomProduct('');
+                          }}
+                        >
+                          Clear
+                        </Button>
+                        <Button
+                          size="sm"
+                          type="button"
+                          onClick={() => setShowProductPopover(false)}
+                        >
+                          Done
+                        </Button>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              {/* Product Type Selection */}
+              <div>
+                <Popover open={showProductTypePopover} onOpenChange={setShowProductTypePopover}>
+                  <PopoverTrigger asChild>
+                    <Button 
+                      variant="outline" 
+                      className="w-full justify-between text-left h-9"
+                      type="button"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Package className="h-4 w-4" />
+                        <span className="truncate">
+                          {(selectedProductType || customProductType) || 'Select Type'}
+                        </span>
+                      </div>
+                      <ChevronDown className="h-4 w-4 flex-shrink-0" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80" align="start">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <h4 className="font-medium">Product Type</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Select from existing types or enter a custom category.
+                        </p>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <div>
+                          {availableProductTypes.length > 0 ? (
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                              <div className="text-xs text-muted-foreground mb-1">From your ads:</div>
+                              {availableProductTypes.map((type) => (
+                                <Button
+                                  key={type}
+                                  variant={selectedProductType === type ? "default" : "ghost"}
+                                  size="sm"
+                                  className="w-full justify-start text-left h-8"
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedProductType(type);
+                                    setCustomProductType('');
+                                  }}
+                                >
+                                  <span className="truncate">{type}</span>
+                                </Button>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-muted-foreground">No product types found in your ads</div>
+                          )}
+                          
+                          <Input
+                            placeholder="Or enter custom product type"
+                            value={customProductType}
+                            onChange={(e) => {
+                              setCustomProductType(e.target.value);
+                              if (e.target.value) setSelectedProductType('');
+                            }}
+                          />
+                        </div>
+                      </div>
+                      
+                      <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          type="button"
+                          onClick={() => {
+                            setSelectedProductType('');
+                            setCustomProductType('');
+                          }}
+                        >
+                          Clear
+                        </Button>
+                        <Button
+                          size="sm"
+                          type="button"
+                          onClick={() => setShowProductTypePopover(false)}
+                        >
+                          Done
+                        </Button>
+                      </div>
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            </div>
+          </div>
+        )}
+        
         <Textarea
           ref={textareaRef}
           value={message}

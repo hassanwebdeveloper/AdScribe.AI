@@ -17,6 +17,8 @@ interface AdAnalysisDetail {
   tone?: string;
   power_phrases?: string;
   visual?: string;
+  product?: string;
+  product_type?: string;
 }
 
 interface AdSetTargeting {
@@ -736,7 +738,7 @@ const AdAnalysis = () => {
                   <CardContent>
                     <div className="space-y-5">
                       <div>
-                        <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="grid grid-cols-3 gap-3 text-sm">
                           <div>
                             <p className="font-bold text-gray-800 mb-1">Hook</p>
                             <p>{analysis.ad_analysis?.hook || 'N/A'}</p>
@@ -746,12 +748,20 @@ const AdAnalysis = () => {
                             <p>{analysis.ad_analysis?.tone || 'N/A'}</p>
                           </div>
                           <div>
+                            <p className="font-bold text-gray-800 mb-1">Product</p>
+                            <p>{analysis.ad_analysis?.product || 'N/A'}</p>
+                          </div>
+                          <div>
                             <p className="font-bold text-gray-800 mb-1">Power Phrases</p>
                             <p>{analysis.ad_analysis?.power_phrases || 'N/A'}</p>
                           </div>
                           <div>
                             <p className="font-bold text-gray-800 mb-1">Visual</p>
                             <p>{analysis.ad_analysis?.visual || 'N/A'}</p>
+                          </div>
+                          <div>
+                            <p className="font-bold text-gray-800 mb-1">Product Type</p>
+                            <p>{analysis.ad_analysis?.product_type || 'N/A'}</p>
                           </div>
                         </div>
                       </div>
