@@ -18,6 +18,8 @@ import AdDetail from "./pages/AdDetail";
 import Dashboard from "./pages/Dashboard";
 import NotFound from "./pages/NotFound";
 import SelectAdAccount from "./pages/SelectAdAccount";
+import PromptAdminPanel from "./pages/PromptAdminPanel";
+import AdminLogin from "./pages/AdminLogin";
 
 const queryClient = new QueryClient();
 
@@ -40,6 +42,10 @@ const App = () => (
               
               {/* Ad account selection */}
               <Route path="/select-ad-account" element={<SelectAdAccount />} />
+              
+              {/* Admin Panel - now requires authentication */}
+              <Route path="/admin/login" element={<AdminLogin />} />
+              <Route path="/admin/prompts" element={<PromptAdminPanel />} />
               
               <Route element={<ProtectedRoute />}>
                 <Route path="/chat" element={

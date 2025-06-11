@@ -5,15 +5,11 @@ This node classifies user queries into different categories based on provided cl
 """
 
 from typing import Dict, List, Any
-from openai import AsyncOpenAI
 import logging
-from app.core.config import settings
+from app.services.dynamic_prompt_service import dynamic_prompt_service
 
 # Set up logging
 logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client
-client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 class TextClassifierNode:
     """
@@ -50,35 +46,24 @@ class TextClassifierNode:
             for class_name, description in self.classification_classes.items():
                 classes_description += f'{class_name}: {description}\n'
             
-            classification_prompt = f"""
-            You are a text classifier that determines the intent of user queries.
+            # Prepare variables for the dynamic prompt
+            prompt_variables = {
+                "classes_description": classes_description,
+                "default_class": self.default_class,
+                "user_message": state["user_message"]
+            }
             
-            Classes:
-            {classes_description}
-            
-            Classification Guidelines:
-            - Analyze the user query carefully and determine which category it best fits into
-            - If the query doesn't clearly fit into any specific category, classify it as "{self.default_class}"
-            - Only respond with the exact class name from the list above
-            
-            User Query: "{state["user_message"]}"
-            
-            Respond with only the classification (class name):
-            """
-            
-            response = await client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": classification_prompt
-                    }
-                ],
-                max_tokens=20,
-                temperature=0
+            # Use dynamic prompt service for classification
+            classification_result = await dynamic_prompt_service.make_chat_completion(
+                prompt_key="text_classifier",
+                prompt_variables=prompt_variables
             )
             
-            classification = response.choices[0].message.content.strip().lower()
+            if classification_result:
+                classification = classification_result.strip().lower()
+            else:
+                classification = self.default_class
+                logger.warning("Failed to get classification from dynamic prompt service, using default")
             
             # Ensure valid classification - if not in our classes, default to default_class
             if classification not in [cls.lower() for cls in self.classification_classes.keys()]:

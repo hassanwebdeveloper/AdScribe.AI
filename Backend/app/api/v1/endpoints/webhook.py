@@ -337,6 +337,9 @@ async def process_webhook(
                 "content": msg.content
             })
         
+        # Initialize classification classes from database before using the agent
+        await ad_script_generator_agent.initialize_from_database()
+        
         # Call the Ad Script Generator Agent
         agent_response = await ad_script_generator_agent.process_request(
             user_message=cleaned_message,

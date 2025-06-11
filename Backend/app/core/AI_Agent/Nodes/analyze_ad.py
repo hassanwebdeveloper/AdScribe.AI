@@ -5,23 +5,12 @@ import logging
 from pathlib import Path
 from typing import Dict, Any
 from app.services.openai_service import openai_service
+from app.services.dynamic_prompt_service import dynamic_prompt_service
 
 logger = logging.getLogger(__name__)
 
 # Prompt template
-AD_ANALYSIS_PROMPT = (
-    "STEP 1: Analyze the ad insights below.\n\n"
-    "Ad Transcript Summary: {transcription}\n"
-    "Visual Summary: {visual_summary}\n\n"
-    "Now answer these clearly:\n"
-    "1. What is the **main hook line or pattern** used in this ad? Why did it work?\n"
-    "2. What is the **tone** of the ad (e.g., emotional, confident, hype)?\n"
-    "3. What **power phrases or emotional angles** stood out?\n"
-    "4. What **gestures, expressions, or camera angles or visual thing** were impactful?\n\n"
-    "Important: If you include any Urdu phrases, always write them in **Roman Urdu** (Urdu written in English script like 'agar pasand na aaye to paise wapas') instead of using Urdu script. Do NOT use Urdu alphabet or Nastaliq script.\n\n"
-    "Please reply in only the following JSON format:\n"
-    '{{\n  "hook":"...",\n  "tone":"...",\n  "power_phrases":"...",\n  "visual":"..."\n}}'
-)
+# AD_ANALYSIS_PROMPT moved to dynamic prompt template "ad_analysis"
 
 def clean_json_string(text: str) -> str:
     # Remove leading/trailing whitespace and code block markers
@@ -43,20 +32,16 @@ async def analyze_combined_ad(transcription: str, visual_summary: str, cancellat
         logger.info("Job cancelled before ad analysis")
         return {}
         
-    prompt = AD_ANALYSIS_PROMPT.format(
-        transcription=transcription,
-        visual_summary=visual_summary
-    )
-    
     try:
-        # Use the robust OpenAI service with rate limiting
-        messages = [{"role": "user", "content": prompt}]
+        # Use dynamic prompt service for ad analysis
+        prompt_variables = {
+            "transcription": transcription,
+            "visual_summary": visual_summary
+        }
         
-        result = await openai_service._make_chat_completion(
-            messages=messages,
-            model="gpt-4o",
-            temperature=0.4,
-            cancellation_token=cancellation_token
+        result = await dynamic_prompt_service.make_chat_completion(
+            prompt_key="ad_analysis",
+            prompt_variables=prompt_variables
         )
         
         if not result:

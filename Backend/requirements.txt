@@ -35,3 +35,7 @@ opencv-python
 
 # Additional dependencies that might be needed
 typing-extensions
+
+PyJWT 
+
+email-validator

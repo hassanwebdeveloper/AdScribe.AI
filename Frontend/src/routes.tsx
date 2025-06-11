@@ -21,6 +21,7 @@ const AdAccountsPage = lazy(() => import("@/pages/AdAccountsPage"));
 const ContentAnalysisPage = lazy(() => import("@/pages/ContentAnalysisPage"));
 const ContentArchivesPage = lazy(() => import("@/pages/ContentArchivesPage"));
 const AdMetricsPage = lazy(() => import("@/pages/AdMetricsPage"));
+const PromptAdminPanel = lazy(() => import("@/pages/PromptAdminPanel"));
 
 // Wrap lazy components with Suspense
 const SuspenseWrapper = ({ children }: { children: React.ReactNode }) => (
@@ -92,6 +93,10 @@ const router = createBrowserRouter([
         element: <SuspenseWrapper><AdMetricsPage /></SuspenseWrapper>,
       },
     ],
+  },
+  {
+    path: "/admin/prompts",
+    element: <SuspenseWrapper><PromptAdminPanel /></SuspenseWrapper>,
   },
   {
     path: "*",

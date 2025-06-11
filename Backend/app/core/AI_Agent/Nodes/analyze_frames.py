@@ -5,15 +5,9 @@ import logging
 from pathlib import Path
 from typing import Dict, Any
 from app.services.openai_service import openai_service
+from app.services.dynamic_prompt_service import dynamic_prompt_service
 
 logger = logging.getLogger(__name__)
-
-# Prompt
-ANALYSIS_PROMPT = (
-    "I want you to give me a single word that represents a characteristic of this advertising image to characterize it. "
-    "Give me only the position of the person, and necessarily what they are doing (example: sitting with the object in their hands, "
-    "standing explaining, crouching looking at the object) or a characteristic of the background (example: outside, package in the background, red background)."
-)
 
 def encode_image_to_base64(image_path: Path) -> str:
     """
@@ -28,9 +22,9 @@ def encode_image_to_base64(image_path: Path) -> str:
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
-def analyze_frame(image_path: Path) -> str:
+async def analyze_frame(image_path: Path) -> str:
     """
-    Analyzes a single frame using GPT-4o and returns the analysis result.
+    Analyzes a single frame using dynamic prompt service and returns the analysis result.
 
     Args:
         image_path (Path): Path to the image file to analyze.
@@ -40,18 +34,27 @@ def analyze_frame(image_path: Path) -> str:
     """
     try:
         image_b64 = encode_image_to_base64(image_path)
-        response = client.chat.completions.create(
-            model="gpt-4o",
+        
+        # Get the prompt text from dynamic prompt service
+        prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("frame_analysis")
+        
+        if not prompt_text:
+            prompt_text = "I want you to give me a single word that represents a characteristic of this advertising image to characterize it. Give me only the position of the person, and necessarily what they are doing (example: sitting with the object in their hands, standing explaining, crouching looking at the object) or a characteristic of the background (example: outside, package in the background, red background)."
+        
+        # Use dynamic prompt service client
+        response = await dynamic_prompt_service.client.chat.completions.create(
+            model=model,
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": ANALYSIS_PROMPT},
+                        {"type": "text", "text": prompt_text},
                         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
                     ]
                 }
             ],
-            max_tokens=50
+            max_tokens=max_tokens or 50,
+            temperature=temperature
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
@@ -60,7 +63,7 @@ def analyze_frame(image_path: Path) -> str:
 
 async def analyze_frame_from_base64(frame_b64: str, frame_name: str, cancellation_token=None) -> str:
     """
-    Analyzes a single frame from base64 data using OpenAI service with rate limiting.
+    Analyzes a single frame from base64 data using dynamic prompt service.
 
     Args:
         frame_b64 (str): Base64 encoded image data.
@@ -76,12 +79,18 @@ async def analyze_frame_from_base64(frame_b64: str, frame_name: str, cancellatio
         return "Cancelled"
         
     try:
+        # Get the prompt text from dynamic prompt service
+        prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("frame_analysis")
+        
+        if not prompt_text:
+            prompt_text = "I want you to give me a single word that represents a characteristic of this advertising image to characterize it. Give me only the position of the person, and necessarily what they are doing (example: sitting with the object in their hands, standing explaining, crouching looking at the object) or a characteristic of the background (example: outside, package in the background, red background)."
+        
         # Use the robust OpenAI service with rate limiting
         messages = [
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": ANALYSIS_PROMPT},
+                    {"type": "text", "text": prompt_text},
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{frame_b64}"}}
                 ]
             }
@@ -89,8 +98,9 @@ async def analyze_frame_from_base64(frame_b64: str, frame_name: str, cancellatio
         
         result = await openai_service._make_chat_completion(
             messages=messages,
-            model="gpt-4o",
-            max_tokens=50,
+            model=model,
+            max_tokens=max_tokens or 50,
+            temperature=temperature,
             cancellation_token=cancellation_token
         )
         
@@ -221,18 +231,20 @@ async def extract_product_from_frames(frames: list, video_name: str, cancellatio
     # Use the first few frames for product analysis (max 3 to avoid too many API calls)
     sample_frames = frames
     
-    prompt = """
-Analyze these advertisement video frames and extract the product information:
+    try:
+        # Get the prompt text from dynamic prompt service
+        prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("product_extraction_frames")
+        
+        if not prompt_text:
+            prompt_text = """Analyze these advertisement video frames and extract the product information:
 
 1. What is the exact product name being advertised? (Look for any text, brand names, or product labels visible in the frames)
 2. What category does this product belong to? (e.g., islamic product, cosmetic, fashion, tech, food, health, education, clothing, jewelry, electronics, etc.)
 
-Return only a JSON with "product" and "product_type" fields.
-"""
-
-    try:
+Return only a JSON with "product" and "product_type" fields."""
+        
         # Prepare messages with multiple frames
-        message_content = [{"type": "text", "text": prompt}]
+        message_content = [{"type": "text", "text": prompt_text}]
         
         for i, frame_b64 in enumerate(sample_frames):
             message_content.append({
@@ -244,8 +256,9 @@ Return only a JSON with "product" and "product_type" fields.
         
         result = await openai_service._make_chat_completion(
             messages=messages,
-            model="gpt-4o",
-            temperature=0.3,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
             cancellation_token=cancellation_token
         )
         

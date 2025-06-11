@@ -5,15 +5,11 @@ This node handles general queries and default responses using OpenAI.
 """
 
 from typing import Dict, List, Any
-from openai import AsyncOpenAI
 import logging
-from app.core.config import settings
+from app.services.dynamic_prompt_service import dynamic_prompt_service
 
 # Set up logging
 logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client
-client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 class GeneralResponseNode:
     """
@@ -35,44 +31,18 @@ class GeneralResponseNode:
             Updated state with general response
         """
         try:
-            # Prepare messages for OpenAI
-            messages = []
-            
-            # Add previous conversation context
-            if state.get("previous_messages"):
-                for msg in state["previous_messages"]:
-                    # Map 'bot' role to 'assistant' for OpenAI API compatibility
-                    role = msg.get("role", "user")
-                    if role == "bot":
-                        role = "assistant"
-                    
-                    messages.append({
-                        "role": role,
-                        "content": msg.get("content", "")
-                    })
-            
-            # Add current user message
-            messages.append({
-                "role": "user",
-                "content": state["user_message"]
-            })
-            
-            # If no previous context, add a system message
-            if not state.get("previous_messages"):
-                messages.insert(0, {
-                    "role": "system",
-                    "content": "You are a helpful AI assistant. Respond to the user's query in a helpful and informative manner."
-                })
-            
-            response = await client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages,
-                max_tokens=1000,
-                temperature=0.7
+            # Use dynamic prompt service for general response
+            general_response = await dynamic_prompt_service.make_chat_completion_with_context(
+                prompt_key="general_response",
+                user_message=state["user_message"],
+                previous_messages=state.get("previous_messages")
             )
             
-            general_response = response.choices[0].message.content
-            state["final_response"] = general_response
+            if general_response:
+                state["final_response"] = general_response
+            else:
+                state["final_response"] = "Sorry, I encountered an error while processing your request."
+                state["error"] = "Failed to generate general response using dynamic prompt service"
             
             logger.info(f"Generated general OpenAI response successfully")
             return state

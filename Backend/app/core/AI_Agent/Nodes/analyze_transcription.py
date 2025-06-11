@@ -3,49 +3,27 @@ import logging
 from pathlib import Path
 from typing import Dict, Any
 from app.services.openai_service import openai_service
+from app.services.dynamic_prompt_service import dynamic_prompt_service
 
 logger = logging.getLogger(__name__)
 
 async def analyze_transcript_text(text: str, cancellation_token=None) -> str:
     """
-    Sends transcription text to GPT for structured analysis using OpenAI service with rate limiting.
+    Sends transcription text to GPT for structured analysis using dynamic prompt service.
     Returns a clean bullet list string.
     """
     # Check for cancellation before making request
     if cancellation_token and cancellation_token.get("cancelled", False):
         logger.info("Job cancelled before transcription analysis")
         return None
-        
-    prompt = f"""
-Aap aik marketing strategist hain jo aik ad ki Urdu transcript ka jaiza le rahe hain. Aapko yeh batana hai ke is ad mein kon kon se selling techniques use hui hain. Jaise ke:
-
-- Emotional kahani sunana
-- Social proof (reviews ya testimonials ka zikr)
-- Urgency (limited time ya "abhi khareedain" ka lafz)
-- Risk reversal (e.g. "agar pasand na aaye to paisay wapas")
-- Viewer se direct connection ("aap ke liye", "aap jaise log")
-- Mukabla ya farq dikhana (e.g. "doosri brands se behtar")
-
-Bullets mein jawaab dein — sirf unhi cheezon ka zikr karein jo is transcript mein hain.
-
-Transcript:
-{text}
-"""
-
-    system_prompt = "You are a helpful assistant that gives only keywords as a return, in English, with one point per line using dashes. Do not include markdown or JSON."
 
     try:
-        # Use the robust OpenAI service with rate limiting
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
+        # Use dynamic prompt service for transcription analysis
+        prompt_variables = {"text": text}
         
-        result = await openai_service._make_chat_completion(
-            messages=messages,
-            model="gpt-4o",
-            temperature=0.5,
-            cancellation_token=cancellation_token
+        result = await dynamic_prompt_service.make_chat_completion(
+            prompt_key="transcription_analysis",
+            prompt_variables=prompt_variables
         )
         
         return result.strip() if result else None
@@ -69,29 +47,13 @@ async def extract_product_from_transcript(text: str, cancellation_token=None) ->
         logger.info("Job cancelled before product extraction from transcript")
         return {"product": "", "product_type": ""}
         
-    prompt = f"""
-Analyze this advertisement transcript and extract the product information:
-
-1. What is the exact product name being advertised? (Give the specific name/brand if mentioned, otherwise describe the product briefly)
-2. What category does this product belong to? (e.g., islamic product, cosmetic, fashion, tech, food, health, education, clothing, jewelry, electronics, etc.)
-
-Return only a JSON with "product" and "product_type" fields.
-
-Transcript:
-{text}
-"""
-
     try:
-        # Use the robust OpenAI service with rate limiting
-        messages = [
-            {"role": "user", "content": prompt}
-        ]
+        # Use dynamic prompt service for product extraction
+        prompt_variables = {"text": text}
         
-        result = await openai_service._make_chat_completion(
-            messages=messages,
-            model="gpt-4o",
-            temperature=0.3,
-            cancellation_token=cancellation_token
+        result = await dynamic_prompt_service.make_chat_completion(
+            prompt_key="product_extraction_transcript",
+            prompt_variables=prompt_variables
         )
         
         if result:

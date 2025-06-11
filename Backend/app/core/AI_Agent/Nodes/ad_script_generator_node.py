@@ -5,15 +5,11 @@ This node generates ad scripts using best-performing ad analysis data and Urdu p
 """
 
 from typing import Dict, List, Any
-from openai import AsyncOpenAI
 import logging
-from app.core.config import settings
+from app.services.dynamic_prompt_service import dynamic_prompt_service
 
 # Set up logging
 logger = logging.getLogger(__name__)
-
-# Initialize OpenAI client
-client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 class AdScriptGeneratorNode:
     """
@@ -67,83 +63,39 @@ class AdScriptGeneratorNode:
             target_product = product_info.get("product", "Perfume") if product_info else "Perfume"
             target_product_type = product_info.get("product_type", "Cosmetic") if product_info else "Cosmetic"
             
-            # Construct the prompt with actual data
-            ad_script_prompt = f"""
-Aap aik expert Urdu ad script writer hain. Aapka kaam hai aik zabardast Facebook video ad script likhna based on best-performing ad.
-
-Target Product: {target_product}
-Target Product Type: {target_product_type}
-
-Pehle bataayein ke best ad ka hook, background, ya tone kya tha jo successful raha hai.
-
-Phir nayi script likhein Roman Urdu mein is structure mein for "{target_product}" ({target_product_type}):
-
-Hook (5 seconds): Best ad ka hook tha: "{best_ad_hook}" aur tone tha: "{best_ad_tone}". Is successful hook strategy ko {target_product} ke liye adapt karo. Power words ka istamaal karo jaise best ad mein use hue the: "{best_ad_power_phrases}". Hook mein {target_product} ki main benefit ya unique selling point highlight karo jo customer ka scroll roke.
-
-Interest & Desire: Best ad ke tone aur style "{best_ad_tone}" ko follow karte hue, {target_product} ki main benefits aur features ki tareef karo. Best ad ke successful power phrases "{best_ad_power_phrases}" ko {target_product} ke context mein modify karke use karo. Quality, durability, aur value for money ke baare mein batao jo customer ko convince kare.
-
-Risk Reversal: Best ad ki trust-building approach ko follow karte hue, {target_product} ke liye money back guarantee provide karo. Customer ko confidence dilao ke agar product expectations meet na kare to paisay wapis milenge.
-
-Call to Action: Best ad ke successful CTA pattern ko {target_product} ke liye adapt karo. Strong aur immediate action-driving CTA banao.
-
-Best ad se connection: Best ad ke successful elements (Hook: "{best_ad_hook}", Tone: "{best_ad_tone}", Power Phrases: "{best_ad_power_phrases}", Visual: "{best_ad_visual}") ko {target_product} ke liye kaise adapt kar rahe hain, yeh explain karo.
-
-Target Product: {target_product}
-Target Product Type: {target_product_type}
-Audience: Mard aur Khawateen, 20 se 60 saal
-Objective: Sales generate karna
-
-Best ad ka data:
-AD TITLE: {ad_title}
-ROAS (Return on Ad Spend): {roas}
-CTR (Click Through Rate): {ctr}
-Conversion Volume (Purchases or Leads): {conversions}
-Revenue: {revenue}
-AUDIO DESCRIPTION: {audio_description}
-VIDEO DESCRIPTION: {video_description}
-
-BEST AD KE SUCCESSFUL COMPONENTS (Jo aap ko follow karne hain):
-HOOK (5 seconds): {best_ad_hook}
-TONE: {best_ad_tone}
-POWER PHRASES: {best_ad_power_phrases}
-VISUAL ELEMENTS: {best_ad_visual}
-PRODUCT: {best_ad_product}
-PRODUCT TYPE: {best_ad_product_type}
-
-User Request: {state["user_message"]}
-"""
+            # Prepare variables for the prompt template
+            prompt_variables = {
+                "target_product": target_product,
+                "target_product_type": target_product_type,
+                "best_ad_hook": best_ad_hook,
+                "best_ad_tone": best_ad_tone,
+                "best_ad_power_phrases": best_ad_power_phrases,
+                "best_ad_visual": best_ad_visual,
+                "best_ad_product": best_ad_product,
+                "best_ad_product_type": best_ad_product_type,
+                "ad_title": ad_title,
+                "roas": roas,
+                "ctr": ctr,
+                "conversions": conversions,
+                "revenue": revenue,
+                "audio_description": audio_description,
+                "video_description": video_description,
+                "user_message": state["user_message"]
+            }
             
-            # Add previous messages context if available
-            messages = [{"role": "system", "content": ad_script_prompt}]
-            
-            # Add previous conversation context
-            if state.get("previous_messages"):
-                for msg in state["previous_messages"]:
-                    # Map 'bot' role to 'assistant' for OpenAI API compatibility
-                    role = msg.get("role", "user")
-                    if role == "bot":
-                        role = "assistant"
-                    
-                    messages.append({
-                        "role": role,
-                        "content": msg.get("content", "")
-                    })
-            
-            # Add current user message
-            messages.append({
-                "role": "user", 
-                "content": state["user_message"]
-            })
-            
-            response = await client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages,
-                max_tokens=2000,
-                temperature=0.7
+            # Use dynamic prompt service to generate the ad script with conversation context
+            ad_script = await dynamic_prompt_service.make_chat_completion_with_context(
+                prompt_key="ad_script_generator",
+                user_message=state["user_message"],
+                previous_messages=state.get("previous_messages"),
+                system_prompt_variables=prompt_variables
             )
             
-            ad_script = response.choices[0].message.content
-            state["final_response"] = ad_script
+            if ad_script:
+                state["final_response"] = ad_script
+            else:
+                state["final_response"] = "Sorry, I encountered an error while generating the ad script."
+                state["error"] = "Failed to generate ad script using dynamic prompt service"
             
             logger.info(f"Generated ad script successfully")
             return state

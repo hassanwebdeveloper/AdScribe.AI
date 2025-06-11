@@ -27,24 +27,67 @@ class AdScriptGeneratorAgent:
         
         Args:
             classification_classes: Dictionary mapping class names to descriptions.
-                                  If None, uses default classes.
+                                  If None, fetches from database or uses fallback defaults.
         """
-        # Set default classification classes if none provided
-        if classification_classes is None:
-            classification_classes = {
-                "ad_script": "If user wants to write new ad speech or video script or text but not code.",
-                "default": "it is default category all remaining query should lie under this category"
-            }
+        # Initialize classification classes
+        self.classification_classes = None
         
-        self.classification_classes = classification_classes
+        # Initialize node instances with temporary classes, will be updated in _initialize_classification_classes
+        temp_classes = {
+            "ad_script": "If user wants to write new ad speech or video script or text but not code.",
+            "default": "it is default category all remaining query should lie under this category"
+        }
         
-        # Initialize node instances
-        self.text_classifier = TextClassifierNode(classification_classes)
+        self.text_classifier = TextClassifierNode(temp_classes)
         self.ad_script_generator = AdScriptGeneratorNode()
         self.general_response_generator = GeneralResponseNode()
         
         # Build the graph
         self.graph = self._build_graph()
+        
+        # Initialize classification classes (will update the graph if needed)
+        if classification_classes is not None:
+            self.classification_classes = classification_classes
+            self._update_classifier()
+        # Note: For async initialization from database, call initialize_from_database() separately
+    
+    async def initialize_from_database(self):
+        """
+        Initialize classification classes from database.
+        This should be called after creating the agent instance.
+        """
+        try:
+            from app.services.classification_classes_service import ClassificationClassesService
+            
+            # Fetch ad_script_generator classification classes from database
+            db_classes = await ClassificationClassesService.get_classification_classes_by_name("ad_script_generator")
+            
+            if db_classes and db_classes.classes:
+                logger.info("Loaded classification classes from database")
+                self.classification_classes = db_classes.classes
+                self._update_classifier()
+            else:
+                logger.warning("No ad_script_generator classification classes found in database, using hardcoded fallback")
+                # Keep the temporary classes as fallback
+                self.classification_classes = {
+                    "ad_script": "If user wants to write new ad speech or video script or text but not code.",
+                    "default": "it is default category all remaining query should lie under this category"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error loading classification classes from database: {e}")
+            # Use fallback classes
+            self.classification_classes = {
+                "ad_script": "If user wants to write new ad speech or video script or text but not code.",
+                "default": "it is default category all remaining query should lie under this category"
+            }
+    
+    def _update_classifier(self):
+        """Update the text classifier with new classification classes"""
+        if self.classification_classes:
+            self.text_classifier = TextClassifierNode(self.classification_classes)
+            # Rebuild the graph with updated classifier
+            self.graph = self._build_graph()
     
     def _build_graph(self) -> StateGraph:
         """Build the agent workflow graph"""
@@ -152,9 +195,7 @@ class AdScriptGeneratorAgent:
             new_classes: New dictionary of class names to descriptions
         """
         self.classification_classes = new_classes
-        self.text_classifier = TextClassifierNode(new_classes)
-        # Rebuild the graph with updated classifier
-        self.graph = self._build_graph()
+        self._update_classifier()
         logger.info(f"Updated classification classes: {list(new_classes.keys())}")
 
 # Create instance with default classes

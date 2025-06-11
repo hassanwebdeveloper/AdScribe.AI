@@ -65,6 +65,38 @@ async def startup_db_client():
         await db.background_jobs.create_index("user_id")
         await db.background_jobs.create_index("status")
         await db.background_jobs.create_index("created_at")
+    
+    # Create prompt_templates collection for prompt management
+    if "prompt_templates" not in collections:
+        await db.create_collection("prompt_templates")
+        await db.prompt_templates.create_index("prompt_key", unique=True)
+        await db.prompt_templates.create_index("category")
+        
+        # Initialize default prompts
+        from app.services.prompt_template_service import PromptTemplateService
+        await PromptTemplateService.initialize_default_prompts()
+    
+    # Create admin authentication collections
+    if "admin_otps" not in collections:
+        await db.create_collection("admin_otps")
+        await db.admin_otps.create_index("email")
+        await db.admin_otps.create_index("expires_at")
+    
+    if "admin_sessions" not in collections:
+        await db.create_collection("admin_sessions")
+        await db.admin_sessions.create_index("email")
+        await db.admin_sessions.create_index("token")
+        await db.admin_sessions.create_index("expires_at")
+    
+    # Create classification_classes collection for text classifier
+    if "classification_classes" not in collections:
+        await db.create_collection("classification_classes")
+        await db.classification_classes.create_index("name", unique=True)
+        await db.classification_classes.create_index("is_active")
+        
+        # Initialize default classification classes
+        from app.services.classification_classes_service import ClassificationClassesService
+        await ClassificationClassesService.initialize_default_classification_classes()
 
     # Initialize scheduler service after database connection is established
     scheduler_service = SchedulerService()
@@ -94,11 +126,13 @@ if os.path.exists("../Frontend/dist/assets"):
 # Serve frontend for all non-API routes
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
-    # Serve the frontend dist/index.html for all non-API routes
-    if not full_path.startswith("api/"):
-        frontend_path = "../Frontend/dist/index.html"
-        if os.path.exists(frontend_path):
-            return FileResponse(frontend_path)
+    # Check if this is an API route (should be handled by FastAPI routers)
+    if full_path.startswith("api/"):
+        return {"message": "API route not found"}
     
-    # If the path starts with api/, let it be handled by the API routes
+    # For admin/prompts and other frontend routes, serve the React app
+    frontend_path = "../Frontend/dist/index.html"
+    if os.path.exists(frontend_path):
+        return FileResponse(frontend_path)
+    
     return {"message": "Welcome to AdScribe AI API"} 
