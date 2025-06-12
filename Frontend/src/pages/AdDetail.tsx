@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ChevronLeft, Loader2 } from 'lucide-react';
+import { ChevronLeft, Loader2, Edit3, Check, X } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PlotlyLineChart } from '@/components/ui/plotly-chart';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import axios from 'axios';
 
 // Import the interfaces from AdAnalysis page
@@ -244,6 +245,8 @@ const AdDetail = () => {
   const [showForecast, setShowForecast] = useState(false);
   const [forecastData, setForecastData] = useState<Record<string, ForecastData>>({});
   const [forecastLoading, setForecastLoading] = useState(false);
+  const [editingFields, setEditingFields] = useState<{product?: boolean, product_type?: boolean}>({});
+  const [editValues, setEditValues] = useState<{product?: string, product_type?: string}>({});
   const { token } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -1012,7 +1015,169 @@ const AdDetail = () => {
   };
 
   const goBack = () => {
-    navigate(-1);
+    navigate('/ad-analysis');
+  };
+
+  const startEditing = (field: 'product' | 'product_type', currentValue: string) => {
+    setEditingFields(prev => ({
+      ...prev,
+      [field]: true
+    }));
+    setEditValues(prev => ({
+      ...prev,
+      [field]: currentValue || ''
+    }));
+  };
+
+  const cancelEditing = (field: 'product' | 'product_type') => {
+    setEditingFields(prev => ({
+      ...prev,
+      [field]: false
+    }));
+    setEditValues(prev => ({
+      ...prev,
+      [field]: undefined
+    }));
+  };
+
+  const updateAdAnalysis = async (field: 'product' | 'product_type', newValue: string) => {
+    if (!adAnalysis) return;
+
+    try {
+      const updateData = {
+        [field]: newValue.trim()
+      };
+
+      const response = await axios.patch(`/api/v1/ad-analysis/${adAnalysis._id}`, updateData, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.data.success && response.data.updated_analysis) {
+        // Update the local state with the updated analysis
+        setAdAnalysis(prev => prev ? {
+          ...prev,
+          ad_analysis: {
+            ...prev.ad_analysis,
+            [field]: newValue.trim()
+          }
+        } : null);
+
+        // Clear editing state
+        cancelEditing(field);
+
+        toast({
+          title: "Success",
+          description: `${field === 'product' ? 'Product' : 'Product Type'} updated successfully.`
+        });
+      }
+      
+    } catch (error: any) {
+      console.error('Error updating ad analysis:', error);
+      
+      let errorMessage = "Failed to update analysis";
+      if (error.response?.status === 404) {
+        errorMessage = "Ad analysis not found";
+      } else if (error.response?.status === 401) {
+        errorMessage = "Authentication failed. Please log in again.";
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: errorMessage
+      });
+    }
+  };
+
+  const handleSaveEdit = (field: 'product' | 'product_type') => {
+    const newValue = editValues[field] || '';
+    updateAdAnalysis(field, newValue);
+  };
+
+  // Helper component for editable fields
+  const EditableField = ({ 
+    field, 
+    value, 
+    label 
+  }: { 
+    field: 'product' | 'product_type'; 
+    value: string; 
+    label: string; 
+  }) => {
+    const isEditing = editingFields[field] || false;
+    const editValue = editValues[field] || '';
+
+    if (isEditing) {
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <p className="font-bold text-gray-800">{label}</p>
+            <div className="flex items-center space-x-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                onClick={() => handleSaveEdit(field)}
+                title="Save changes"
+              >
+                <Check className="h-3 w-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-gray-600 hover:text-gray-700 hover:bg-gray-50"
+                onClick={() => cancelEditing(field)}
+                title="Cancel editing"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          </div>
+          <Input
+            value={editValue}
+            onChange={(e) => setEditValues(prev => ({
+              ...prev,
+              [field]: e.target.value
+            }))}
+            className="h-8 text-sm"
+            placeholder={`Enter ${label.toLowerCase()}`}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleSaveEdit(field);
+              } else if (e.key === 'Escape') {
+                cancelEditing(field);
+              }
+            }}
+            autoFocus
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-bold text-gray-800">{label}</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+            onClick={() => startEditing(field, value)}
+            title={`Edit ${label.toLowerCase()}`}
+          >
+            <Edit3 className="h-3 w-3" />
+          </Button>
+        </div>
+        <p className="text-base cursor-pointer" onClick={() => startEditing(field, value)}>
+          {value || 'N/A'}
+        </p>
+      </div>
+    );
   };
 
   if (loading) {
@@ -1119,10 +1284,11 @@ const AdDetail = () => {
                     <p className="font-bold text-gray-800 mb-1">Tone</p>
                     <p className="text-base">{adAnalysis.ad_analysis?.tone || 'N/A'}</p>
                   </div>
-                  <div>
-                    <p className="font-bold text-gray-800 mb-1">Product</p>
-                    <p className="text-base">{adAnalysis.ad_analysis?.product || 'N/A'}</p>
-                  </div>
+                  <EditableField
+                    field="product"
+                    value={adAnalysis.ad_analysis?.product || ''}
+                    label="Product"
+                  />
                   <div>
                     <p className="font-bold text-gray-800 mb-1">Power Phrases</p>
                     <p className="text-base">{adAnalysis.ad_analysis?.power_phrases || 'N/A'}</p>
@@ -1131,10 +1297,11 @@ const AdDetail = () => {
                     <p className="font-bold text-gray-800 mb-1">Visual</p>
                     <p className="text-base">{adAnalysis.ad_analysis?.visual || 'N/A'}</p>
                   </div>
-                  <div>
-                    <p className="font-bold text-gray-800 mb-1">Product Type</p>
-                    <p className="text-base">{adAnalysis.ad_analysis?.product_type || 'N/A'}</p>
-                  </div>
+                  <EditableField
+                    field="product_type"
+                    value={adAnalysis.ad_analysis?.product_type || ''}
+                    label="Product Type"
+                  />
                 </div>
               </div>
               

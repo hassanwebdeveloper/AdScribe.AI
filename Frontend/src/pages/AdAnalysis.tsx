@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, RefreshCw, History, Play } from 'lucide-react';
+import { Loader2, RefreshCw, History, Play, Trash2, Edit3, Check, X } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
 import { prerequisiteService } from '@/services/prerequisiteService';
@@ -257,6 +258,10 @@ const AdAnalysis = () => {
   const [currentJob, setCurrentJob] = useState<BackgroundJob | null>(null);
   const [jobHistory, setJobHistory] = useState<BackgroundJob[]>([]);
   const [showJobHistory, setShowJobHistory] = useState(false);
+  
+  // Editing states
+  const [editingFields, setEditingFields] = useState<{[key: string]: {product?: boolean, product_type?: boolean}}>({});
+  const [editValues, setEditValues] = useState<{[key: string]: {product?: string, product_type?: string}}>({});
   
   const { token } = useAuth();
   const { toast } = useToast();
@@ -595,6 +600,227 @@ const AdAnalysis = () => {
     setCurrentJob(null);
   };
 
+  const deleteAdAnalysis = async (analysisId: string, adTitle: string) => {
+    try {
+      await axios.delete(`/api/v1/ad-analysis/${analysisId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      // Remove the deleted analysis from the local state
+      setAdAnalyses(prevAnalyses => 
+        prevAnalyses.filter(analysis => analysis._id !== analysisId)
+      );
+
+      toast({
+        title: "Success",
+        description: `"${adTitle || 'Ad'}" has been deleted successfully.`
+      });
+      
+    } catch (error: any) {
+      console.error('Error deleting ad analysis:', error);
+      
+      let errorMessage = "Failed to delete ad analysis";
+      if (error.response?.status === 404) {
+        errorMessage = "Ad analysis not found";
+      } else if (error.response?.status === 401) {
+        errorMessage = "Authentication failed. Please log in again.";
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: errorMessage
+      });
+    }
+  };
+
+  const handleDeleteClick = (analysisId: string, adTitle: string) => {
+    if (window.confirm(`Are you sure you want to delete "${adTitle || 'this ad'}"? This action cannot be undone.`)) {
+      deleteAdAnalysis(analysisId, adTitle);
+    }
+  };
+
+  const startEditing = (analysisId: string, field: 'product' | 'product_type', currentValue: string) => {
+    setEditingFields(prev => ({
+      ...prev,
+      [analysisId]: {
+        ...prev[analysisId],
+        [field]: true
+      }
+    }));
+    setEditValues(prev => ({
+      ...prev,
+      [analysisId]: {
+        ...prev[analysisId],
+        [field]: currentValue || ''
+      }
+    }));
+  };
+
+  const cancelEditing = (analysisId: string, field: 'product' | 'product_type') => {
+    setEditingFields(prev => ({
+      ...prev,
+      [analysisId]: {
+        ...prev[analysisId],
+        [field]: false
+      }
+    }));
+    setEditValues(prev => ({
+      ...prev,
+      [analysisId]: {
+        ...prev[analysisId],
+        [field]: undefined
+      }
+    }));
+  };
+
+  const updateAdAnalysis = async (analysisId: string, field: 'product' | 'product_type', newValue: string) => {
+    try {
+      const updateData = {
+        [field]: newValue.trim()
+      };
+
+      const response = await axios.patch(`/api/v1/ad-analysis/${analysisId}`, updateData, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.data.success && response.data.updated_analysis) {
+        // Update the local state with the updated analysis
+        setAdAnalyses(prevAnalyses => 
+          prevAnalyses.map(analysis => 
+            analysis._id === analysisId 
+              ? { ...analysis, ad_analysis: { ...analysis.ad_analysis, [field]: newValue.trim() }}
+              : analysis
+          )
+        );
+
+        // Clear editing state
+        cancelEditing(analysisId, field);
+
+        toast({
+          title: "Success",
+          description: `${field === 'product' ? 'Product' : 'Product Type'} updated successfully.`
+        });
+      }
+      
+    } catch (error: any) {
+      console.error('Error updating ad analysis:', error);
+      
+      let errorMessage = "Failed to update analysis";
+      if (error.response?.status === 404) {
+        errorMessage = "Ad analysis not found";
+      } else if (error.response?.status === 401) {
+        errorMessage = "Authentication failed. Please log in again.";
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: errorMessage
+      });
+    }
+  };
+
+  const handleSaveEdit = (analysisId: string, field: 'product' | 'product_type') => {
+    const newValue = editValues[analysisId]?.[field] || '';
+    updateAdAnalysis(analysisId, field, newValue);
+  };
+
+  // Helper component for editable fields
+  const EditableField = ({ 
+    analysisId, 
+    field, 
+    value, 
+    label 
+  }: { 
+    analysisId: string; 
+    field: 'product' | 'product_type'; 
+    value: string; 
+    label: string; 
+  }) => {
+    const isEditing = editingFields[analysisId]?.[field] || false;
+    const editValue = editValues[analysisId]?.[field] || '';
+
+    if (isEditing) {
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <p className="font-bold text-gray-800">{label}</p>
+            <div className="flex items-center space-x-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                onClick={() => handleSaveEdit(analysisId, field)}
+                title="Save changes"
+              >
+                <Check className="h-3 w-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-gray-600 hover:text-gray-700 hover:bg-gray-50"
+                onClick={() => cancelEditing(analysisId, field)}
+                title="Cancel editing"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          </div>
+          <Input
+            value={editValue}
+            onChange={(e) => setEditValues(prev => ({
+              ...prev,
+              [analysisId]: {
+                ...prev[analysisId],
+                [field]: e.target.value
+              }
+            }))}
+            className="h-8 text-sm"
+            placeholder={`Enter ${label.toLowerCase()}`}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleSaveEdit(analysisId, field);
+              } else if (e.key === 'Escape') {
+                cancelEditing(analysisId, field);
+              }
+            }}
+            autoFocus
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-bold text-gray-800">{label}</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+            onClick={() => startEditing(analysisId, field, value)}
+            title={`Edit ${label.toLowerCase()}`}
+          >
+            <Edit3 className="h-3 w-3" />
+          </Button>
+        </div>
+        <p className="cursor-pointer" onClick={() => startEditing(analysisId, field, value)}>
+          {value || 'N/A'}
+        </p>
+      </div>
+    );
+  };
+
   const isJobRunning = currentJob && (currentJob.status === 'running' || currentJob.status === 'pending');
 
   return (
@@ -718,13 +944,27 @@ const AdAnalysis = () => {
                           {analysis.ad_title || 'Untitled Ad'}
                         </Link>
                       </CardTitle>
-                      <span className={`absolute top-4 right-6 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        analysis.ad_status === 'ACTIVE' 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {analysis.ad_status || 'Unknown'}
-                      </span>
+                      <div className="absolute top-4 right-6 flex flex-col items-end space-y-2">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          analysis.ad_status === 'ACTIVE' 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {analysis.ad_status || 'Unknown'}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleDeleteClick(analysis._id, analysis.ad_title || 'Untitled Ad');
+                          }}
+                          title="Delete this ad analysis"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                     <CardDescription>
                       Campaign: {analysis.campaign_name || 'Unknown Campaign'}
@@ -747,10 +987,12 @@ const AdAnalysis = () => {
                             <p className="font-bold text-gray-800 mb-1">Tone</p>
                             <p>{analysis.ad_analysis?.tone || 'N/A'}</p>
                           </div>
-                          <div>
-                            <p className="font-bold text-gray-800 mb-1">Product</p>
-                            <p>{analysis.ad_analysis?.product || 'N/A'}</p>
-                          </div>
+                          <EditableField
+                            analysisId={analysis._id}
+                            field="product"
+                            value={analysis.ad_analysis?.product || ''}
+                            label="Product"
+                          />
                           <div>
                             <p className="font-bold text-gray-800 mb-1">Power Phrases</p>
                             <p>{analysis.ad_analysis?.power_phrases || 'N/A'}</p>
@@ -759,10 +1001,12 @@ const AdAnalysis = () => {
                             <p className="font-bold text-gray-800 mb-1">Visual</p>
                             <p>{analysis.ad_analysis?.visual || 'N/A'}</p>
                           </div>
-                          <div>
-                            <p className="font-bold text-gray-800 mb-1">Product Type</p>
-                            <p>{analysis.ad_analysis?.product_type || 'N/A'}</p>
-                          </div>
+                          <EditableField
+                            analysisId={analysis._id}
+                            field="product_type"
+                            value={analysis.ad_analysis?.product_type || ''}
+                            label="Product Type"
+                          />
                         </div>
                       </div>
                       

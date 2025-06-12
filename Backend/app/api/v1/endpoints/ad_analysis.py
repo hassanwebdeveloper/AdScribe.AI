@@ -399,6 +399,67 @@ async def get_single_ad_analysis(analysis_id: str, current_user: User = Depends(
             detail=f"Error retrieving ad analysis: {str(e)}"
         )
 
+@router.get("/debug/{analysis_id}")
+async def debug_analysis_access(analysis_id: str, current_user: User = Depends(get_current_user)):
+    """
+    Debug endpoint to check why we can't access a specific analysis
+    """
+    try:
+        db = get_database()
+        logger.info(f"=== DEBUG ANALYSIS ACCESS ===")
+        logger.info(f"Looking for analysis_id: {analysis_id}")
+        logger.info(f"Current user ID: {current_user.id} (type: {type(current_user.id)})")
+        logger.info(f"Current user ID as string: {str(current_user.id)}")
+        
+        # Check if document exists at all
+        if ObjectId.is_valid(analysis_id):
+            obj_id = ObjectId(analysis_id)
+            doc = await db.ad_analyses.find_one({"_id": obj_id})
+            if doc:
+                logger.info(f"Document found with ObjectId!")
+                logger.info(f"Document user_id: '{doc.get('user_id')}' (type: {type(doc.get('user_id'))})")
+                logger.info(f"String comparison: '{doc.get('user_id')}' == '{str(current_user.id)}' -> {doc.get('user_id') == str(current_user.id)}")
+                
+                # Try different comparison methods
+                comparisons = {
+                    "direct": doc.get("user_id") == current_user.id,
+                    "string": doc.get("user_id") == str(current_user.id),
+                    "doc_as_str": str(doc.get("user_id")) == str(current_user.id),
+                }
+                logger.info(f"Comparison results: {comparisons}")
+                
+                return {
+                    "found": True,
+                    "document_user_id": doc.get("user_id"),
+                    "document_user_id_type": str(type(doc.get("user_id"))),
+                    "current_user_id": current_user.id,
+                    "current_user_id_type": str(type(current_user.id)),
+                    "comparisons": comparisons,
+                    "has_ad_analysis": "ad_analysis" in doc,
+                    "ad_analysis_keys": list(doc.get("ad_analysis", {}).keys()) if doc.get("ad_analysis") else []
+                }
+            else:
+                logger.info(f"Document NOT found with ObjectId {obj_id}")
+                return {"found": False, "searched_with": "ObjectId"}
+        else:
+            logger.info(f"Invalid ObjectId, searching with string")
+            doc = await db.ad_analyses.find_one({"_id": analysis_id})
+            if doc:
+                logger.info(f"Document found with string ID!")
+                return {
+                    "found": True,
+                    "document_user_id": doc.get("user_id"),
+                    "current_user_id": current_user.id,
+                    "match": doc.get("user_id") == str(current_user.id)
+                }
+            else:
+                logger.info(f"Document NOT found with string ID {analysis_id}")
+                return {"found": False, "searched_with": "string"}
+                
+    except Exception as e:
+        logger.error(f"Debug error: {e}")
+        return {"error": str(e)}
+
 @router.get("/products", response_model=Dict[str, List[str]])
 async def get_unique_products(current_user: User = Depends(get_current_user)):
     """
@@ -436,6 +497,284 @@ async def get_unique_products(current_user: User = Depends(get_current_user)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching products: {str(e)}"
+        )
+
+@router.delete("/{analysis_id}")
+async def delete_ad_analysis(analysis_id: str, current_user: User = Depends(get_current_user)):
+    """
+    Delete a specific ad analysis by ID.
+    """
+    try:
+        db = get_database()
+        logger.info(f"Attempting to delete ad analysis with ID: {analysis_id} for user: {current_user.id}")
+        
+        # First, check if the document exists and belongs to the current user (same logic as update)
+        existing_doc = None
+        
+        # Try with ObjectId first if it's valid
+        if ObjectId.is_valid(analysis_id):
+            logger.info(f"Valid ObjectId format, searching with analysis_id: {analysis_id}")
+            
+            # First check if the document exists at all (without user_id restriction)
+            doc_check = await db.ad_analyses.find_one({"_id": analysis_id})
+            if doc_check:
+                logger.info(f"Document exists! Stored user_id: '{doc_check.get('user_id')}', Current user_id: '{current_user.id}'")
+                # Check if it belongs to the current user
+                if user_ids_match(doc_check.get("user_id"), current_user.id):
+                    existing_doc = doc_check
+                    logger.info("User ID match found for delete!")
+                else:
+                    logger.warning(f"Document found but user_id mismatch for delete. Document user_id: '{doc_check.get('user_id')}', Current user_id: '{current_user.id}'")
+            else:
+                logger.warning(f"No document found with analysis_id: {analysis_id}")
+        
+        # If not found with ObjectId, try with string ID
+        if not existing_doc:
+            logger.info(f"Trying with string ID: {analysis_id}")
+            doc_check = await db.ad_analyses.find_one({"_id": analysis_id})
+            if doc_check:
+                logger.info(f"Document found with string ID. Stored user_id: '{doc_check.get('user_id')}', Current user_id: '{current_user.id}'")
+                if user_ids_match(doc_check.get("user_id"), current_user.id):
+                    existing_doc = doc_check
+                else:
+                    logger.warning(f"Document found but user_id mismatch with string search for delete")
+            else:
+                logger.warning(f"No document found with string ID: {analysis_id}")
+        
+        if not existing_doc:
+            logger.error(f"Ad analysis not found with ID: {analysis_id} for user: {current_user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Ad analysis not found with ID: {analysis_id}"
+            )
+        
+        # Create the query for delete based on what we found
+        query = {"_id": analysis_id}
+        
+        # Delete the document (we already verified ownership above)
+        result = await db.ad_analyses.delete_one(query)
+        
+        if result.deleted_count == 1:
+            logger.info(f"Successfully deleted ad analysis with ID: {analysis_id}")
+            return {"success": True, "message": "Ad analysis deleted successfully"}
+        else:
+            logger.error(f"Failed to delete ad analysis with ID: {analysis_id}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete ad analysis"
+            )
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting ad analysis: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting ad analysis: {str(e)}"
+        )
+
+# Add this helper function at the top level
+def user_ids_match(doc_user_id, current_user_id):
+    """
+    Flexible user ID comparison that handles both ObjectId and string formats
+    """
+    if doc_user_id is None or current_user_id is None:
+        return False
+    
+    # Convert both to strings for comparison
+    doc_user_str = str(doc_user_id)
+    current_user_str = str(current_user_id)
+    
+    return doc_user_str == current_user_str
+
+class AdAnalysisUpdateRequest(BaseModel):
+    product: Optional[str] = None
+    product_type: Optional[str] = None
+
+@router.patch("/{analysis_id}")
+async def update_ad_analysis(
+    analysis_id: str, 
+    update_data: AdAnalysisUpdateRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update specific fields of an ad analysis (currently supports product and product_type).
+    """
+    try:
+        db = get_database()
+        logger.info(f"Attempting to update ad analysis with ID: {analysis_id} for user: {current_user.id}")
+        
+        # First, let's check if the document exists at all (debug step)
+        existing_doc = None
+        
+        # Try with ObjectId first if it's valid
+        if ObjectId.is_valid(analysis_id):
+            obj_id = ObjectId(analysis_id)
+            logger.info(f"Valid ObjectId format, searching with ObjectId: {obj_id}")
+            
+            # First check if the document exists at all (without user_id restriction)
+            doc_check = await db.ad_analyses.find_one({"_id": obj_id})
+            if doc_check:
+                logger.info(f"Document exists! Stored user_id: '{doc_check.get('user_id')}', Current user_id: '{current_user.id}', str(current_user.id): '{str(current_user.id)}'")
+                # Check if it belongs to the current user
+                if user_ids_match(doc_check.get("user_id"), current_user.id):
+                    existing_doc = doc_check
+                    logger.info("User ID match found!")
+                else:
+                    logger.warning(f"Document found but user_id mismatch. Document user_id: '{doc_check.get('user_id')}' (type: {type(doc_check.get('user_id'))}), Current user_id: '{current_user.id}' (type: {type(current_user.id)})")
+            else:
+                logger.warning(f"No document found with ObjectId: {obj_id}")
+        
+        # If not found with ObjectId, try with string ID
+        if not existing_doc:
+            logger.info(f"Trying with string ID: {analysis_id}")
+            doc_check = await db.ad_analyses.find_one({"_id": analysis_id})
+            if doc_check:
+                logger.info(f"Document found with string ID. Stored user_id: '{doc_check.get('user_id')}', Current user_id: '{current_user.id}'")
+                if user_ids_match(doc_check.get("user_id"), current_user.id):
+                    existing_doc = doc_check
+                else:
+                    logger.warning(f"Document found but user_id mismatch with string search")
+            else:
+                logger.warning(f"No document found with string ID: {analysis_id}")
+        
+        if not existing_doc:
+            # Let's also list some sample documents for this user to help debug
+            sample_docs = await db.ad_analyses.find({"user_id": str(current_user.id)}).limit(3).to_list(3)
+            if sample_docs:
+                sample_info = [{"_id": str(doc.get("_id")), "user_id": doc.get("user_id")} for doc in sample_docs]
+                logger.info(f"Sample documents for user {current_user.id}: {sample_info}")
+            
+            logger.error(f"Ad analysis not found with ID: {analysis_id} for user: {current_user.id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Ad analysis not found with ID: {analysis_id}"
+            )
+        
+        # Prepare update data - only update fields that are provided
+        update_fields = {}
+        if update_data.product is not None:
+            update_fields["ad_analysis.product"] = update_data.product.strip() if update_data.product else ""
+        if update_data.product_type is not None:
+            update_fields["ad_analysis.product_type"] = update_data.product_type.strip() if update_data.product_type else ""
+        
+        if not update_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid fields provided for update"
+            )
+        
+        logger.info(f"Prepared update_fields: {update_fields}")
+        
+        # Check if ad_analysis object exists, if not we might need to create it
+        if existing_doc and not existing_doc.get("ad_analysis"):
+            logger.info("ad_analysis object doesn't exist, will create it")
+            # If ad_analysis doesn't exist, we need to create the whole object
+            new_ad_analysis = {}
+            if update_data.product is not None:
+                new_ad_analysis["product"] = update_data.product.strip() if update_data.product else ""
+            if update_data.product_type is not None:
+                new_ad_analysis["product_type"] = update_data.product_type.strip() if update_data.product_type else ""
+            
+            # Use $set to create the entire ad_analysis object
+            update_fields = {"ad_analysis": new_ad_analysis}
+            logger.info(f"Creating new ad_analysis object: {update_fields}")
+        
+        # Create the query for update based on what we found - since we already verified ownership, 
+        # we can just use the _id without user_id restriction to avoid the same comparison issue
+        
+        query = {"_id": analysis_id}
+        
+        logger.info(f"Using query for update: {query}")
+        logger.info(f"Update fields: {update_fields}")
+        
+        # Let's also log the current field values before update for comparison
+        current_doc = await db.ad_analyses.find_one(query)
+        if current_doc:
+            current_ad_analysis = current_doc.get("ad_analysis", {})
+            logger.info(f"Current ad_analysis structure: {current_ad_analysis}")
+            logger.info(f"Current product: '{current_ad_analysis.get('product')}'")
+            logger.info(f"Current product_type: '{current_ad_analysis.get('product_type')}'")
+        else:
+            logger.warning(f"Could not find document with query {query} for pre-update check")
+        
+        # Update the document
+        result = await db.ad_analyses.update_one(
+            query,
+            {"$set": update_fields}
+        )
+        
+        logger.info(f"Update result - matched_count: {result.matched_count}, modified_count: {result.modified_count}")
+        
+        # If the update didn't modify anything, let's try alternative approaches
+        if result.matched_count > 0 and result.modified_count == 0:
+            logger.warning("Document was matched but not modified. Trying alternative update strategies...")
+            
+            # Strategy 1: Try using $unset and then $set to force the update
+            if update_data.product is not None:
+                logger.info("Trying alternative strategy for product field...")
+                unset_result = await db.ad_analyses.update_one(
+                    query,
+                    {"$unset": {"ad_analysis.product": ""}}
+                )
+                set_result = await db.ad_analyses.update_one(
+                    query,
+                    {"$set": {"ad_analysis.product": update_data.product.strip()}}
+                )
+                logger.info(f"Unset result: {unset_result.modified_count}, Set result: {set_result.modified_count}")
+            
+            if update_data.product_type is not None:
+                logger.info("Trying alternative strategy for product_type field...")
+                unset_result = await db.ad_analyses.update_one(
+                    query,
+                    {"$unset": {"ad_analysis.product_type": ""}}
+                )
+                set_result = await db.ad_analyses.update_one(
+                    query,
+                    {"$set": {"ad_analysis.product_type": update_data.product_type.strip()}}
+                )
+                logger.info(f"Unset result: {unset_result.modified_count}, Set result: {set_result.modified_count}")
+            
+            # Check the result again
+            result = await db.ad_analyses.find_one(query)
+            if result:
+                logger.info("Alternative strategy completed, checking final result...")
+        
+        # Let's also check the document after update to see what actually happened
+        post_update_doc = await db.ad_analyses.find_one(query)
+        if post_update_doc:
+            post_ad_analysis = post_update_doc.get("ad_analysis", {})
+            logger.info(f"After update ad_analysis structure: {post_ad_analysis}")
+            logger.info(f"After update product: '{post_ad_analysis.get('product')}'")
+            logger.info(f"After update product_type: '{post_ad_analysis.get('product_type')}'")
+        
+        if result.modified_count == 1:
+            logger.info(f"Successfully updated ad analysis with ID: {analysis_id}")
+            
+            # Fetch and return the updated document
+            updated_doc = await db.ad_analyses.find_one(query)
+            return {
+                "success": True, 
+                "message": "Ad analysis updated successfully",
+                "updated_analysis": updated_doc
+            }
+        else:
+            logger.warning(f"No changes made to ad analysis with ID: {analysis_id}")
+            return {
+                "success": True,
+                "message": "No changes were necessary",
+                "updated_analysis": existing_doc
+            }
+            
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error updating ad analysis: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating ad analysis: {str(e)}"
         )
 
 @router.get("/{analysis_id}", response_model=AdAnalysisResponse)
