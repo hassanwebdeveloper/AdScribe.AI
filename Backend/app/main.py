@@ -97,6 +97,31 @@ async def startup_db_client():
         # Initialize default classification classes
         from app.services.classification_classes_service import ClassificationClassesService
         await ClassificationClassesService.initialize_default_classification_classes()
+    
+    # Create ad_recommendations collection for the recommendation system
+    if "ad_recommendations" not in collections:
+        await db.create_collection("ad_recommendations")
+        await db.ad_recommendations.create_index("user_id")
+        await db.ad_recommendations.create_index("ad_id")
+        await db.ad_recommendations.create_index("status")
+        await db.ad_recommendations.create_index("generated_at")
+        await db.ad_recommendations.create_index([("user_id", 1), ("status", 1)])
+    
+    # Create creative_patterns collection for pattern analysis
+    if "creative_patterns" not in collections:
+        await db.create_collection("creative_patterns")
+        await db.creative_patterns.create_index("user_id")
+        await db.creative_patterns.create_index("pattern_type")
+        await db.creative_patterns.create_index("is_active")
+        await db.creative_patterns.create_index([("user_id", 1), ("pattern_type", 1)])
+    
+    # Create ml_models collection for storing model metadata
+    if "ml_models" not in collections:
+        await db.create_collection("ml_models")
+        await db.ml_models.create_index("user_id")
+        await db.ml_models.create_index("model_type")
+        await db.ml_models.create_index("created_at")
+        await db.ml_models.create_index([("user_id", 1), ("model_type", 1)])
 
     # Initialize scheduler service after database connection is established
     scheduler_service = SchedulerService()

@@ -4,22 +4,18 @@ import { FullPageLoader } from "@/components/ui/full-page-loader";
 
 // Layout
 import AppLayout from "@/layouts/AppLayout";
-import AuthLayout from "@/layouts/AuthLayout";
-
-// Auth
-import LoginPage from "@/pages/auth/LoginPage";
-import RegisterPage from "@/pages/auth/RegisterPage";
-import ForgotPasswordPage from "@/pages/auth/ForgotPasswordPage";
-import ResetPasswordPage from "@/pages/auth/ResetPasswordPage";
 
 // Regular imports for frequently accessed pages
-import DashboardPage from "@/pages/DashboardPage";
+import DashboardPage from "@/pages/Dashboard";
+import Index from "@/pages/Index";
+import Login from "@/pages/Login";
+import Register from "@/pages/Register";
+import NotFound from "@/pages/NotFound";
+import SelectAdAccount from "@/pages/SelectAdAccount";
+import AdminLogin from "@/pages/AdminLogin";
 
 // Lazy-loaded components
-const AccountPage = lazy(() => import("@/pages/AccountPage"));
-const AdAccountsPage = lazy(() => import("@/pages/AdAccountsPage"));
-const ContentAnalysisPage = lazy(() => import("@/pages/ContentAnalysisPage"));
-const ContentArchivesPage = lazy(() => import("@/pages/ContentArchivesPage"));
+const RecommendationsPage = lazy(() => import("@/pages/RecommendationsPage"));
 const AdMetricsPage = lazy(() => import("@/pages/AdMetricsPage"));
 const PromptAdminPanel = lazy(() => import("@/pages/PromptAdminPanel"));
 
@@ -35,31 +31,41 @@ const router = createBrowserRouter([
     element: <Navigate to="/app/dashboard" replace />,
   },
   {
-    path: "/auth",
-    element: <AuthLayout />,
-    children: [
-      {
-        path: "",
-        element: <Navigate to="/auth/login" replace />,
-      },
-      {
-        path: "login",
-        element: <LoginPage />,
-      },
-      {
-        path: "register",
-        element: <RegisterPage />,
-      },
-      {
-        path: "forgot-password",
-        element: <ForgotPasswordPage />,
-      },
-      {
-        path: "reset-password",
-        element: <ResetPasswordPage />,
-      },
-    ],
+    path: "/login",
+    element: <Login />,
   },
+  {
+    path: "/register",
+    element: <Register />,
+  },
+  
+  // Facebook OAuth callback routes
+  {
+    path: "/auth/facebook/success",
+    element: <Login />,
+  },
+  {
+    path: "/auth/facebook/error",
+    element: <Login />,
+  },
+  
+  // Ad account selection
+  {
+    path: "/select-ad-account",
+    element: <SelectAdAccount />,
+  },
+  
+  // Admin Panel
+  {
+    path: "/admin/login",
+    element: <AdminLogin />,
+  },
+  {
+    path: "/admin/prompts",
+    element: <SuspenseWrapper><PromptAdminPanel /></SuspenseWrapper>,
+  },
+  
+  // Main app routes with AppLayout
   {
     path: "/app",
     element: <AppLayout />,
@@ -73,20 +79,8 @@ const router = createBrowserRouter([
         element: <DashboardPage />,
       },
       {
-        path: "account",
-        element: <SuspenseWrapper><AccountPage /></SuspenseWrapper>,
-      },
-      {
-        path: "ad-accounts",
-        element: <SuspenseWrapper><AdAccountsPage /></SuspenseWrapper>,
-      },
-      {
-        path: "content-analysis",
-        element: <SuspenseWrapper><ContentAnalysisPage /></SuspenseWrapper>,
-      },
-      {
-        path: "content-archives",
-        element: <SuspenseWrapper><ContentArchivesPage /></SuspenseWrapper>,
+        path: "recommendations",
+        element: <SuspenseWrapper><RecommendationsPage /></SuspenseWrapper>,
       },
       {
         path: "ad-metrics",
@@ -94,13 +88,10 @@ const router = createBrowserRouter([
       },
     ],
   },
-  {
-    path: "/admin/prompts",
-    element: <SuspenseWrapper><PromptAdminPanel /></SuspenseWrapper>,
-  },
+  
   {
     path: "*",
-    element: <Navigate to="/app/dashboard" replace />,
+    element: <NotFound />,
   },
 ]);
 

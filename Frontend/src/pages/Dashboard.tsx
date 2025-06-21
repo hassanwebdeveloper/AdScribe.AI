@@ -1009,10 +1009,10 @@ const Dashboard = () => {
           {/* Main Dashboard Tabs */}
           <Tabs defaultValue="account" className="w-full">
             <TabsList className="mb-6">
-              <TabsTrigger value="account">Account Performance</TabsTrigger>
-              <TabsTrigger value="ads">Ad Performance</TabsTrigger>
-              <TabsTrigger value="best-ad">Best Ad Prediction</TabsTrigger>
-              <TabsTrigger value="ad-segments" className="hidden md:inline-flex">Ad Performance Segments</TabsTrigger>
+                          <TabsTrigger value="account">Account Performance</TabsTrigger>
+            <TabsTrigger value="ads">Ad Performance</TabsTrigger>
+            <TabsTrigger value="best-ad">Best Ad Prediction</TabsTrigger>
+            <TabsTrigger value="ad-segments" className="hidden md:inline-flex">Ad Performance Segments</TabsTrigger>
             </TabsList>
             
             {/* Account Performance Tab */}
@@ -1492,6 +1492,8 @@ const Dashboard = () => {
                 </Card>
               )}
             </TabsContent>
+
+
 
             {/* Ad Performance Segments Tab */}
             <TabsContent value="ad-segments" className="space-y-4">

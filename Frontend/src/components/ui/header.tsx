@@ -70,6 +70,15 @@ export function Header({ className }: HeaderProps) {
             Chat
           </Link>
           <Link 
+            to="/recommendations" 
+            className={cn(
+              "px-3 py-2 text-sm font-medium rounded-md",
+              location.pathname === "/recommendations" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+          >
+            Recommendations
+          </Link>
+          <Link 
             to="/ad-analysis" 
             className={cn(
               "px-3 py-2 text-sm font-medium rounded-md",

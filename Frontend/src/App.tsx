@@ -16,6 +16,7 @@ import Settings from "./pages/Settings";
 import AdAnalysis from "./pages/AdAnalysis";
 import AdDetail from "./pages/AdDetail";
 import Dashboard from "./pages/Dashboard";
+import RecommendationsPage from "./pages/RecommendationsPage";
 import NotFound from "./pages/NotFound";
 import SelectAdAccount from "./pages/SelectAdAccount";
 import PromptAdminPanel from "./pages/PromptAdminPanel";
@@ -76,6 +77,11 @@ const App = () => (
                       <Dashboard />
                     </Layout>
                   </PrerequisiteGuard>
+                } />
+                <Route path="/recommendations" element={
+                  <Layout>
+                    <RecommendationsPage />
+                  </Layout>
                 } />
               </Route>
               

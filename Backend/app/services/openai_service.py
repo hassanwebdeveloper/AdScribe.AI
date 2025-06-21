@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, List
 from openai import OpenAI
 from openai import RateLimitError, APITimeoutError, APIError
 from app.core.config import settings
+import openai
 
 logger = logging.getLogger(__name__)
 
@@ -21,28 +22,42 @@ class OpenAIService:
     _request_count = 0
     
     def __init__(self):
-        self._client = None
+        self.client = None
+        self._initialize_client()
         self._last_request_time = 0  # Track last request time
         
         logger.info("Initializing OpenAIService with rate limiting")
     
-    @property
-    def client(self):
-        """Get or create OpenAI client."""
-        if self._client is None:
-            self._client = OpenAI(api_key=settings.openai_api_key)
-        return self._client
+    def _initialize_client(self):
+        """Initialize OpenAI client with API key."""
+        try:
+            # Check for API key in settings (multiple possible names)
+            api_key = None
+            
+            if hasattr(settings, 'OPENAI_API_KEY') and settings.OPENAI_API_KEY:
+                api_key = settings.OPENAI_API_KEY
+            elif hasattr(settings, 'openai_api_key') and settings.openai_api_key:
+                api_key = settings.openai_api_key
+            
+            if api_key:
+                openai.api_key = api_key
+                self.client = OpenAI(api_key=api_key)  # Use new OpenAI client
+                logger.info("OpenAI client initialized successfully")
+            else:
+                logger.warning("OpenAI API key not found in settings")
+        except Exception as e:
+            logger.error(f"Error initializing OpenAI client: {str(e)}")
     
     def cleanup(self):
         """Clean up resources."""
-        if self._client is not None:
+        if self.client is not None:
             try:
-                self._client.close()
+                self.client.close()
                 logger.debug("OpenAI client closed successfully")
             except Exception as e:
                 logger.debug(f"Error closing OpenAI client: {e}")
             finally:
-                self._client = None
+                self.client = None
     
     @classmethod
     def _track_request_rate(cls):
@@ -63,255 +78,261 @@ class OpenAIService:
             logger.warning(f"OpenAI API request rate: {requests_per_minute} requests in the last minute")
     
     async def _make_chat_completion(
-        self, 
-        messages: List[Dict[str, Any]], 
-        model: str = "gpt-4o",
-        temperature: float = 0.4,
-        max_tokens: Optional[int] = None,
-        retry_count: int = 0,
-        cancellation_token: Optional[Dict[str, bool]] = None
-    ) -> Optional[str]:
-        """
-        Make a chat completion request with proper error handling and rate limiting.
-        
-        Args:
-            messages: List of message dictionaries
-            model: OpenAI model to use
-            temperature: Temperature for response generation
-            max_tokens: Maximum tokens for response
-            retry_count: Current retry attempt (internal use)
-            cancellation_token: Optional cancellation token to check for job cancellation
-        
-        Returns:
-            Response content or None if failed
-        """
-        # Check for cancellation before making request
-        if cancellation_token and cancellation_token.get("cancelled", False):
-            logger.info("OpenAI chat completion request cancelled before execution")
-            raise ValueError("Request cancelled")
-        
-        try:
-            # Increment and track global request count
-            self.__class__._request_count += 1
-            self._track_request_rate()
-            
-            # Wait for rate limit before making the request
-            now = time.time()
-            if hasattr(self, '_last_request_time'):
-                time_since_last = now - self._last_request_time
-                if time_since_last < self.REQUEST_DELAY:
-                    wait_time = self.REQUEST_DELAY - time_since_last
-                    logger.debug(f"Rate limiting: waiting {wait_time:.2f} seconds before OpenAI request")
-                    await asyncio.sleep(wait_time)
-            
-            # Check for cancellation after rate limit wait
-            if cancellation_token and cancellation_token.get("cancelled", False):
-                logger.info("OpenAI chat completion request cancelled after rate limit wait")
-                raise ValueError("Request cancelled")
-            
-            self._last_request_time = time.time()
-            
-            # Log the request details
-            logger.debug(f"Making OpenAI chat completion request with model {model}")
-            request_start = time.time()
-            
-            # Prepare request parameters
-            request_params = {
-                "model": model,
-                "messages": messages,
-                "temperature": temperature
-            }
-            if max_tokens:
-                request_params["max_tokens"] = max_tokens
-            
-            # Make the API call in thread pool to prevent blocking the event loop
-            def _make_chat_request():
-                """Make chat completion in thread pool to avoid blocking event loop."""
-                return self.client.chat.completions.create(**request_params)
-            
-            # Run API call in thread pool to prevent blocking
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, _make_chat_request)
-            
-            # Check for cancellation after receiving response
-            if cancellation_token and cancellation_token.get("cancelled", False):
-                logger.info("OpenAI chat completion request cancelled after receiving response")
-                raise ValueError("Request cancelled")
-            
-            # Log response time
-            request_time = time.time() - request_start
-            logger.debug(f"OpenAI response received in {request_time:.2f}s")
-            
-            return response.choices[0].message.content
-            
-        except ValueError as e:
-            # Don't retry for cancellation errors
-            if "cancelled" in str(e).lower():
-                raise e
-            # Re-raise other ValueError exceptions
-            raise e
-        except RateLimitError as e:
-            if retry_count < self.MAX_RETRIES:
-                # Exponential backoff with jitter for rate limits
-                delay = (self.RATE_LIMIT_DELAY * (2 ** retry_count)) + random.uniform(0, 2)
-                logger.warning(f"OpenAI rate limit hit, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
-                await asyncio.sleep(delay)
-                return await self._make_chat_completion(messages, model, temperature, max_tokens, retry_count + 1, cancellation_token)
-            else:
-                error_msg = f"Max retries reached for OpenAI rate limit: {str(e)}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-        except APITimeoutError as e:
-            # Check if timeout was due to cancellation
-            if cancellation_token and cancellation_token.get("cancelled", False):
-                logger.info("OpenAI request timeout - job was cancelled")
-                raise ValueError("Request cancelled")
-            
-            if retry_count < self.MAX_RETRIES:
-                # Use a longer delay for timeouts
-                delay = (self.RETRY_DELAY * 2 * (2 ** retry_count)) + random.uniform(1, 3)
-                logger.warning(f"OpenAI request timeout, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
-                await asyncio.sleep(delay)
-                return await self._make_chat_completion(messages, model, temperature, max_tokens, retry_count + 1, cancellation_token)
-            else:
-                error_msg = f"Max retries reached after OpenAI timeouts: {str(e)}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-        except APIError as e:
-            error_msg = f"OpenAI API error: {str(e)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        except Exception as e:
-            error_msg = f"Unexpected error in OpenAI request: {str(e)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-    
-    async def _make_transcription(
         self,
-        audio_file_path: str,
-        model: str = "whisper-1",
-        language: str = "ur",
-        prompt: Optional[str] = None,
-        retry_count: int = 0,
+        messages: List[Dict[str, Any]],
+        model: str = "gpt-3.5-turbo",
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
         cancellation_token: Optional[Dict[str, bool]] = None
     ) -> Optional[str]:
         """
-        Make a transcription request with proper error handling and rate limiting.
+        Core method for making chat completions with retry logic and rate limiting.
+        This is the method used throughout the existing codebase.
         
         Args:
-            audio_file_path: Path to the audio file
-            model: Whisper model to use
-            language: Language code for transcription
-            prompt: Optional prompt for better transcription
-            retry_count: Current retry attempt (internal use)
-            cancellation_token: Optional cancellation token to check for job cancellation
+            messages: List of message objects
+            model: OpenAI model to use
+            temperature: Creativity level (0-1)
+            max_tokens: Maximum tokens in response
+            cancellation_token: Optional cancellation token
         
         Returns:
-            Transcription text or None if failed
+            AI generated response or None if failed
         """
-        # Check for cancellation before making request
+        if not self.client:
+            logger.error("OpenAI client not initialized")
+            return None
+        
+        # Check for cancellation
         if cancellation_token and cancellation_token.get("cancelled", False):
-            logger.info("OpenAI transcription request cancelled before execution")
-            raise ValueError("Request cancelled")
+            logger.info("Request cancelled before making OpenAI call")
+            return None
+        
+        # Track request rate
+        self._track_request_rate()
+        
+        # Rate limiting - ensure we don't exceed request limits
+        current_time = time.time()
+        time_since_last_request = current_time - self._last_request_time
+        
+        if time_since_last_request < self.REQUEST_DELAY:
+            delay = self.REQUEST_DELAY - time_since_last_request
+            logger.debug(f"Rate limiting: waiting {delay:.2f} seconds")
+            await asyncio.sleep(delay)
+        
+        self._last_request_time = time.time()
+        
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                # Check for cancellation before each attempt
+                if cancellation_token and cancellation_token.get("cancelled", False):
+                    logger.info(f"Request cancelled during attempt {attempt + 1}")
+                    return None
+                
+                logger.debug(f"Making OpenAI request (attempt {attempt + 1}/{self.MAX_RETRIES})")
+                
+                # Use the new OpenAI client
+                response = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self.client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        timeout=30
+                    )
+                )
+                
+                result = response.choices[0].message.content
+                logger.debug(f"OpenAI request successful (attempt {attempt + 1})")
+                
+                return result.strip() if result else None
+                
+            except RateLimitError as e:
+                logger.warning(f"Rate limit error (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RATE_LIMIT_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                    logger.info(f"Waiting {delay:.2f} seconds before retry...")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Max retries exceeded for rate limit error")
+                    raise ValueError("Rate limit exceeded after max retries")
+                    
+            except APITimeoutError as e:
+                logger.warning(f"Timeout error (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAY * (attempt + 1)
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Max retries exceeded for timeout error")
+                    return None
+                    
+            except APIError as e:
+                logger.error(f"OpenAI API error (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAY * (attempt + 1)
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Max retries exceeded for API error")
+                    return None
+                    
+            except Exception as e:
+                logger.error(f"Unexpected error (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAY * (attempt + 1)
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Max retries exceeded for unexpected error")
+                    return None
+        
+        return None
+    
+    async def get_completion(
+        self,
+        prompt: str,
+        model: str = "gpt-3.5-turbo",
+        max_tokens: int = 1000,
+        temperature: float = 0.7,
+        system_prompt: Optional[str] = None
+    ) -> str:
+        """
+        Get completion from OpenAI API.
+        
+        Args:
+            prompt: User prompt
+            model: OpenAI model to use
+            max_tokens: Maximum tokens in response
+            temperature: Creativity level (0-1)
+            system_prompt: Optional system prompt
+        
+        Returns:
+            AI generated response
+        """
+        if not self.client:
+            logger.error("OpenAI client not initialized")
+            return "OpenAI service not available"
         
         try:
-            # Increment and track global request count
-            self.__class__._request_count += 1
-            self._track_request_rate()
+            messages = []
             
-            # Wait for rate limit before making the request
-            now = time.time()
-            if hasattr(self, '_last_request_time'):
-                time_since_last = now - self._last_request_time
-                if time_since_last < self.REQUEST_DELAY:
-                    wait_time = self.REQUEST_DELAY - time_since_last
-                    logger.debug(f"Rate limiting: waiting {wait_time:.2f} seconds before OpenAI transcription")
-                    await asyncio.sleep(wait_time)
+            if system_prompt:
+                messages.append({
+                    "role": "system", 
+                    "content": system_prompt
+                })
             
-            # Check for cancellation after rate limit wait
-            if cancellation_token and cancellation_token.get("cancelled", False):
-                logger.info("OpenAI transcription request cancelled after rate limit wait")
-                raise ValueError("Request cancelled")
+            messages.append({
+                "role": "user",
+                "content": prompt
+            })
             
-            self._last_request_time = time.time()
+            # Use the existing _make_chat_completion method
+            result = await self._make_chat_completion(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
             
-            # Log the request details
-            logger.debug(f"Making OpenAI transcription request for file: {audio_file_path}")
-            request_start = time.time()
+            return result if result else "Error generating response"
             
-            # Prepare request parameters
-            request_params = {
-                "model": model,
-                "language": language
-            }
-            if prompt:
-                request_params["prompt"] = prompt
-            
-            # Make the API call with non-blocking file I/O to prevent server hanging
-            def _read_and_transcribe():
-                """Read file and make transcription in thread pool to avoid blocking event loop."""
-                with open(audio_file_path, "rb") as audio_file:
-                    return self.client.audio.transcriptions.create(
-                        file=audio_file,
-                        **request_params
-                    )
-            
-            # Run file I/O and API call in thread pool to prevent blocking the event loop
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, _read_and_transcribe)
-            
-            # Check for cancellation after receiving response
-            if cancellation_token and cancellation_token.get("cancelled", False):
-                logger.info("OpenAI transcription request cancelled after receiving response")
-                raise ValueError("Request cancelled")
-            
-            # Log response time
-            request_time = time.time() - request_start
-            logger.debug(f"OpenAI transcription response received in {request_time:.2f}s")
-            
-            return response.text.strip()
-            
-        except ValueError as e:
-            # Don't retry for cancellation errors
-            if "cancelled" in str(e).lower():
-                raise e
-            # Re-raise other ValueError exceptions
-            raise e
-        except RateLimitError as e:
-            if retry_count < self.MAX_RETRIES:
-                # Exponential backoff with jitter for rate limits
-                delay = (self.RATE_LIMIT_DELAY * (2 ** retry_count)) + random.uniform(0, 2)
-                logger.warning(f"OpenAI transcription rate limit hit, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
-                await asyncio.sleep(delay)
-                return await self._make_transcription(audio_file_path, model, language, prompt, retry_count + 1, cancellation_token)
-            else:
-                error_msg = f"Max retries reached for OpenAI transcription rate limit: {str(e)}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-        except APITimeoutError as e:
-            # Check if timeout was due to cancellation
-            if cancellation_token and cancellation_token.get("cancelled", False):
-                logger.info("OpenAI transcription timeout - job was cancelled")
-                raise ValueError("Request cancelled")
-            
-            if retry_count < self.MAX_RETRIES:
-                # Use a longer delay for timeouts
-                delay = (self.RETRY_DELAY * 2 * (2 ** retry_count)) + random.uniform(1, 3)
-                logger.warning(f"OpenAI transcription timeout, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
-                await asyncio.sleep(delay)
-                return await self._make_transcription(audio_file_path, model, language, prompt, retry_count + 1, cancellation_token)
-            else:
-                error_msg = f"Max retries reached after OpenAI transcription timeouts: {str(e)}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-        except APIError as e:
-            error_msg = f"OpenAI transcription API error: {str(e)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
         except Exception as e:
-            error_msg = f"Unexpected error in OpenAI transcription: {str(e)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            logger.error(f"Error getting OpenAI completion: {str(e)}")
+            return f"Error generating AI recommendation: {str(e)}"
+    
+    async def analyze_creative_performance(
+        self,
+        creative_data: Dict[str, Any],
+        performance_data: Dict[str, Any],
+        goal: str
+    ) -> Dict[str, Any]:
+        """
+        Analyze creative performance and provide structured insights.
+        
+        Args:
+            creative_data: Creative metadata
+            performance_data: Performance metrics
+            goal: Improvement goal
+        
+        Returns:
+            Structured analysis with insights and recommendations
+        """
+        
+        system_prompt = """
+        You are an expert Facebook ads analyst specializing in creative performance optimization.
+        Analyze the provided data and return insights in a structured format.
+        Focus on actionable recommendations that can improve ad performance.
+        """
+        
+        prompt = f"""
+        Analyze this Facebook ad creative and performance data:
+
+        Creative Elements:
+        {self._format_creative_data(creative_data)}
+
+        Performance Metrics:
+        {self._format_performance_data(performance_data)}
+
+        Goal: {goal}
+
+        Provide analysis in this structure:
+        1. Key Issues: What's limiting performance?
+        2. Opportunities: What's working that can be leveraged?
+        3. Specific Changes: Exact modifications to make
+        4. Expected Impact: Quantified improvement expectations
+        5. Implementation Priority: Order of changes to make
+
+        Be specific and actionable.
+        """
+        
+        try:
+            response = await self.get_completion(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.6
+            )
+            
+            return {
+                "analysis": response,
+                "confidence": 0.8,
+                "generated_at": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in creative performance analysis: {str(e)}")
+            return {
+                "analysis": "Analysis unavailable",
+                "confidence": 0.0,
+                "error": str(e)
+            }
+    
+    def _format_creative_data(self, creative_data: Dict[str, Any]) -> str:
+        """Format creative data for AI prompt."""
+        formatted = []
+        
+        for key, value in creative_data.items():
+            if value is not None:
+                if isinstance(value, list):
+                    formatted.append(f"- {key.replace('_', ' ').title()}: {', '.join(value)}")
+                else:
+                    formatted.append(f"- {key.replace('_', ' ').title()}: {value}")
+        
+        return '\n'.join(formatted) if formatted else "No creative data available"
+    
+    def _format_performance_data(self, performance_data: Dict[str, Any]) -> str:
+        """Format performance data for AI prompt."""
+        formatted = []
+        
+        for key, value in performance_data.items():
+            if value is not None and value != 0:
+                if key in ['roas', 'ctr', 'conversion_rate']:
+                    formatted.append(f"- {key.upper()}: {value:.3f}")
+                elif key in ['cpc', 'cpm', 'spend', 'revenue']:
+                    formatted.append(f"- {key.upper()}: ${value:.2f}")
+                else:
+                    formatted.append(f"- {key.upper()}: {value}")
+        
+        return '\n'.join(formatted) if formatted else "No performance data available"
 
 # Global instance for use across nodes
 openai_service = OpenAIService() 

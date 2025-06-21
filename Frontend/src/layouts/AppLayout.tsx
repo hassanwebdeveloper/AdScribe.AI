@@ -10,6 +10,7 @@ import {
   Menu,
   X,
   BarChart3,
+  Target,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -32,27 +33,15 @@ const NAV_ITEMS = [
     variant: "default",
   },
   {
-    title: "Ad Accounts",
-    href: "/app/ad-accounts",
-    icon: <Facebook className="h-5 w-5" />,
+    title: "Recommendations",
+    href: "/app/recommendations",
+    icon: <Target className="h-5 w-5" />,
     variant: "ghost",
   },
   {
     title: "Ad Metrics",
     href: "/app/ad-metrics",
     icon: <BarChart3 className="h-5 w-5" />,
-    variant: "ghost",
-  },
-  {
-    title: "Content Analysis",
-    href: "/app/content-analysis",
-    icon: <FileText className="h-5 w-5" />,
-    variant: "ghost",
-  },
-  {
-    title: "Content Archives",
-    href: "/app/content-archives",
-    icon: <Archive className="h-5 w-5" />,
     variant: "ghost",
   },
 ];
