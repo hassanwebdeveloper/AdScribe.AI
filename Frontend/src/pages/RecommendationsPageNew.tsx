@@ -80,11 +80,7 @@ interface AdRecommendation {
     tone?: string;
     visual?: string;
     reasoning?: string;
-    power_phrases?: string[];
   };
-  current_creative?: any;
-  benchmark_creative?: any;
-  benchmark_metrics?: any;
   optimization_strategies?: string | string[];
   conversion_strategies?: string | string[];
   implementation_strategy?: string[];
@@ -92,7 +88,6 @@ interface AdRecommendation {
   efficiency_ai_suggestion?: string;
   conversion_ai_suggestion?: string;
   ctr_ai_suggestion?: string;
-  spend_insight?: string;
   // Additional strategy fields
   action?: string;
   current_daily_spend?: string;
@@ -106,16 +101,6 @@ interface AdRecommendation {
   improvement_needed?: string;
   current_conversions?: number;
   target_conversions?: number;
-  current_performance?: {
-    ctr: number;
-    roas: number;
-    spend: number;
-  };
-  target_performance?: {
-    ctr: number;
-    predicted_roas: number;
-    spend: number;
-  };
 }
 
 interface OptimizationSummary {
@@ -351,81 +336,17 @@ const RecommendationsPage: React.FC = () => {
                    rec.ai_optimized_creative?.hook || 
                    'Optimize creative elements for better engagement'}
                 </p>
-                
-                {/* Creative Comparison Cards */}
-                <div className="mt-3 grid grid-cols-3 gap-2">
-                  {/* Current Creative */}
-                  <div className="bg-white/70 p-2 rounded shadow-sm">
-                    <p className="text-xs font-medium text-blue-900 mb-1">Current Creative</p>
-                    <div className="text-xs space-y-1">
-                      {rec.current_creative?.hook && (
-                        <div><span className="font-medium">Hook:</span> {rec.current_creative.hook}</div>
-                      )}
-                      {rec.current_creative?.tone && (
-                        <div><span className="font-medium">Tone:</span> {rec.current_creative.tone}</div>
-                      )}
-                      {rec.current_creative?.visual && (
-                        <div><span className="font-medium">Visual:</span> {rec.current_creative.visual}</div>
-                      )}
-                      {rec.current_creative?.power_phrases && (
-                        <div><span className="font-medium">Power Phrases:</span> {rec.current_creative.power_phrases}</div>
-                      )}
-                      <div className="mt-2 text-blue-700">
-                        <span className="font-medium">CTR:</span> {rec.current_performance?.ctr?.toFixed(2) || 'N/A'}%
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Benchmark Creative */}
-                  <div className="bg-white/70 p-2 rounded shadow-sm">
-                    <p className="text-xs font-medium text-green-900 mb-1">Benchmark Creative</p>
-                    <div className="text-xs space-y-1">
-                      {rec.benchmark_creative?.hook && (
-                        <div><span className="font-medium">Hook:</span> {rec.benchmark_creative.hook}</div>
-                      )}
-                      {rec.benchmark_creative?.tone && (
-                        <div><span className="font-medium">Tone:</span> {rec.benchmark_creative.tone}</div>
-                      )}
-                      {rec.benchmark_creative?.visual && (
-                        <div><span className="font-medium">Visual:</span> {rec.benchmark_creative.visual}</div>
-                      )}
-                      {rec.benchmark_creative?.power_phrases && (
-                        <div><span className="font-medium">Power Phrases:</span> {rec.benchmark_creative.power_phrases}</div>
-                      )}
-                      <div className="mt-2 text-green-700">
-                        <span className="font-medium">CTR:</span> {rec.benchmark_metrics?.ctr?.toFixed(2) || 'N/A'}%
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Optimized Creative */}
-                  <div className="bg-white/70 p-2 rounded shadow-sm">
-                    <p className="text-xs font-medium text-purple-900 mb-1">Optimized Creative</p>
-                    <div className="text-xs space-y-1">
-                      {rec.ai_optimized_creative?.hook && (
-                        <div><span className="font-medium">Hook:</span> {rec.ai_optimized_creative.hook}</div>
-                      )}
-                      {rec.ai_optimized_creative?.tone && (
-                        <div><span className="font-medium">Tone:</span> {rec.ai_optimized_creative.tone}</div>
-                      )}
-                      {rec.ai_optimized_creative?.visual && (
-                        <div><span className="font-medium">Visual:</span> {rec.ai_optimized_creative.visual}</div>
-                      )}
-                      {rec.ai_optimized_creative?.power_phrases && (
-                        <div><span className="font-medium">Power Phrases:</span> {rec.ai_optimized_creative.power_phrases}</div>
-                      )}
-                      <div className="mt-2 text-purple-700">
-                        <span className="font-medium">Target CTR:</span> {rec.target_performance?.ctr?.toFixed(2) || 'N/A'}%
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Spend Insight instead of Implementation Guide */}
-                {rec.spend_insight && (
-                  <div className="mt-3 bg-white/50 p-2 rounded border border-blue-200">
-                    <p className="text-xs font-medium text-blue-900 mb-1">Budget Impact</p>
-                    <p className="text-xs text-blue-800">{rec.spend_insight}</p>
+                {rec.ai_optimized_creative && (
+                  <div className="mt-2 text-xs space-y-1">
+                    {rec.ai_optimized_creative.hook && (
+                      <div><span className="font-medium">Hook:</span> {rec.ai_optimized_creative.hook}</div>
+                    )}
+                    {rec.ai_optimized_creative.tone && (
+                      <div><span className="font-medium">Tone:</span> {rec.ai_optimized_creative.tone}</div>
+                    )}
+                    {rec.ai_optimized_creative.visual && (
+                      <div><span className="font-medium">Visual:</span> {rec.ai_optimized_creative.visual}</div>
+                    )}
                   </div>
                 )}
               </div>
@@ -531,8 +452,8 @@ const RecommendationsPage: React.FC = () => {
           </div>
         )}
 
-        {/* Implementation Strategy - Only show for non-CTR strategies */}
-        {rec.implementation_strategy && rec.implementation_strategy.length > 0 && strategy !== 'ctr_improvements' && (
+        {/* Implementation Strategy */}
+        {rec.implementation_strategy && rec.implementation_strategy.length > 0 && (
           <div className="bg-gray-50 p-3 rounded-md border-l-4 border-l-gray-500">
             <div className="flex items-start gap-2">
               <Target className="h-4 w-4 text-gray-600 mt-0.5" />
@@ -848,7 +769,7 @@ const RecommendationsPage: React.FC = () => {
                                     <p className="text-2xl font-bold text-green-600">
                                       {summary.total_ads_analyzed}
                                     </p>
-                                    <p className="text-sm text-muted-foreground">Ads Requires Improvement</p>
+                                    <p className="text-sm text-muted-foreground">Ads Analyzed</p>
                                   </div>
                                   <div className="text-center">
                                     <p className="text-2xl font-bold text-blue-600">
@@ -904,11 +825,11 @@ const RecommendationsPage: React.FC = () => {
                                               <div className="text-right text-sm">
                                                 <div className="flex items-center gap-2">
                                                   <span className="text-muted-foreground">Current ROAS:</span>
-                                                  <span className="font-medium">{adGroup.current_roas ? adGroup.current_roas.toFixed(2) : 'N/A'}</span>
+                                                  <span className="font-medium">{adGroup.current_roas?.toFixed(2) || 'N/A'}</span>
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                   <span className="text-muted-foreground">Predicted ROAS:</span>
-                                                  <span className="font-medium text-green-600">{adGroup.predicted_roas ? adGroup.predicted_roas.toFixed(2) : 'N/A'}</span>
+                                                  <span className="font-medium text-green-600">{adGroup.predicted_roas?.toFixed(2) || 'N/A'}</span>
                                                 </div>
                                               </div>
                                               <div className="flex flex-col gap-1">

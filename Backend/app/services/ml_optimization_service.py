@@ -34,11 +34,15 @@ class MLOptimizationService:
     def __init__(self):
         self.model = None
         self.scaler = StandardScaler()
+        # Ensure feature_names matches the exact keys used in current_metrics
         self.feature_names = ['spend', 'ctr', 'cpc', 'cpm', 'clicks', 'impressions', 'purchases']
         self.model_trained = False
         self.feature_importance = {}
         self.user_service = UserService()
         self.storage_service = MLRecommendationStorageService()
+        
+        # Log feature names for debugging
+        logger.info(f"Initialized ML optimization with features: {self.feature_names}")
         
     async def _calculate_account_level_metrics(self, user_id: str) -> Dict[str, float]:
         """Calculate account-level metrics including ROAS."""
@@ -317,15 +321,44 @@ class MLOptimizationService:
         """Get comprehensive ad performance data for the user."""
         db = get_database()
         
-        # Get last 60 days of data for better ML training
+        # STEP 1: First, get all ad_ids that have creative metadata in ad_analyses
+        # This ensures we only work with ads that have creative analysis data
+        ad_analyses = await db.ad_analyses.find({
+            "user_id": user_id,
+            "ad_analysis": {"$exists": True, "$ne": {}}
+        }).to_list(length=1000)
+        
+        # Extract ad_ids and campaign_ids from analyses
+        ad_ids_with_analysis = set()
+        campaign_ids_with_analysis = set()
+        
+        for analysis in ad_analyses:
+            if analysis.get("ad_id"):
+                ad_ids_with_analysis.add(analysis.get("ad_id"))
+            if analysis.get("campaign_id"):
+                campaign_ids_with_analysis.add(analysis.get("campaign_id"))
+        
+        # If no ads with analyses found, return empty list
+        if not ad_ids_with_analysis and not campaign_ids_with_analysis:
+            logger.warning(f"No ads with creative analyses found for user {user_id}")
+            return []
+        
+        logger.info(f"Found {len(ad_ids_with_analysis)} ad IDs and {len(campaign_ids_with_analysis)} campaign IDs with creative metadata")
+        
+        # STEP 2: Get last 60 days of data for better ML training
         end_date = datetime.now()
         start_date = end_date - timedelta(days=60)
         
+        # STEP 3: Now query ad_metrics but only for ads that have creative metadata
         pipeline = [
             {
                 "$match": {
                     "user_id": user_id,
-                    "collected_at": {"$gte": start_date, "$lte": end_date}
+                    "collected_at": {"$gte": start_date, "$lte": end_date},
+                    "$or": [
+                        {"ad_id": {"$in": list(ad_ids_with_analysis)}},
+                        {"campaign_id": {"$in": list(campaign_ids_with_analysis)}}
+                    ]
                 }
             },
             {
@@ -355,33 +388,145 @@ class MLOptimizationService:
         ]
         
         results = await db.ad_metrics.aggregate(pipeline).to_list(length=1000)
+        logger.info(f"Retrieved {len(results)} ads with metrics that also have creative metadata")
         
-        # Get creative metadata from ad_analyses collection using $in operator for efficiency
-        ad_ids = [result["_id"] for result in results]
-        campaign_ids = [result.get("campaign_id") for result in results if result.get("campaign_id")]
-        all_ids = ad_ids + campaign_ids
+        # STEP 4: Check if there are any ads in ad_analyses that weren't found in ad_metrics
+        found_ad_ids = {result["_id"] for result in results}
+        found_campaign_ids = {result.get("campaign_id") for result in results if result.get("campaign_id")}
         
-        ad_analyses = await db.ad_analyses.find({
-            "user_id": user_id,
-            "$or": [
-                {"ad_id": {"$in": all_ids}},
-                {"campaign_id": {"$in": all_ids}}
-            ]
-        }).to_list(length=1000)
+        missing_ad_ids = ad_ids_with_analysis - found_ad_ids
+        missing_campaign_ids = campaign_ids_with_analysis - found_campaign_ids
         
+        if missing_ad_ids:
+            logger.info(f"Found {len(missing_ad_ids)} ad IDs and {len(missing_campaign_ids)} campaign IDs with creative metadata but no metrics")
+            
+            # STEP 5: Try to fetch fresh metrics from Facebook API for these missing ads
+            # Get user's Facebook credentials
+            from app.services.user_service import UserService
+            from app.services.facebook_service import FacebookAdService
+            
+            user_service = UserService()
+            credentials = await user_service.get_facebook_credentials(user_id)
+            
+            if credentials and credentials.get("access_token") and credentials.get("account_id"):
+                logger.info(f"Fetching fresh metrics from Facebook API for {len(missing_ad_ids)} missing ads")
+                
+                # Initialize Facebook service
+                fb_service = FacebookAdService(
+                    access_token=credentials["access_token"], 
+                    account_id=credentials["account_id"]
+                )
+                
+                # Collect metrics for missing ads - only include ad IDs, not campaign IDs
+                missing_ids_list = list(missing_ad_ids)  # Don't include campaign IDs as they can't be used with ad-level metrics
+                
+                # Use a 30-day window for metrics collection
+                fb_end_date = end_date
+                fb_start_date = fb_end_date - timedelta(days=30)
+                
+                try:
+                    # Collect metrics for specific ads
+                    metrics_data = await fb_service.collect_ad_metrics_for_specific_ads(
+                        user_id=user_id,
+                        ad_ids=missing_ids_list,
+                        start_date=fb_start_date.strftime('%Y-%m-%d'),
+                        end_date=fb_end_date.strftime('%Y-%m-%d')
+                    )
+                    
+                    if metrics_data:
+                        logger.info(f"Successfully fetched {len(metrics_data)} metrics records from Facebook API")
+                        
+                        # Store the collected data in the database
+                        for metric in metrics_data:
+                            # Ensure collected_at is a datetime object
+                            if isinstance(metric.get("collected_at"), str):
+                                try:
+                                    metric["collected_at"] = datetime.fromisoformat(metric["collected_at"])
+                                except:
+                                    metric["collected_at"] = datetime.now()
+                            elif not isinstance(metric.get("collected_at"), datetime):
+                                metric["collected_at"] = datetime.now()
+                        
+                        # Insert the data
+                        result = await db.ad_metrics.insert_many(metrics_data)
+                        logger.info(f"Stored {len(result.inserted_ids)} fresh metrics records for missing ads")
+                        
+                        # Process newly fetched metrics
+                        for ad_id in missing_ids_list:
+                            # Find metrics for this specific ad
+                            ad_metrics = [m for m in metrics_data if m.get("ad_id") == ad_id or m.get("campaign_id") == ad_id]
+                            
+                            if ad_metrics:
+                                # Calculate averages manually for this ad
+                                ad_data = {
+                                    "_id": ad_metrics[0].get("ad_id"),
+                                    "ad_name": ad_metrics[0].get("ad_name", f"Ad {ad_metrics[0].get('ad_id')}"),
+                                    "campaign_id": ad_metrics[0].get("campaign_id"),
+                                    "video_id": ad_metrics[0].get("video_id"),
+                                    "data_points": len(ad_metrics)
+                                }
+                                
+                                # Calculate averages for metrics
+                                spend_values = [float(m.get("additional_metrics", {}).get("spend", 0)) for m in ad_metrics]
+                                revenue_values = [float(m.get("additional_metrics", {}).get("purchases_value", 0)) for m in ad_metrics]
+                                clicks_values = [int(m.get("additional_metrics", {}).get("clicks", 0)) for m in ad_metrics]
+                                impressions_values = [int(m.get("additional_metrics", {}).get("impressions", 0)) for m in ad_metrics]
+                                purchases_values = [int(m.get("purchases", 0)) for m in ad_metrics]
+                                ctr_values = [float(m.get("additional_metrics", {}).get("ctr", 0)) for m in ad_metrics]
+                                cpc_values = [float(m.get("additional_metrics", {}).get("cpc", 0)) for m in ad_metrics]
+                                cpm_values = [float(m.get("additional_metrics", {}).get("cpm", 0)) for m in ad_metrics]
+                                
+                                # Calculate averages
+                                ad_data["avg_spend"] = sum(spend_values) / len(spend_values) if spend_values else 0
+                                ad_data["avg_revenue"] = sum(revenue_values) / len(revenue_values) if revenue_values else 0
+                                ad_data["avg_clicks"] = sum(clicks_values) / len(clicks_values) if clicks_values else 0
+                                ad_data["avg_impressions"] = sum(impressions_values) / len(impressions_values) if impressions_values else 0
+                                ad_data["avg_purchases"] = sum(purchases_values) / len(purchases_values) if purchases_values else 0
+                                ad_data["avg_ctr"] = sum(ctr_values) / len(ctr_values) if ctr_values else 0
+                                ad_data["avg_cpc"] = sum(cpc_values) / len(cpc_values) if cpc_values else 0
+                                ad_data["avg_cpm"] = sum(cpm_values) / len(cpm_values) if cpm_values else 0
+                                
+                                # Calculate ROAS
+                                ad_data["avg_roas"] = ad_data["avg_revenue"] / ad_data["avg_spend"] if ad_data["avg_spend"] > 0 else 0
+                                
+                                # Add to results if it meets minimum criteria
+                                if ad_data["data_points"] >= 1:
+                                    results.append(ad_data)
+                                    logger.info(f"Added ad {ad_data['_id']} with {ad_data['data_points']} fresh data points from Facebook API")
+                
+                except Exception as e:
+                    logger.error(f"Error fetching metrics from Facebook API: {str(e)}")
+                    
+                    # Fallback: Try to find any existing metrics for missing ads with relaxed criteria
+                    await self._try_find_existing_metrics_for_missing_ads(
+                        db, user_id, missing_ids_list, start_date, end_date, results
+                    )
+            else:
+                logger.warning(f"No valid Facebook credentials found for user {user_id}, can't fetch fresh metrics")
+                
+                # Fallback: Try to find any existing metrics for missing ads with relaxed criteria
+                await self._try_find_existing_metrics_for_missing_ads(
+                    db, user_id, list(missing_ad_ids) + list(missing_campaign_ids), 
+                    start_date, end_date, results
+                )
+        
+        # STEP 6: Create a map of ad_id/campaign_id to creative metadata for quick lookup
         creative_map = {}
         for analysis in ad_analyses:
             # Try multiple ID fields for mapping
-            ad_id = analysis.get("ad_id") or analysis.get("campaign_id")
+            ad_id = analysis.get("ad_id")
+            campaign_id = analysis.get("campaign_id")
+            
             if ad_id and analysis.get("ad_analysis"):
                 creative_map[ad_id] = analysis["ad_analysis"]
+            if campaign_id and analysis.get("ad_analysis"):
+                creative_map[campaign_id] = analysis["ad_analysis"]
         
-        logger.info(f"Found creative metadata for {len(creative_map)} ads from ad_analyses collection using optimized query")
-        
-        # Format data for ML
+        # STEP 7: Format data for ML
         formatted_data = []
         for result in results:
             ad_id = result["_id"]
+            campaign_id = result.get("campaign_id")
             
             # Calculate derived metrics
             spend = float(result.get("avg_spend", 0))
@@ -390,19 +535,40 @@ class MLOptimizationService:
             impressions = int(result.get("avg_impressions", 0))
             purchases = int(result.get("avg_purchases", 0))
             
-            # Ensure we have meaningful data
-            if spend <= 0 or impressions <= 0:
+            # Check if this is an ad from ad_analyses with minimal metrics data
+            is_from_ad_analyses = ad_id in ad_ids_with_analysis or campaign_id in campaign_ids_with_analysis
+            
+            # For regular ads, ensure we have meaningful data
+            # For ads from ad_analyses, be more lenient to ensure we try to optimize all ads with creative metadata
+            if (spend <= 0 or impressions <= 0) and not is_from_ad_analyses:
                 continue
+                
+            # For ads from ad_analyses with no metrics, set minimal default values to allow optimization attempt
+            if spend <= 0 and is_from_ad_analyses:
+                spend = 1.0  # Minimal spend to allow optimization
+                logger.info(f"Setting minimal default spend for ad {ad_id} from ad_analyses with no metrics data")
+                
+            if impressions <= 0 and is_from_ad_analyses:
+                impressions = 100  # Minimal impressions to allow optimization
+                logger.info(f"Setting minimal default impressions for ad {ad_id} from ad_analyses with no metrics data")
                 
             roas = revenue / spend if spend > 0 else 0
             ctr = (clicks / impressions * 100) if impressions > 0 else 0  # As percentage
             cpc = float(result.get("avg_cpc", 0))
             cpm = float(result.get("avg_cpm", 0))
             
+            # Get creative metadata, first try ad_id then campaign_id
+            creative_metadata = creative_map.get(ad_id, creative_map.get(campaign_id, {}))
+            
+            # Only include ads that have creative metadata
+            if not creative_metadata:
+                logger.warning(f"Skipping ad {ad_id} - no creative metadata found despite being in initial list")
+                continue
+            
             formatted_data.append({
                 "ad_id": ad_id,
                 "ad_name": result.get("ad_name", f"Ad {ad_id}"),
-                "campaign_id": result.get("campaign_id"),
+                "campaign_id": campaign_id,
                 "video_id": result.get("video_id"),
                 "current_metrics": {
                     "spend": spend,
@@ -415,20 +581,80 @@ class MLOptimizationService:
                     "cpm": cpm,
                     "roas": roas
                 },
-                "creative_metadata": creative_map.get(ad_id, {}),
+                "creative_metadata": creative_metadata,
                 "data_points": result.get("data_points", 0)
             })
         
-        logger.info(f"Retrieved {len(formatted_data)} ads with sufficient data for ML optimization")
+        logger.info(f"Final result: {len(formatted_data)} ads with both sufficient metrics data and creative metadata")
         
         # Log ad data quality for debugging
         if len(formatted_data) == 0:
-            logger.warning(f"No ads found for user {user_id} that meet criteria: spend > 0, impressions > 0, data_points >= 3, avg_spend > 10")
+            logger.warning(f"No ads found for user {user_id} that meet all criteria: has creative metadata, spend > 0, impressions > 0, data_points >= 3, avg_spend > 10")
         else:
             avg_roas = sum(ad['current_metrics']['roas'] for ad in formatted_data) / len(formatted_data)
             logger.info(f"Ad data summary: {len(formatted_data)} ads, average ROAS: {avg_roas:.2f}")
             
         return formatted_data
+        
+    async def _try_find_existing_metrics_for_missing_ads(
+        self, 
+        db, 
+        user_id: str, 
+        missing_ids_list: List[str], 
+        start_date: datetime, 
+        end_date: datetime, 
+        results: List[Dict]
+    ):
+        """Fallback method to find any existing metrics for missing ads with relaxed criteria."""
+        logger.info(f"Trying to find any existing metrics for {len(missing_ids_list)} missing ads with relaxed criteria")
+        
+        for missing_id in missing_ids_list:
+            # Try to find any metrics for this ad, even with less strict criteria
+            single_ad_metrics = await db.ad_metrics.find({
+                "user_id": user_id,
+                "$or": [
+                    {"ad_id": missing_id},
+                    {"campaign_id": missing_id}
+                ],
+                "collected_at": {"$gte": start_date, "$lte": end_date}
+            }).to_list(length=100)
+            
+            if single_ad_metrics:
+                # Calculate averages manually for this ad
+                ad_data = {
+                    "_id": single_ad_metrics[0].get("ad_id"),
+                    "ad_name": single_ad_metrics[0].get("ad_name", f"Ad {single_ad_metrics[0].get('ad_id')}"),
+                    "campaign_id": single_ad_metrics[0].get("campaign_id"),
+                    "video_id": single_ad_metrics[0].get("video_id"),
+                    "data_points": len(single_ad_metrics)
+                }
+                
+                # Calculate averages for metrics
+                spend_values = [float(m.get("additional_metrics", {}).get("spend", 0)) for m in single_ad_metrics]
+                revenue_values = [float(m.get("additional_metrics", {}).get("purchases_value", 0)) for m in single_ad_metrics]
+                clicks_values = [int(m.get("additional_metrics", {}).get("clicks", 0)) for m in single_ad_metrics]
+                impressions_values = [int(m.get("additional_metrics", {}).get("impressions", 0)) for m in single_ad_metrics]
+                purchases_values = [int(m.get("purchases", 0)) for m in single_ad_metrics]
+                ctr_values = [float(m.get("additional_metrics", {}).get("ctr", 0)) for m in single_ad_metrics]
+                cpc_values = [float(m.get("additional_metrics", {}).get("cpc", 0)) for m in single_ad_metrics]
+                cpm_values = [float(m.get("additional_metrics", {}).get("cpm", 0)) for m in single_ad_metrics]
+                
+                # Calculate averages
+                ad_data["avg_spend"] = sum(spend_values) / len(spend_values) if spend_values else 0
+                ad_data["avg_revenue"] = sum(revenue_values) / len(revenue_values) if revenue_values else 0
+                ad_data["avg_clicks"] = sum(clicks_values) / len(clicks_values) if clicks_values else 0
+                ad_data["avg_impressions"] = sum(impressions_values) / len(impressions_values) if impressions_values else 0
+                ad_data["avg_purchases"] = sum(purchases_values) / len(purchases_values) if purchases_values else 0
+                ad_data["avg_ctr"] = sum(ctr_values) / len(ctr_values) if ctr_values else 0
+                ad_data["avg_cpc"] = sum(cpc_values) / len(cpc_values) if cpc_values else 0
+                ad_data["avg_cpm"] = sum(cpm_values) / len(cpm_values) if cpm_values else 0
+                
+                # Calculate ROAS
+                ad_data["avg_roas"] = ad_data["avg_revenue"] / ad_data["avg_spend"] if ad_data["avg_spend"] > 0 else 0
+                
+                # Add all ads with any data
+                results.append(ad_data)
+                logger.info(f"Added ad {ad_data['_id']} with {ad_data['data_points']} existing data points with relaxed criteria")
     
     async def _train_roas_prediction_model(self, user_id: str) -> bool:
         """Train ML model to predict ROAS based on performance metrics."""
@@ -598,9 +824,29 @@ class MLOptimizationService:
         try:
             current_metrics = ad_data["current_metrics"]
             
+            # Validate that all required metrics are present
+            required_metrics = ['spend', 'ctr', 'cpc', 'cpm', 'clicks', 'impressions', 'purchases']
+            missing_metrics = [metric for metric in required_metrics if metric not in current_metrics]
+            
+            if missing_metrics:
+                logger.error(f"Ad {ad_id} is missing required metrics: {missing_metrics}")
+                # Set default values for missing metrics
+                for metric in missing_metrics:
+                    if metric == 'spend':
+                        current_metrics[metric] = 1.0
+                    elif metric in ['ctr', 'cpc', 'cpm']:
+                        current_metrics[metric] = 0.1
+                    elif metric == 'clicks':
+                        current_metrics[metric] = 10
+                    elif metric == 'impressions':
+                        current_metrics[metric] = 1000
+                    elif metric == 'purchases':
+                        current_metrics[metric] = 1
+                logger.info(f"Set default values for missing metrics in ad {ad_id}")
+            
             # Define optimization bounds (realistic, tighter ranges to prevent extreme changes)
             bounds = [
-                (current_metrics["spend"] * 0.7, current_metrics["spend"] * 2.0),      # spend: 70% to 200% (tighter control)
+                (max(0.1, current_metrics["spend"] * 0.7), current_metrics["spend"] * 2.0),      # spend: 70% to 200% (tighter control)
                 (max(0.1, current_metrics["ctr"] * 0.6), current_metrics["ctr"] * 2.5),  # ctr: 60% to 250% (more realistic)
                 (max(0.01, current_metrics["cpc"] * 0.5), current_metrics["cpc"] * 1.8), # cpc: 50% to 180% (prevent extreme cost changes)
                 (max(0.1, current_metrics["cpm"] * 0.5), current_metrics["cpm"] * 1.8),  # cpm: 50% to 180% (consistent with cpc)
@@ -629,16 +875,31 @@ class MLOptimizationService:
                     
                     # Penalty for extreme changes (reduced threshold due to tighter bounds)
                     extreme_change_penalty = 0
-                    for i, (param_val, current_val) in enumerate(zip(params, current_metrics.values())):
+                    
+                    # Get current metric values in the same order as feature_names
+                    current_values = []
+                    for feature in self.feature_names:
+                        if feature in current_metrics:
+                            current_values.append(current_metrics[feature])
+                        else:
+                            # If a feature is missing, use the optimized value (no penalty)
+                            logger.warning(f"Missing feature '{feature}' in current_metrics for ad {ad_id}")
+                            # Find the index of this feature
+                            feature_idx = self.feature_names.index(feature)
+                            current_values.append(params[feature_idx])
+                    
+                    # Now compare with proper error handling
+                    for i, (param_val, current_val) in enumerate(zip(params, current_values)):
                         if current_val > 0:
                             change_ratio = abs(param_val - current_val) / current_val
-                            if change_ratio > 1.5:  # More than 150% change (reduced from 300% due to tighter bounds)
-                                extreme_change_penalty += change_ratio * 0.3  # Reduced penalty coefficient
+                            if change_ratio > 1.5:  # More than 150% change
+                                extreme_change_penalty += change_ratio * 0.3
                     
                     # MAXIMIZE ROAS (minimize negative ROAS)
                     return -predicted_roas + click_penalty + spend_penalty + extreme_change_penalty
                     
                 except Exception as e:
+                    logger.error(f"Error in objective function for ad {ad_id}: {str(e)}")
                     return 1000  # High penalty for invalid parameters
             
             # Run optimization with balanced complexity for good results without hanging
@@ -840,7 +1101,7 @@ class MLOptimizationService:
             # Generate AI-powered creative recommendations
             ai_creative_suggestions = await self._generate_ai_creative_optimization(
                 current_creative,
-                benchmark_creative,
+                benchmark_creative["creative"] if isinstance(benchmark_creative, dict) and "creative" in benchmark_creative else benchmark_creative,
                 f"increase CTR from {current_ctr:.2f}% to {target_ctr:.2f}%"
             )
             
@@ -867,9 +1128,12 @@ class MLOptimizationService:
                     "predicted_roas": ad_result["predicted_roas"],
                     "spend": spend_change.get("optimized", spend_change.get("current", 0))
                 },
-                "spend_insight": spend_insight, # Include all changes
+                "spend_insight": spend_insight, # Include all changes                
+                "current_roas": ad_result["current_roas"],
+                "predicted_roas": ad_result["predicted_roas"],
                 "current_creative": current_creative,
-                "benchmark_creative": benchmark_creative,
+                "benchmark_creative": benchmark_creative.get("creative", {}) if isinstance(benchmark_creative, dict) else benchmark_creative,
+                "benchmark_metrics": benchmark_creative.get("metrics", {}) if isinstance(benchmark_creative, dict) else {},
                 "ai_optimized_creative": ai_creative_suggestions,
                 "implementation_strategy": self._generate_ctr_implementation_strategy(ctr_change),
                 "expected_roas_improvement": f"{ad_result['improvement_percent']:.1f}%",
@@ -915,6 +1179,23 @@ class MLOptimizationService:
             # Find proof from similar successful scaling
             scaling_proof = await self._find_scaling_proof(user_id, current_spend, target_spend)
             
+            # Find benchmark ads for spend
+            benchmark_ads = await self._find_benchmark_ads(user_id, "spend")
+            benchmark_data = {}
+            if benchmark_ads:
+                best_benchmark = benchmark_ads[0]
+                benchmark_data = {
+                    "ad_id": best_benchmark.get("ad_id", ""),
+                    "ad_name": best_benchmark.get("ad_name", ""),
+                    "metrics": {
+                        "spend": best_benchmark.get("additional_metrics", {}).get("spend", 0),
+                        "roas": best_benchmark.get("additional_metrics", {}).get("roas", 0),
+                        "ctr": best_benchmark.get("additional_metrics", {}).get("ctr", 0),
+                        "cpc": best_benchmark.get("additional_metrics", {}).get("cpc", 0),
+                        "cpm": best_benchmark.get("additional_metrics", {}).get("cpm", 0)
+                    }
+                }
+            
             recommendations["recommendations"].append({
                 "ad_id": ad_result["ad_id"],
                 "ad_name": ad_result["ad_name"],
@@ -924,6 +1205,9 @@ class MLOptimizationService:
                 "increase_percentage": f"{spend_change['change_percent']:.1f}%",
                 "reasoning": f"High ROAS of {ad_result['current_roas']:.2f} indicates strong market demand",
                 "scaling_proof": scaling_proof,
+                "benchmark_metrics": benchmark_data,
+                "current_roas": ad_result["current_roas"],
+                "predicted_roas": ad_result["predicted_roas"],
                 "expected_roas_improvement": f"{ad_result['improvement_percent']:.1f}%",
                 "account_level_roas_impact": f"{ad_result.get('account_level_roas_impact', 0):.2f}%",
                 "monitoring_period": "7-10 days",
@@ -939,6 +1223,23 @@ class MLOptimizationService:
             current_spend = spend_change["current"]
             target_spend = spend_change["optimized"]
             
+            # Find benchmark ads for spend
+            benchmark_ads = await self._find_benchmark_ads(user_id, "spend")
+            benchmark_data = {}
+            if benchmark_ads:
+                best_benchmark = benchmark_ads[0]
+                benchmark_data = {
+                    "ad_id": best_benchmark.get("ad_id", ""),
+                    "ad_name": best_benchmark.get("ad_name", ""),
+                    "metrics": {
+                        "spend": best_benchmark.get("additional_metrics", {}).get("spend", 0),
+                        "roas": best_benchmark.get("additional_metrics", {}).get("roas", 0),
+                        "ctr": best_benchmark.get("additional_metrics", {}).get("ctr", 0),
+                        "cpc": best_benchmark.get("additional_metrics", {}).get("cpc", 0),
+                        "cpm": best_benchmark.get("additional_metrics", {}).get("cpm", 0)
+                    }
+                }
+            
             recommendations["recommendations"].append({
                 "ad_id": ad_result["ad_id"],
                 "ad_name": ad_result["ad_name"],
@@ -948,6 +1249,9 @@ class MLOptimizationService:
                 "decrease_percentage": f"{abs(spend_change['change_percent']):.1f}%",
                 "reasoning": f"Reducing spend will improve efficiency while maintaining ROAS",
                 "expected_savings": f"${(current_spend - target_spend) * 30:.2f}/month",
+                "benchmark_metrics": benchmark_data,
+                "current_roas": ad_result["current_roas"],
+                "predicted_roas": ad_result["predicted_roas"],
                 "expected_roas_improvement": f"{ad_result['improvement_percent']:.1f}%",
                 "account_level_roas_impact": f"{ad_result.get('account_level_roas_impact', 0):.2f}%",
                 "spend_ai_suggestion": await self._generate_spend_ai_suggestion(
@@ -999,6 +1303,22 @@ class MLOptimizationService:
                 else:
                     spend_insight = f"Note: {metric_name} improvement may require {spend_change['change_percent']:.1f}% more spend"
             
+            # Extract benchmark metrics
+            benchmark_data = {}
+            if benchmark_ads:
+                best_benchmark = benchmark_ads[0]
+                benchmark_data = {
+                    "ad_id": best_benchmark.get("ad_id", ""),
+                    "ad_name": best_benchmark.get("ad_name", ""),
+                    "metrics": {
+                        metric: best_benchmark.get("additional_metrics", {}).get(metric, 0),
+                        "roas": best_benchmark.get("additional_metrics", {}).get("roas", 0),
+                        "spend": best_benchmark.get("additional_metrics", {}).get("spend", 0),
+                        "ctr": best_benchmark.get("additional_metrics", {}).get("ctr", 0),
+                        "impressions": best_benchmark.get("additional_metrics", {}).get("impressions", 0)
+                    }
+                }
+            
             recommendations.append({
                 "ad_id": ad_result["ad_id"],
                 "ad_name": ad_result["ad_name"],
@@ -1009,6 +1329,9 @@ class MLOptimizationService:
                 "current_spend": spend_change.get("current", 0),
                 "target_spend": spend_change.get("optimized", spend_change.get("current", 0)),
                 "spend_insight": spend_insight,
+                "benchmark_metrics": benchmark_data,
+                "current_roas": ad_result["current_roas"],
+                "predicted_roas": ad_result["predicted_roas"],
                 "optimization_strategies": ai_strategies,
                 "expected_roas_improvement": f"{ad_result['improvement_percent']:.1f}%",
                 "account_level_roas_impact": f"{ad_result.get('account_level_roas_impact', 0):.2f}%"
@@ -1047,6 +1370,22 @@ class MLOptimizationService:
                     else:
                         spend_insight = f"Note: Conversion improvement may require {spend_change['change_percent']:.1f}% more spend"
                 
+                # Extract benchmark metrics
+                benchmark_data = {}
+                if benchmark_ads:
+                    best_benchmark = benchmark_ads[0]
+                    benchmark_data = {
+                        "ad_id": best_benchmark.get("ad_id", ""),
+                        "ad_name": best_benchmark.get("ad_name", ""),
+                        "metrics": {
+                            "purchases": best_benchmark.get("purchases", 0),
+                            "roas": best_benchmark.get("additional_metrics", {}).get("roas", 0),
+                            "spend": best_benchmark.get("additional_metrics", {}).get("spend", 0),
+                            "ctr": best_benchmark.get("additional_metrics", {}).get("ctr", 0),
+                            "clicks": best_benchmark.get("additional_metrics", {}).get("clicks", 0)
+                        }
+                    }
+                
                 recommendations.append({
                     "ad_id": ad_result["ad_id"],
                     "ad_name": ad_result["ad_name"],
@@ -1056,6 +1395,9 @@ class MLOptimizationService:
                     "current_spend": spend_change.get("current", 0),
                     "target_spend": spend_change.get("optimized", spend_change.get("current", 0)),
                     "spend_insight": spend_insight,
+                    "benchmark_metrics": benchmark_data,
+                    "current_roas": ad_result["current_roas"],
+                    "predicted_roas": ad_result["predicted_roas"],
                     "conversion_strategies": ai_conversion_strategies,
                     "expected_roas_improvement": f"{ad_result['improvement_percent']:.1f}%",
                     "account_level_roas_impact": f"{ad_result.get('account_level_roas_impact', 0):.2f}%"
@@ -1072,13 +1414,33 @@ class MLOptimizationService:
         """Find high-performing ads to use as benchmarks with their creative metadata."""
         db = get_database()
         
-        # Get top performing ads for the specified metric
+        # First, find ad_ids that exist in ad_analyses collection to ensure we have creative metadata
+        ad_analyses = await db.ad_analyses.find({
+            "user_id": user_id,
+            "ad_analysis": {"$exists": True, "$ne": {}}
+        }).to_list(length=100)
+        
+        # Extract ad_ids and campaign_ids from analyses
+        ad_ids_with_analysis = []
+        for analysis in ad_analyses:
+            if analysis.get("ad_id"):
+                ad_ids_with_analysis.append(analysis.get("ad_id"))
+            if analysis.get("campaign_id"):
+                ad_ids_with_analysis.append(analysis.get("campaign_id"))
+        
+        # If no ads with analyses found, return empty list
+        if not ad_ids_with_analysis:
+            logger.warning(f"No ads with creative analyses found for user {user_id}")
+            return []
+        
+        # Get top performing ads for the specified metric that also have creative metadata
         sort_field = f"additional_metrics.{metric}"
         if metric == "purchases":
             sort_field = metric
         
         benchmark_ads = await db.ad_metrics.find({
             "user_id": user_id,
+            "ad_id": {"$in": ad_ids_with_analysis},  # Only include ads that have creative analyses
             sort_field: {"$gt": 0}
         }).sort(sort_field, -1).limit(5).to_list(length=5)
         
@@ -1117,8 +1479,22 @@ class MLOptimizationService:
         """Find similar high-performing creative for inspiration."""
         # This is a simplified version - in practice, you'd use more sophisticated similarity matching
         if benchmark_ads:
-            return benchmark_ads[0].get("creative_metadata", {})
-        return {}
+            best_benchmark = benchmark_ads[0]
+            result = {
+                "creative": best_benchmark.get("creative_metadata", {}),
+                "metrics": {
+                    metric: best_benchmark.get("additional_metrics", {}).get(metric, 0),
+                    "roas": best_benchmark.get("additional_metrics", {}).get("roas", 0),
+                    "spend": best_benchmark.get("additional_metrics", {}).get("spend", 0),
+                    "clicks": best_benchmark.get("additional_metrics", {}).get("clicks", 0),
+                    "impressions": best_benchmark.get("additional_metrics", {}).get("impressions", 0)
+                }
+            }
+            # Handle purchases which might be at the top level
+            if metric == "purchases":
+                result["metrics"]["purchases"] = best_benchmark.get("purchases", 0)
+            return result
+        return {"creative": {}, "metrics": {}}
     
     async def _generate_ai_creative_optimization(
         self, 
