@@ -228,15 +228,17 @@ const RecommendationsPage: React.FC = () => {
     const summaries: Record<string, OptimizationSummary> = {};
     
     recommendations.forEach(batch => {
-      const date = new Date(batch.generated_at).toISOString().split('T')[0];
+      // Group by date and time with browser timezone
+      const dateTime = new Date(batch.generated_at);
+      const dateTimeKey = format(dateTime, 'yyyy-MM-dd HH:mm');
       
-      if (!grouped[date]) {
-        grouped[date] = {};
+      if (!grouped[dateTimeKey]) {
+        grouped[dateTimeKey] = {};
       }
       
-      // Store optimization summary for this date
+      // Store optimization summary for this date-time
       if (batch.optimization_summary) {
-        summaries[date] = batch.optimization_summary;
+        summaries[dateTimeKey] = batch.optimization_summary;
       }
       
       // Process all strategies and group by ad
@@ -258,8 +260,8 @@ const RecommendationsPage: React.FC = () => {
           strategyData.recommendations.forEach((ad: AdRecommendation) => {
             const adKey = `${ad.ad_id}_${ad.ad_name}`;
             
-            if (!grouped[date][adKey]) {
-              grouped[date][adKey] = {
+            if (!grouped[dateTimeKey][adKey]) {
+              grouped[dateTimeKey][adKey] = {
                 ad_id: ad.ad_id,
                 ad_name: ad.ad_name,
                 current_roas: ad.current_roas,
@@ -277,7 +279,7 @@ const RecommendationsPage: React.FC = () => {
             
             // Add the recommendation to the appropriate strategy
             const strategyKey = strategy as keyof AdGroup['strategies'];
-            grouped[date][adKey].strategies[strategyKey].push({
+            grouped[dateTimeKey][adKey].strategies[strategyKey].push({
               ...ad,
               strategy_type: strategy
             });
@@ -286,7 +288,7 @@ const RecommendationsPage: React.FC = () => {
       });
     });
     
-    // Sort ads within each date by ROAS improvement (descending)
+    // Sort ads within each date-time by ROAS improvement (descending)
     Object.values(grouped).forEach(dateGroup => {
       Object.values(dateGroup).forEach(adGroup => {
         Object.values(adGroup.strategies).forEach(ads => {
@@ -332,10 +334,43 @@ const RecommendationsPage: React.FC = () => {
     return descriptions[strategy] || '';
   };
 
-  const renderStrategyMetrics = (recommendations: AdRecommendation[], strategy: string) => {
+  const renderSpendInsightBox = (rec: AdRecommendation) => {
+    if (!rec.current_daily_spend || !rec.recommended_daily_spend) return null;
+
+    return (
+      <div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+        <div className="bg-white/50 p-2 rounded border border-blue-200">
+          <span className="font-medium text-blue-700">Current Spend:</span>
+          <div className="text-blue-800">{rec.current_daily_spend}</div>
+        </div>
+        <div className="bg-white/50 p-2 rounded border border-blue-200">
+          <span className="font-medium text-blue-700">Recommended:</span>
+          <div className="text-blue-800">
+            {rec.recommended_daily_spend}
+            {rec.increase_percentage && <span className="text-green-600"> (+{rec.increase_percentage})</span>}
+            {rec.decrease_percentage && <span className="text-red-600"> (-{rec.decrease_percentage})</span>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderStrategyMetrics = (recommendations: AdRecommendation[], strategy: string, allAdStrategies?: AdGroup['strategies']) => {
     if (recommendations.length === 0) return null;
 
     const rec = recommendations[0]; // Take first recommendation for metrics
+    
+    // Check if there are decrease spend recommendations for this ad
+    const hasDecreaseSpendRecommendations = allAdStrategies?.spend_optimizations?.some(spendRec => {
+      const action = spendRec.action?.toLowerCase();
+      return action === 'decrease' || action === 'scale down' || action === 'scale_down' || action === 'reduce';
+    }) || false;
+    const decreaseSpendRec = allAdStrategies?.spend_optimizations?.find(spendRec => {
+      const action = spendRec.action?.toLowerCase();
+      return action === 'decrease' || action === 'scale down' || action === 'scale_down' || action === 'reduce';
+    });
+    
+
 
     return (
       <div className="space-y-3">
@@ -421,11 +456,26 @@ const RecommendationsPage: React.FC = () => {
                   </div>
                 </div>
                 
-                {/* Spend Insight instead of Implementation Guide */}
-                {rec.spend_insight && (
-                  <div className="mt-3 bg-white/50 p-2 rounded border border-blue-200">
-                    <p className="text-xs font-medium text-blue-900 mb-1">Budget Impact</p>
-                    <p className="text-xs text-blue-800">{rec.spend_insight}</p>
+                {/* Budget Impact for CTR improvements */}
+                {(hasDecreaseSpendRecommendations && decreaseSpendRec) ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium text-blue-900 mb-2">Budget Impact</p>
+                    {renderSpendInsightBox(decreaseSpendRec)}
+                    {decreaseSpendRec.spend_insight && (
+                      <div className="mt-2 bg-white/50 p-2 rounded border border-blue-200">
+                        <p className="text-xs text-blue-800">{decreaseSpendRec.spend_insight}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (rec.current_daily_spend && rec.recommended_daily_spend) && (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium text-blue-900 mb-2">Budget Impact</p>
+                    {renderSpendInsightBox(rec)}
+                    {rec.spend_insight && (
+                      <div className="mt-2 bg-white/50 p-2 rounded border border-blue-200">
+                        <p className="text-xs text-blue-800">{rec.spend_insight}</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -433,7 +483,10 @@ const RecommendationsPage: React.FC = () => {
           </div>
         )}
 
-        {strategy === 'spend_optimizations' && (
+        {strategy === 'spend_optimizations' && (() => {
+          const action = rec.action?.toLowerCase();
+          return action !== 'decrease' && action !== 'scale down' && action !== 'scale_down' && action !== 'reduce';
+        })() && (
           <div className="bg-green-50 p-3 rounded-md border-l-4 border-l-green-500">
             <div className="flex items-start gap-2">
               <DollarSign className="h-4 w-4 text-green-600 mt-0.5" />
@@ -494,6 +547,29 @@ const RecommendationsPage: React.FC = () => {
                     </div>
                   </div>
                 )}
+                
+                {/* Budget Impact for efficiency improvements */}
+                {(hasDecreaseSpendRecommendations && decreaseSpendRec) ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium text-purple-900 mb-2">Budget Impact</p>
+                    {renderSpendInsightBox(decreaseSpendRec)}
+                    {decreaseSpendRec.spend_insight && (
+                      <div className="mt-2 bg-white/50 p-2 rounded border border-purple-200">
+                        <p className="text-xs text-purple-800">{decreaseSpendRec.spend_insight}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (rec.current_daily_spend && rec.recommended_daily_spend) && (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium text-purple-900 mb-2">Budget Impact</p>
+                    {renderSpendInsightBox(rec)}
+                    {rec.spend_insight && (
+                      <div className="mt-2 bg-white/50 p-2 rounded border border-purple-200">
+                        <p className="text-xs text-purple-800">{rec.spend_insight}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -524,6 +600,29 @@ const RecommendationsPage: React.FC = () => {
                         {rec.improvement_needed && <div className="text-orange-600">({rec.improvement_needed} improvement needed)</div>}
                       </div>
                     </div>
+                  </div>
+                )}
+                
+                {/* Budget Impact for conversion improvements */}
+                {(hasDecreaseSpendRecommendations && decreaseSpendRec) ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium text-orange-900 mb-2">Budget Impact</p>
+                    {renderSpendInsightBox(decreaseSpendRec)}
+                    {decreaseSpendRec.spend_insight && (
+                      <div className="mt-2 bg-white/50 p-2 rounded border border-orange-200">
+                        <p className="text-xs text-orange-800">{decreaseSpendRec.spend_insight}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (rec.current_daily_spend && rec.recommended_daily_spend) && (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium text-orange-900 mb-2">Budget Impact</p>
+                    {renderSpendInsightBox(rec)}
+                    {rec.spend_insight && (
+                      <div className="mt-2 bg-white/50 p-2 rounded border border-orange-200">
+                        <p className="text-xs text-orange-800">{rec.spend_insight}</p>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -807,25 +906,28 @@ const RecommendationsPage: React.FC = () => {
         {hasStoredRecommendations && !isLoading ? (
           <div className="space-y-6">
             {Object.entries(groupedRecommendations)
-              .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime())
-              .map(([date, adGroups]) => {
-                const summary = optimizationSummaries[date];
-                const isDateExpanded = expandedDates[date] ?? true;
+              .sort(([dateTimeA], [dateTimeB]) => new Date(dateTimeB).getTime() - new Date(dateTimeA).getTime())
+              .map(([dateTime, adGroups]) => {
+                const summary = optimizationSummaries[dateTime];
+                const isDateExpanded = expandedDates[dateTime] ?? true;
                 const totalAds = Object.keys(adGroups).length;
                 
+                // Parse the dateTime string for display
+                const dateTimeObj = new Date(dateTime.replace(' ', 'T') + ':00');
+                
                 return (
-                  <Card key={date} className="border-l-4 border-l-primary">
-                    <Collapsible open={isDateExpanded} onOpenChange={() => toggleDateExpansion(date)}>
+                  <Card key={dateTime} className="border-l-4 border-l-primary">
+                    <Collapsible open={isDateExpanded} onOpenChange={() => toggleDateExpansion(dateTime)}>
                       <CollapsibleTrigger asChild>
                         <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors">
                           <CardTitle className="flex items-center gap-2">
                             {isDateExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
                             <Calendar className="h-5 w-5" />
-                            {format(new Date(date), 'MMMM d, yyyy')}
+                            {format(dateTimeObj, 'MMMM d, yyyy')} at {format(dateTimeObj, 'h:mm a')}
                             <Badge variant="outline">{totalAds} ads</Badge>
                           </CardTitle>
                           <CardDescription>
-                            Recommendations generated on this date
+                            Recommendations generated at this time
                             {summary && ` • ${summary.total_ads_analyzed} ads analyzed • +${summary.total_account_roas_impact?.toFixed(2) || '0.00'}% account ROAS impact`}
                           </CardDescription>
                         </CardHeader>
@@ -882,12 +984,25 @@ const RecommendationsPage: React.FC = () => {
                                 return bImprovement - aImprovement;
                               })
                               .map(([adKey, adGroup]) => {
-                                const isAdExpanded = expandedAds[`${date}_${adKey}`] ?? false;
-                                const strategiesWithData = Object.entries(adGroup.strategies).filter(([, recommendations]) => recommendations.length > 0);
+                                const isAdExpanded = expandedAds[`${dateTime}_${adKey}`] ?? false;
+                                
+                                // Filter strategies: exclude spend_optimizations if all are decrease actions
+                                const strategiesWithData = Object.entries(adGroup.strategies).filter(([strategy, recommendations]) => {
+                                  if (strategy === 'spend_optimizations') {
+                                    // Only include if there are increase recommendations (exclude decrease, scale down, reduce, etc.)
+                                    return recommendations.some(rec => {
+                                      const action = rec.action?.toLowerCase();
+                                      return action !== 'decrease' && action !== 'scale down' && action !== 'scale_down' && action !== 'reduce';
+                                    });
+                                  }
+                                  return recommendations.length > 0;
+                                });
+                                
+
                                 
                                 return (
                                   <Card key={adKey} className="border-l-2 border-l-blue-400 bg-blue-50/30">
-                                    <Collapsible open={isAdExpanded} onOpenChange={() => toggleAdExpansion(`${date}_${adKey}`)}>
+                                    <Collapsible open={isAdExpanded} onOpenChange={() => toggleAdExpansion(`${dateTime}_${adKey}`)}>
                                       <CollapsibleTrigger asChild>
                                         <CardHeader className="cursor-pointer hover:bg-blue-100/50 transition-colors">
                                           <div className="flex items-center justify-between">
@@ -896,7 +1011,7 @@ const RecommendationsPage: React.FC = () => {
                                               <div>
                                                 <CardTitle className="text-base">{adGroup.ad_name}</CardTitle>
                                                 <CardDescription className="mt-1">
-                                                  {strategiesWithData.length} optimization strategies available
+                                                  {strategiesWithData.length} optimization strateg{strategiesWithData.length === 1 ? 'y' : 'ies'} available
                                                 </CardDescription>
                                               </div>
                                             </div>
@@ -928,11 +1043,21 @@ const RecommendationsPage: React.FC = () => {
                                         <CardContent className="space-y-3">
                                           {/* Strategy Groups */}
                                           {strategiesWithData.map(([strategy, recommendations]) => {
-                                            const isStrategyExpanded = expandedStrategies[`${date}_${adKey}_${strategy}`] ?? false;
+                                            const isStrategyExpanded = expandedStrategies[`${dateTime}_${adKey}_${strategy}`] ?? false;
+                                            
+                                            // For spend optimizations, filter out decrease recommendations
+                                            const filteredRecommendations = strategy === 'spend_optimizations' 
+                                              ? recommendations.filter(rec => {
+                                                  const action = rec.action?.toLowerCase();
+                                                  return action !== 'decrease' && action !== 'scale down' && action !== 'scale_down' && action !== 'reduce';
+                                                })
+                                              : recommendations;
+                                            
+                                            if (filteredRecommendations.length === 0) return null;
                                             
                                             return (
                                               <Card key={strategy} className="bg-white border-l-2 border-l-purple-400">
-                                                <Collapsible open={isStrategyExpanded} onOpenChange={() => toggleStrategyExpansion(`${date}_${adKey}_${strategy}`)}>
+                                                <Collapsible open={isStrategyExpanded} onOpenChange={() => toggleStrategyExpansion(`${dateTime}_${adKey}_${strategy}`)}>
                                                   <CollapsibleTrigger asChild>
                                                     <CardHeader className="cursor-pointer hover:bg-purple-50 transition-colors py-3">
                                                       <div className="flex items-center justify-between">
@@ -940,7 +1065,7 @@ const RecommendationsPage: React.FC = () => {
                                                           {isStrategyExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                                           {getStrategyIcon(strategy)}
                                                           <CardTitle className="text-sm">{getStrategyDisplayName(strategy)}</CardTitle>
-                                                          <Badge variant="secondary" className="text-xs">{recommendations.length} recommendations</Badge>
+                                                          <Badge variant="secondary" className="text-xs">{filteredRecommendations.length} recommendation{filteredRecommendations.length === 1 ? '' : 's'}</Badge>
                                                         </div>
                                                       </div>
                                                       <CardDescription className="text-xs ml-6">
@@ -951,7 +1076,7 @@ const RecommendationsPage: React.FC = () => {
 
                                                   <CollapsibleContent>
                                                     <CardContent className="pt-0">
-                                                      {renderStrategyMetrics(recommendations, strategy)}
+                                                      {renderStrategyMetrics(filteredRecommendations, strategy, adGroup.strategies)}
                                                     </CardContent>
                                                   </CollapsibleContent>
                                                 </Collapsible>
