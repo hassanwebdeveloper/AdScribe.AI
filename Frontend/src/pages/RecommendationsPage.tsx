@@ -460,22 +460,28 @@ const RecommendationsPage: React.FC = () => {
                 {(hasDecreaseSpendRecommendations && decreaseSpendRec) ? (
                   <div className="mt-3">
                     <p className="text-xs font-medium text-blue-900 mb-2">Budget Impact</p>
+                    {/* Always show spend insight */}
+                    <div className="mb-3 bg-white/50 p-2 rounded border border-blue-200">
+                      <p className="text-xs text-blue-800">
+                        {decreaseSpendRec.spend_insight || rec.spend_insight || 
+                         `Budget will be adjusted from ${decreaseSpendRec.current_daily_spend || 'current level'} to ${decreaseSpendRec.recommended_daily_spend || 'recommended level'} to optimize performance.`}
+                      </p>
+                    </div>
+                    {/* Then show spend boxes */}
                     {renderSpendInsightBox(decreaseSpendRec)}
-                    {decreaseSpendRec.spend_insight && (
-                      <div className="mt-2 bg-white/50 p-2 rounded border border-blue-200">
-                        <p className="text-xs text-blue-800">{decreaseSpendRec.spend_insight}</p>
-                      </div>
-                    )}
                   </div>
                 ) : (rec.current_daily_spend && rec.recommended_daily_spend) && (
                   <div className="mt-3">
                     <p className="text-xs font-medium text-blue-900 mb-2">Budget Impact</p>
+                    {/* Always show spend insight */}
+                    <div className="mb-3 bg-white/50 p-2 rounded border border-blue-200">
+                      <p className="text-xs text-blue-800">
+                        {rec.spend_insight || 
+                         `Budget allocation of ${rec.current_daily_spend || 'current spend'} maintained for optimal performance.`}
+                      </p>
+                    </div>
+                    {/* Then show spend boxes */}
                     {renderSpendInsightBox(rec)}
-                    {rec.spend_insight && (
-                      <div className="mt-2 bg-white/50 p-2 rounded border border-blue-200">
-                        <p className="text-xs text-blue-800">{rec.spend_insight}</p>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -552,22 +558,28 @@ const RecommendationsPage: React.FC = () => {
                 {(hasDecreaseSpendRecommendations && decreaseSpendRec) ? (
                   <div className="mt-3">
                     <p className="text-xs font-medium text-purple-900 mb-2">Budget Impact</p>
+                    {/* Always show spend insight */}
+                    <div className="mb-3 bg-white/50 p-2 rounded border border-purple-200">
+                      <p className="text-xs text-purple-800">
+                        {decreaseSpendRec.spend_insight || rec.spend_insight || 
+                         `Budget will be adjusted from ${decreaseSpendRec.current_daily_spend || 'current level'} to ${decreaseSpendRec.recommended_daily_spend || 'recommended level'} to improve efficiency.`}
+                      </p>
+                    </div>
+                    {/* Then show spend boxes */}
                     {renderSpendInsightBox(decreaseSpendRec)}
-                    {decreaseSpendRec.spend_insight && (
-                      <div className="mt-2 bg-white/50 p-2 rounded border border-purple-200">
-                        <p className="text-xs text-purple-800">{decreaseSpendRec.spend_insight}</p>
-                      </div>
-                    )}
                   </div>
                 ) : (rec.current_daily_spend && rec.recommended_daily_spend) && (
                   <div className="mt-3">
                     <p className="text-xs font-medium text-purple-900 mb-2">Budget Impact</p>
+                    {/* Always show spend insight */}
+                    <div className="mb-3 bg-white/50 p-2 rounded border border-purple-200">
+                      <p className="text-xs text-purple-800">
+                        {rec.spend_insight || 
+                         `Budget allocation of ${rec.current_daily_spend || 'current spend'} optimized for efficiency metrics.`}
+                      </p>
+                    </div>
+                    {/* Then show spend boxes */}
                     {renderSpendInsightBox(rec)}
-                    {rec.spend_insight && (
-                      <div className="mt-2 bg-white/50 p-2 rounded border border-purple-200">
-                        <p className="text-xs text-purple-800">{rec.spend_insight}</p>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -607,22 +619,28 @@ const RecommendationsPage: React.FC = () => {
                 {(hasDecreaseSpendRecommendations && decreaseSpendRec) ? (
                   <div className="mt-3">
                     <p className="text-xs font-medium text-orange-900 mb-2">Budget Impact</p>
+                    {/* Always show spend insight */}
+                    <div className="mb-3 bg-white/50 p-2 rounded border border-orange-200">
+                      <p className="text-xs text-orange-800">
+                        {decreaseSpendRec.spend_insight || rec.spend_insight || 
+                         `Budget will be adjusted from ${decreaseSpendRec.current_daily_spend || 'current level'} to ${decreaseSpendRec.recommended_daily_spend || 'recommended level'} to improve conversion performance.`}
+                      </p>
+                    </div>
+                    {/* Then show spend boxes */}
                     {renderSpendInsightBox(decreaseSpendRec)}
-                    {decreaseSpendRec.spend_insight && (
-                      <div className="mt-2 bg-white/50 p-2 rounded border border-orange-200">
-                        <p className="text-xs text-orange-800">{decreaseSpendRec.spend_insight}</p>
-                      </div>
-                    )}
                   </div>
                 ) : (rec.current_daily_spend && rec.recommended_daily_spend) && (
                   <div className="mt-3">
                     <p className="text-xs font-medium text-orange-900 mb-2">Budget Impact</p>
+                    {/* Always show spend insight */}
+                    <div className="mb-3 bg-white/50 p-2 rounded border border-orange-200">
+                      <p className="text-xs text-orange-800">
+                        {rec.spend_insight || 
+                         `Budget allocation of ${rec.current_daily_spend || 'current spend'} optimized for conversion performance.`}
+                      </p>
+                    </div>
+                    {/* Then show spend boxes */}
                     {renderSpendInsightBox(rec)}
-                    {rec.spend_insight && (
-                      <div className="mt-2 bg-white/50 p-2 rounded border border-orange-200">
-                        <p className="text-xs text-orange-800">{rec.spend_insight}</p>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
