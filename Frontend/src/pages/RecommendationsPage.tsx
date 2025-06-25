@@ -85,14 +85,35 @@ interface AdRecommendation {
   current_creative?: any;
   benchmark_creative?: any;
   benchmark_metrics?: any;
-  optimization_strategies?: string | string[];
-  conversion_strategies?: string | string[];
+  optimization_strategies?: string | string[] | {
+    bidding_strategy?: string;
+    audience_refinement?: string;
+    ad_placement_optimization?: string;
+    creative_improvements?: string;
+    budget_pacing?: string;
+    recommended_target_audience?: string;
+    [key: string]: any;
+  };
+  conversion_strategies?: string | string[] | {
+    creative_optimization?: string;
+    audience_refinement?: string;
+    offer_enhancement?: string;
+    landing_page_optimization?: string;
+    call_to_action_improvements?: string;
+    recommended_target_audience?: string;
+    [key: string]: any;
+  };
   implementation_strategy?: string[];
   spend_ai_suggestion?: string;
   efficiency_ai_suggestion?: string;
   conversion_ai_suggestion?: string;
   ctr_ai_suggestion?: string;
   spend_insight?: string;
+  // Targeting data fields
+  current_targeting?: any;
+  current_targeting_summary?: string;
+  benchmark_targeting_objects?: any[];
+  benchmark_targeting_summaries?: string[];
   // Additional strategy fields
   action?: string;
   current_daily_spend?: string;
@@ -334,6 +355,222 @@ const RecommendationsPage: React.FC = () => {
     return descriptions[strategy] || '';
   };
 
+  const formatTargetingForDisplay = (targeting: any): {
+    age_range: string;
+    gender: string;
+    countries: string;
+    location_types: string;
+    advantage_audience: string;
+  } => {
+    if (!targeting) {
+      return {
+        age_range: 'Not specified',
+        gender: 'Not specified',
+        countries: 'Not specified',
+        location_types: 'Not specified',
+        advantage_audience: 'Not specified'
+      };
+    }
+
+    // Age range
+    let age_range = 'Not specified';
+    if (targeting.age_min && targeting.age_max) {
+      age_range = `${targeting.age_min}-${targeting.age_max}`;
+    } else if (targeting.age_min) {
+      age_range = `${targeting.age_min}+`;
+    } else if (targeting.age_max) {
+      age_range = `up to ${targeting.age_max}`;
+    }
+
+    // Gender
+    let gender = 'Not specified';
+    if (targeting.genders) {
+      if (targeting.genders.includes(1) && targeting.genders.includes(2)) {
+        gender = 'All';
+      } else if (targeting.genders.includes(1)) {
+        gender = 'Men only';
+      } else if (targeting.genders.includes(2)) {
+        gender = 'Women only';
+      }
+    }
+
+    // Countries
+    let countries = 'Not specified';
+    if (targeting.geo_locations?.countries && targeting.geo_locations.countries.length > 0) {
+      if (targeting.geo_locations.countries.length === 1) {
+        countries = targeting.geo_locations.countries[0];
+      } else {
+        countries = targeting.geo_locations.countries.slice(0, 2).join(', ');
+        if (targeting.geo_locations.countries.length > 2) {
+          countries += '...';
+        }
+      }
+    }
+
+    // Location types
+    let location_types = 'Not specified';
+    if (targeting.geo_locations?.location_types && targeting.geo_locations.location_types.length > 0) {
+      location_types = targeting.geo_locations.location_types.join(', ');
+    }
+
+    // Advantage audience
+    let advantage_audience = 'Not specified';
+    if (targeting.targeting_automation?.advantage_audience !== undefined) {
+      advantage_audience = targeting.targeting_automation.advantage_audience ? 'Enabled' : 'Disabled';
+    }
+
+    return {
+      age_range,
+      gender,
+      countries,
+      location_types,
+      advantage_audience
+    };
+  };
+
+  const renderTargetingComparison = (rec: AdRecommendation, strategy: string) => {
+    // Get targeting changes from the strategy object
+    let targetingChanges = null;
+    let recommendedTargetAudience = null;
+    
+    if (strategy === 'efficiency_improvements' && typeof rec.optimization_strategies === 'object' && !Array.isArray(rec.optimization_strategies)) {
+      targetingChanges = rec.optimization_strategies.targeting_changes;
+      recommendedTargetAudience = rec.optimization_strategies.recommended_target_audience;
+    } else if (strategy === 'conversion_improvements' && typeof rec.conversion_strategies === 'object' && !Array.isArray(rec.conversion_strategies)) {
+      targetingChanges = rec.conversion_strategies.targeting_changes;
+      recommendedTargetAudience = rec.conversion_strategies.recommended_target_audience;
+    }
+
+    if (!targetingChanges && !recommendedTargetAudience && !rec.current_targeting && (!rec.benchmark_targeting_objects || rec.benchmark_targeting_objects.length === 0)) {
+      return null;
+    }
+
+    // Format current targeting
+    const currentTargeting = formatTargetingForDisplay(rec.current_targeting);
+    
+    // Format benchmark targeting (use first benchmark)
+    const benchmarkTargeting = formatTargetingForDisplay(
+      rec.benchmark_targeting_objects && rec.benchmark_targeting_objects.length > 0 
+        ? rec.benchmark_targeting_objects[0] 
+        : null
+    );
+
+    // Format AI suggested targeting
+    const aiTargeting = {
+      age_range: targetingChanges?.age_range || 'Not specified',
+      gender: targetingChanges?.genders || 'Not specified',
+      countries: targetingChanges?.countries || 'Not specified',
+      location_types: targetingChanges?.location_types || 'Not specified',
+      advantage_audience: targetingChanges?.advantage_audience || 'Not specified'
+    };
+
+    const colorClass = strategy === 'efficiency_improvements' ? 'purple' : 'orange';
+
+    return (
+      <div className="mt-3">
+        <div className="grid grid-cols-3 gap-2">
+          {/* Current Targeting */}
+          <div className="bg-white/70 p-2 rounded shadow-sm border border-gray-200">
+            <p className="text-xs font-medium text-blue-900 mb-2">Current Targeting</p>
+            <div className="text-xs space-y-1">
+              {currentTargeting.age_range !== 'Not specified' && (
+                <div><span className="font-medium">Age:</span> {currentTargeting.age_range}</div>
+              )}
+              {currentTargeting.gender !== 'Not specified' && (
+                <div><span className="font-medium">Gender:</span> {currentTargeting.gender}</div>
+              )}
+              {currentTargeting.countries !== 'Not specified' && (
+                <div><span className="font-medium">Countries:</span> {currentTargeting.countries}</div>
+              )}
+              {currentTargeting.location_types !== 'Not specified' && (
+                <div><span className="font-medium">Location:</span> {currentTargeting.location_types}</div>
+              )}
+              {currentTargeting.advantage_audience !== 'Not specified' && (
+                <div><span className="font-medium">Advantage:</span> {currentTargeting.advantage_audience}</div>
+              )}
+              {currentTargeting.age_range === 'Not specified' && 
+               currentTargeting.gender === 'Not specified' && 
+               currentTargeting.countries === 'Not specified' && 
+               currentTargeting.location_types === 'Not specified' && 
+               currentTargeting.advantage_audience === 'Not specified' && (
+                <div className="text-gray-500 italic">No targeting data available</div>
+              )}
+            </div>
+          </div>
+          
+          {/* Benchmark Targeting */}
+          <div className="bg-white/70 p-2 rounded shadow-sm border border-green-200">
+            <p className="text-xs font-medium text-green-900 mb-2">Benchmark Targeting</p>
+            <div className="text-xs space-y-1">
+              {benchmarkTargeting.age_range !== 'Not specified' && (
+                <div><span className="font-medium">Age:</span> {benchmarkTargeting.age_range}</div>
+              )}
+              {benchmarkTargeting.gender !== 'Not specified' && (
+                <div><span className="font-medium">Gender:</span> {benchmarkTargeting.gender}</div>
+              )}
+              {benchmarkTargeting.countries !== 'Not specified' && (
+                <div><span className="font-medium">Countries:</span> {benchmarkTargeting.countries}</div>
+              )}
+              {benchmarkTargeting.location_types !== 'Not specified' && (
+                <div><span className="font-medium">Location:</span> {benchmarkTargeting.location_types}</div>
+              )}
+              {benchmarkTargeting.advantage_audience !== 'Not specified' && (
+                <div><span className="font-medium">Advantage:</span> {benchmarkTargeting.advantage_audience}</div>
+              )}
+              {benchmarkTargeting.age_range === 'Not specified' && 
+               benchmarkTargeting.gender === 'Not specified' && 
+               benchmarkTargeting.countries === 'Not specified' && 
+               benchmarkTargeting.location_types === 'Not specified' && 
+               benchmarkTargeting.advantage_audience === 'Not specified' && (
+                <div className="text-gray-500 italic">No benchmark targeting data</div>
+              )}
+            </div>
+          </div>
+          
+          {/* AI Recommended Targeting */}
+          <div className={`bg-white/70 p-2 rounded shadow-sm border border-${colorClass}-200`}>
+            <p className={`text-xs font-medium text-${colorClass}-900 mb-2`}>AI Recommended</p>
+            <div className="text-xs space-y-1">
+              {recommendedTargetAudience ? (
+                <div>{recommendedTargetAudience}</div>
+              ) : (
+                <>
+                  {aiTargeting.age_range !== 'Not specified' && (
+                    <div><span className="font-medium">Age:</span> {aiTargeting.age_range}</div>
+                  )}
+                  {aiTargeting.gender !== 'Not specified' && (
+                    <div><span className="font-medium">Gender:</span> {aiTargeting.gender}</div>
+                  )}
+                  {aiTargeting.countries !== 'Not specified' && (
+                    <div><span className="font-medium">Countries:</span> {aiTargeting.countries}</div>
+                  )}
+                  {aiTargeting.location_types !== 'Not specified' && (
+                    <div><span className="font-medium">Location:</span> {aiTargeting.location_types}</div>
+                  )}
+                  {aiTargeting.advantage_audience !== 'Not specified' && (
+                    <div><span className="font-medium">Advantage:</span> {aiTargeting.advantage_audience}</div>
+                  )}
+                  {aiTargeting.age_range === 'Not specified' && 
+                   aiTargeting.gender === 'Not specified' && 
+                   aiTargeting.countries === 'Not specified' && 
+                   aiTargeting.location_types === 'Not specified' && 
+                   aiTargeting.advantage_audience === 'Not specified' && !recommendedTargetAudience && (
+                    <div className="text-gray-500 italic">No targeting recommendations</div>
+                  )}
+                </>
+              )}
+            </div>
+            {targetingChanges?.explanation && (
+              <div className={`mt-2 text-xs text-${colorClass}-700 italic`}>
+                {targetingChanges.explanation}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderSpendInsightBox = (rec: AdRecommendation) => {
     if (!rec.current_daily_spend || !rec.recommended_daily_spend) return null;
 
@@ -538,6 +775,50 @@ const RecommendationsPage: React.FC = () => {
                     Array.isArray(rec.optimization_strategies) ? rec.optimization_strategies[0] : 
                     'Improve cost efficiency')}
                 </p>
+                
+                {/* Display actionable properties from JSON object */}
+                {typeof rec.optimization_strategies === 'object' && !Array.isArray(rec.optimization_strategies) && (
+                  <div className="mt-3 space-y-2">
+                    {/* Show audience refinement and targeting first */}
+                    {rec.optimization_strategies.audience_refinement && (
+                      <div className="bg-white/70 p-2 rounded border border-purple-200">
+                        <p className="text-xs font-medium text-purple-900 mb-1">Audience Refinement</p>
+                        <p className="text-xs text-purple-800 mb-3">{rec.optimization_strategies.audience_refinement}</p>
+                        {/* Render targeting comparison inside audience refinement */}
+                        {renderTargetingComparison(rec, strategy)}
+                      </div>
+                    )}
+                    
+                    {/* If no audience refinement but targeting comparison exists, render it separately */}
+                    {!rec.optimization_strategies.audience_refinement && renderTargetingComparison(rec, strategy)}
+                    
+                    {rec.optimization_strategies.bidding_strategy && (
+                      <div className="bg-white/70 p-2 rounded border border-purple-200">
+                        <p className="text-xs font-medium text-purple-900 mb-1">Bidding Strategy</p>
+                        <p className="text-xs text-purple-800">{rec.optimization_strategies.bidding_strategy}</p>
+                      </div>
+                    )}
+                    {rec.optimization_strategies.ad_placement_optimization && (
+                      <div className="bg-white/70 p-2 rounded border border-purple-200">
+                        <p className="text-xs font-medium text-purple-900 mb-1">Ad Placement Optimization</p>
+                        <p className="text-xs text-purple-800">{rec.optimization_strategies.ad_placement_optimization}</p>
+                      </div>
+                    )}
+                    {rec.optimization_strategies.creative_improvements && (
+                      <div className="bg-white/70 p-2 rounded border border-purple-200">
+                        <p className="text-xs font-medium text-purple-900 mb-1">Creative Improvements</p>
+                        <p className="text-xs text-purple-800">{rec.optimization_strategies.creative_improvements}</p>
+                      </div>
+                    )}
+                    {rec.optimization_strategies.budget_pacing && (
+                      <div className="bg-white/70 p-2 rounded border border-purple-200">
+                        <p className="text-xs font-medium text-purple-900 mb-1">Budget Pacing</p>
+                        <p className="text-xs text-purple-800">{rec.optimization_strategies.budget_pacing}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
                 {(rec.current_value && rec.target_value) && (
                   <div className="mt-2 grid grid-cols-2 gap-3 text-xs">
                     <div className="bg-white/50 p-2 rounded">
@@ -599,6 +880,50 @@ const RecommendationsPage: React.FC = () => {
                     Array.isArray(rec.conversion_strategies) ? rec.conversion_strategies[0] : 
                     'Optimize conversion performance')}
                 </p>
+                
+                {/* Display actionable properties from JSON object */}
+                {typeof rec.conversion_strategies === 'object' && !Array.isArray(rec.conversion_strategies) && (
+                  <div className="mt-3 space-y-2">
+                    {/* Show audience refinement and targeting first */}
+                    {rec.conversion_strategies.audience_refinement && (
+                      <div className="bg-white/70 p-2 rounded border border-orange-200">
+                        <p className="text-xs font-medium text-orange-900 mb-1">Audience Refinement</p>
+                        <p className="text-xs text-orange-800 mb-3">{rec.conversion_strategies.audience_refinement}</p>
+                        {/* Render targeting comparison inside audience refinement */}
+                        {renderTargetingComparison(rec, strategy)}
+                      </div>
+                    )}
+                    
+                    {/* If no audience refinement but targeting comparison exists, render it separately */}
+                    {!rec.conversion_strategies.audience_refinement && renderTargetingComparison(rec, strategy)}
+                    
+                    {rec.conversion_strategies.creative_optimization && (
+                      <div className="bg-white/70 p-2 rounded border border-orange-200">
+                        <p className="text-xs font-medium text-orange-900 mb-1">Creative Optimization</p>
+                        <p className="text-xs text-orange-800">{rec.conversion_strategies.creative_optimization}</p>
+                      </div>
+                    )}
+                    {rec.conversion_strategies.offer_enhancement && (
+                      <div className="bg-white/70 p-2 rounded border border-orange-200">
+                        <p className="text-xs font-medium text-orange-900 mb-1">Offer Enhancement</p>
+                        <p className="text-xs text-orange-800">{rec.conversion_strategies.offer_enhancement}</p>
+                      </div>
+                    )}
+                    {rec.conversion_strategies.landing_page_optimization && (
+                      <div className="bg-white/70 p-2 rounded border border-orange-200">
+                        <p className="text-xs font-medium text-orange-900 mb-1">Landing Page Optimization</p>
+                        <p className="text-xs text-orange-800">{rec.conversion_strategies.landing_page_optimization}</p>
+                      </div>
+                    )}
+                    {rec.conversion_strategies.call_to_action_improvements && (
+                      <div className="bg-white/70 p-2 rounded border border-orange-200">
+                        <p className="text-xs font-medium text-orange-900 mb-1">Call-to-Action Improvements</p>
+                        <p className="text-xs text-orange-800">{rec.conversion_strategies.call_to_action_improvements}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
                 {(rec.current_conversions !== undefined && rec.target_conversions !== undefined) && (
                   <div className="mt-2 grid grid-cols-2 gap-3 text-xs">
                     <div className="bg-white/50 p-2 rounded">
