@@ -7,7 +7,7 @@ const Register: React.FC = () => {
   const { isAuthenticated } = useAuth();
   
   if (isAuthenticated) {
-    return <Navigate to="/ai-scripter" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
   
   return (

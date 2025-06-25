@@ -72,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             
             // Check if the user has selected an ad account
             if (userData.facebook_credentials?.account_id) {
-              navigate('/ai-scripter');
+              navigate('/dashboard');
             } else {
               // Redirect to ad account selection page
               navigate('/select-ad-account');
@@ -316,7 +316,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       
       // Redirect to dashboard
-      navigate('/ai-scripter');
+      navigate('/dashboard');
     } catch (error) {
       let errorMessage = 'Failed to set ad account';
       
