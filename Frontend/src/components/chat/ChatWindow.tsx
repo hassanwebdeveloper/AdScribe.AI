@@ -27,7 +27,7 @@ const ChatWindow: React.FC = () => {
   if (!currentSession) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-muted-foreground">No active chat session.</p>
+        <p className="text-muted-foreground">No active script session.</p>
       </div>
     );
   }
@@ -146,7 +146,7 @@ const ChatWindow: React.FC = () => {
         {currentSession.messages.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center space-y-4 p-8 text-center">
             <Bot className="h-12 w-12 text-brand-500" />
-            <h3 className="text-xl font-medium">Welcome to AdScribe AI</h3>
+            <h3 className="text-xl font-medium">Welcome to AI Scripter</h3>
             <p className="text-muted-foreground max-w-md">
               I can help you analyze your Facebook ads and create optimized ad copy.
               Let's start by asking about your ad campaign goals.

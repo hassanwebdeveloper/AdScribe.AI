@@ -21,7 +21,7 @@ const ChatSidebar: React.FC = () => {
           variant="secondary"
         >
           <PlusCircle className="h-4 w-4" />
-          New Analysis
+          New Script
         </Button>
       </div>
       
@@ -54,7 +54,7 @@ const ChatSidebar: React.FC = () => {
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Delete chat</p>
+                      <p>Delete script</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -62,7 +62,7 @@ const ChatSidebar: React.FC = () => {
             ))
           ) : (
             <div className="text-center text-muted-foreground p-4">
-              No chats yet
+              No scripts yet
             </div>
           )}
         </div>

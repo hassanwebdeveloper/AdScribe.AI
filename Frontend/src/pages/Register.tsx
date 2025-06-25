@@ -1,4 +1,3 @@
-
 import React from 'react';
 import RegisterForm from '@/components/auth/RegisterForm';
 import { Navigate } from 'react-router-dom';
@@ -8,7 +7,7 @@ const Register: React.FC = () => {
   const { isAuthenticated } = useAuth();
   
   if (isAuthenticated) {
-    return <Navigate to="/chat" replace />;
+    return <Navigate to="/ai-scripter" replace />;
   }
   
   return (

@@ -19,6 +19,7 @@ interface AuthContextType extends AuthState {
   handleFacebookCallback: (code: string) => Promise<void>;
   getFacebookAdAccounts: () => Promise<FacebookAdAccount[]>;
   setFacebookAdAccount: (accountId: string) => Promise<void>;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -71,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             
             // Check if the user has selected an ad account
             if (userData.facebook_credentials?.account_id) {
-              navigate('/chat');
+              navigate('/ai-scripter');
             } else {
               // Redirect to ad account selection page
               navigate('/select-ad-account');
@@ -315,7 +316,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       
       // Redirect to dashboard
-      navigate('/chat');
+      navigate('/ai-scripter');
     } catch (error) {
       let errorMessage = 'Failed to set ad account';
       
@@ -503,6 +504,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       handleFacebookCallback,
       getFacebookAdAccounts,
       setFacebookAdAccount,
+      loading: authState.isLoading,
     }}>
       {children}
     </AuthContext.Provider>

@@ -116,7 +116,7 @@ const ChatInput: React.FC = () => {
     }
   };
 
-  // Load products when component mounts or when starting a new chat
+  // Load products when component mounts or when starting a new script
   useEffect(() => {
     fetchProducts();
   }, [currentSession]);
@@ -344,7 +344,7 @@ const ChatInput: React.FC = () => {
     // Check for date range on first message, but don't append it to the message
     if (isFirstPrompt) {
       if (!dateRange.startDate || !dateRange.endDate) {
-        alert('Please set date range in the Analysis Settings panel before starting a new chat.');
+        alert('Please set date range in the Analysis Settings panel before starting a new script.');
         return;
       }
       

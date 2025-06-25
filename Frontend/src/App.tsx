@@ -49,8 +49,8 @@ const App = () => (
               <Route path="/admin/prompts" element={<PromptAdminPanel />} />
               
               <Route element={<ProtectedRoute />}>
-                <Route path="/chat" element={
-                  <PrerequisiteGuard pageName="Chat">
+                <Route path="/ai-scripter" element={
+                  <PrerequisiteGuard pageName="AI Scripter">
                     <Layout>
                       <Chat />
                     </Layout>

@@ -87,15 +87,6 @@ export function Header({ className }: HeaderProps) {
             Dashboard
           </Link>
           <Link 
-            to="/chat" 
-            className={cn(
-              "px-3 py-2 text-sm font-medium rounded-md",
-              location.pathname === "/chat" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-            )}
-          >
-            Chat
-          </Link>
-          <Link 
             to="/recommendations" 
             className={cn(
               "px-3 py-2 text-sm font-medium rounded-md",
@@ -103,6 +94,15 @@ export function Header({ className }: HeaderProps) {
             )}
           >
             Recommendations
+          </Link>
+          <Link 
+            to="/ai-scripter" 
+            className={cn(
+              "px-3 py-2 text-sm font-medium rounded-md",
+              location.pathname === "/ai-scripter" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+          >
+            AI Scripter
           </Link>
           <Link 
             to="/ad-analysis" 
@@ -116,7 +116,7 @@ export function Header({ className }: HeaderProps) {
         </div>
         
         <div className="ml-auto flex items-center gap-4">
-          {location.pathname === "/chat" && (
+          {location.pathname === "/ai-scripter" && (
             <Button 
               variant="outline" 
               size="sm" 
