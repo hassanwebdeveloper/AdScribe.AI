@@ -503,14 +503,14 @@ const PromptAdminPanel: React.FC = () => {
           {/* Prompts Tab */}
           <TabsContent value="prompts" className="mt-6">
             <Tabs defaultValue="all" className="w-full">
-                             <TabsList className="grid w-full grid-cols-5">
-                 <TabsTrigger value="all">All Prompts ({prompts.length})</TabsTrigger>
-                 {Object.keys(groupedPrompts).map(category => (
-                   <TabsTrigger key={category} value={category}>
-                     {category.charAt(0).toUpperCase() + category.slice(1)} ({(groupedPrompts[category] || []).length})
-                   </TabsTrigger>
-                 ))}
-               </TabsList>
+              <TabsList className="grid w-full grid-cols-7">
+                <TabsTrigger value="all">All Prompts ({prompts.length})</TabsTrigger>
+                {Object.keys(groupedPrompts).map(category => (
+                  <TabsTrigger key={category} value={category}>
+                    {category.charAt(0).toUpperCase() + category.slice(1)} ({(groupedPrompts[category] || []).length})
+                  </TabsTrigger>
+                ))}
+              </TabsList>
 
               <TabsContent value="all" className="mt-6">
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -525,20 +525,20 @@ const PromptAdminPanel: React.FC = () => {
                 </div>
               </TabsContent>
 
-                             {Object.entries(groupedPrompts).map(([category, categoryPrompts]) => (
-                 <TabsContent key={category} value={category} className="mt-6">
-                   <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                     {(categoryPrompts || []).map(prompt => (
-                       <PromptCard 
-                         key={prompt.id} 
-                         prompt={prompt} 
-                         onEdit={handleEdit}
-                         onInitializeDefault={initializeDefaultPrompt}
-                       />
-                     ))}
-                   </div>
-                 </TabsContent>
-               ))}
+              {Object.entries(groupedPrompts).map(([category, categoryPrompts]) => (
+                <TabsContent key={category} value={category} className="mt-6">
+                  <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                    {(categoryPrompts || []).map(prompt => (
+                      <PromptCard 
+                        key={prompt.id} 
+                        prompt={prompt} 
+                        onEdit={handleEdit}
+                        onInitializeDefault={initializeDefaultPrompt}
+                      />
+                    ))}
+                  </div>
+                </TabsContent>
+              ))}
             </Tabs>
           </TabsContent>
 
@@ -622,11 +622,11 @@ const PromptAdminPanel: React.FC = () => {
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
-                                         <SelectContent>
-                       {(models || []).map(model => (
-                         <SelectItem key={model} value={model}>{model}</SelectItem>
-                       ))}
-                     </SelectContent>
+                    <SelectContent>
+                      {(models || []).map(model => (
+                        <SelectItem key={model} value={model}>{model}</SelectItem>
+                      ))}
+                    </SelectContent>
                   </Select>
                 </div>
               </div>

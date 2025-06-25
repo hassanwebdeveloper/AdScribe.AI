@@ -38,9 +38,6 @@ async def analyze_frame(image_path: Path) -> str:
         # Get the prompt text from dynamic prompt service
         prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("frame_analysis")
         
-        if not prompt_text:
-            prompt_text = "I want you to give me a single word that represents a characteristic of this advertising image to characterize it. Give me only the position of the person, and necessarily what they are doing (example: sitting with the object in their hands, standing explaining, crouching looking at the object) or a characteristic of the background (example: outside, package in the background, red background)."
-        
         # Use dynamic prompt service client
         response = await dynamic_prompt_service.client.chat.completions.create(
             model=model,
@@ -81,9 +78,6 @@ async def analyze_frame_from_base64(frame_b64: str, frame_name: str, cancellatio
     try:
         # Get the prompt text from dynamic prompt service
         prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("frame_analysis")
-        
-        if not prompt_text:
-            prompt_text = "I want you to give me a single word that represents a characteristic of this advertising image to characterize it. Give me only the position of the person, and necessarily what they are doing (example: sitting with the object in their hands, standing explaining, crouching looking at the object) or a characteristic of the background (example: outside, package in the background, red background)."
         
         # Use the robust OpenAI service with rate limiting
         messages = [
@@ -234,14 +228,6 @@ async def extract_product_from_frames(frames: list, video_name: str, cancellatio
     try:
         # Get the prompt text from dynamic prompt service
         prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("product_extraction_frames")
-        
-        if not prompt_text:
-            prompt_text = """Analyze these advertisement video frames and extract the product information:
-
-1. What is the exact product name being advertised? (Look for any text, brand names, or product labels visible in the frames)
-2. What category does this product belong to? (e.g., islamic product, cosmetic, fashion, tech, food, health, education, clothing, jewelry, electronics, etc.)
-
-Return only a JSON with "product" and "product_type" fields."""
         
         # Prepare messages with multiple frames
         message_content = [{"type": "text", "text": prompt_text}]

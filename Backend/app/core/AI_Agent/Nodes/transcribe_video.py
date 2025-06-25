@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import Dict, Any
 from app.services.openai_service import openai_service
+from app.services.dynamic_prompt_service import dynamic_prompt_service
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +39,20 @@ async def transcribe_video(video_path: Path, cancellation_token=None) -> str:
         return None
         
     try:
-        prompt = "This is a Pakistani Urdu advertisement. You may find words like Oud-al-abraj, outlet, purchase, online etc. Transcribe the spoken content in Urdu script."
+        # Get prompt from dynamic prompt service
+        prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("video_transcription")
+        
+        if not prompt_text:
+            # Fallback prompt if not found in database
+            prompt_text = "This is a Pakistani Urdu advertisement. You may find words like Oud-al-abraj, outlet, purchase, online etc. Transcribe the spoken content in Urdu script."
+            model = "whisper-1"
         
         # Use the robust OpenAI service with rate limiting
         result = await openai_service._make_transcription(
             audio_file_path=str(video_path),
-            model="whisper-1",
+            model=model,
             language="ur",
-            prompt=prompt,
+            prompt=prompt_text,
             cancellation_token=cancellation_token
         )
         

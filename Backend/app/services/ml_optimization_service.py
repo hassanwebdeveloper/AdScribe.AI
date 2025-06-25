@@ -22,6 +22,7 @@ import asyncio
 
 from app.core.database import get_database
 from app.services.openai_service import openai_service
+from app.services.dynamic_prompt_service import dynamic_prompt_service
 from app.services.facebook_service import FacebookAdService
 from app.services.user_service import UserService
 from app.services.ml_recommendation_storage import MLRecommendationStorageService
@@ -1504,37 +1505,25 @@ class MLOptimizationService:
     ) -> Dict:
         """Generate AI-powered creative optimization suggestions."""
         try:
-            prompt = f"""
-            Optimize ad creative to {optimization_goal}.
+            # Get prompt from dynamic prompt service
+            prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("ml_creative_optimization")
             
-            Current Creative:
-            - Hook: {current_creative.get('hook', 'Unknown')}
-            - Tone: {current_creative.get('tone', 'Unknown')}
-            - Visual: {current_creative.get('visual', 'Unknown')}
-            - Power Phrases: {current_creative.get('power_phrases', 'Unknown')}
-            
-            High-Performing Benchmark:
-            - Hook: {benchmark_creative.get('hook', 'Unknown')}
-            - Tone: {benchmark_creative.get('tone', 'Unknown')}
-            - Visual: {benchmark_creative.get('visual', 'Unknown')}
-            
-            IMPORTANT: Respond ONLY with valid JSON. No additional text before or after the JSON.
-            
-            Format your response as this exact JSON structure:
-            {{
-                "hook": "Optimized hook text here",
-                "tone": "Optimized tone here",
-                "visual": "Visual recommendation here",
-                "power_phrases": "Power phrases here",
-                "cta": "Call to action here",
-                "reasoning": "Why these changes will {optimization_goal}"
-            }}
-            """
+            # Format the prompt with variables
+            formatted_prompt = prompt_text.format(
+                optimization_goal=optimization_goal,
+                current_hook=current_creative.get('hook', 'Unknown'),
+                current_tone=current_creative.get('tone', 'Unknown'),
+                current_visual=current_creative.get('visual', 'Unknown'),
+                current_power_phrases=current_creative.get('power_phrases', 'Unknown'),
+                benchmark_hook=benchmark_creative.get('hook', 'Unknown'),
+                benchmark_tone=benchmark_creative.get('tone', 'Unknown'),
+                benchmark_visual=benchmark_creative.get('visual', 'Unknown')
+            )
             
             response = await openai_service.get_completion(
-                prompt=prompt,
-                max_tokens=400,
-                temperature=0.7
+                prompt=formatted_prompt,
+                max_tokens=max_tokens or 400,
+                temperature=temperature or 0.7
             )
             
             # Log the raw response for debugging
@@ -1670,32 +1659,28 @@ class MLOptimizationService:
             # Get ad's creative metadata for context
             current_creative = ad_result.get("creative_metadata", {})
             
-            prompt = f"""
-            Generate a specific, actionable AI suggestion for optimizing {metric.upper()} (Cost Per {'Click' if metric == 'cpc' else 'Mille'}) for this Facebook ad:
-
-            Current Ad Context:
-            - Ad Name: {ad_result.get('ad_name', 'Unknown')}
-            - Current ROAS: {ad_result['current_roas']:.2f}
-            - Creative Hook: {current_creative.get('hook', 'Unknown')}
-            - Creative Tone: {current_creative.get('tone', 'Unknown')}
-            - Visual Style: {current_creative.get('visual', 'Unknown')}
+            # Get prompt from dynamic prompt service
+            prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("ml_efficiency_strategies")
             
-            Top Performing {metric.upper()} Benchmarks:
-            {benchmark_context}
-
-            Parameter Change Required:
-            - Metric: {metric.upper()}
-            - Current Value: ${change_data['current']:.2f}
-            - Target Value: ${change_data['optimized']:.2f}
-            - Change Required: {change_data['change_direction']} by {abs(change_data['change_percent']):.1f}%
-
-            Provide a concise, actionable suggestion (2-3 sentences) that specifically addresses how to achieve this {metric.upper()} improvement. Use the benchmark data to suggest specific creative or strategic changes. Include specific tactics, not generic advice.
-            """
+            # Format the prompt with variables
+            formatted_prompt = prompt_text.format(
+                metric=metric.upper(),
+                ad_name=ad_result.get('ad_name', 'Unknown'),
+                current_roas=f"{ad_result['current_roas']:.2f}",
+                creative_hook=current_creative.get('hook', 'Unknown'),
+                creative_tone=current_creative.get('tone', 'Unknown'),
+                visual_style=current_creative.get('visual', 'Unknown'),
+                benchmark_context=benchmark_context,
+                current_value=f"{change_data['current']:.2f}",
+                target_value=f"{change_data['optimized']:.2f}",
+                change_direction=change_data['change_direction'],
+                change_percent=f"{abs(change_data['change_percent']):.1f}"
+            )
             
             response = await openai_service.get_completion(
-                prompt=prompt,
-                max_tokens=150,
-                temperature=0.7
+                prompt=formatted_prompt,
+                max_tokens=max_tokens or 150,
+                temperature=temperature or 0.7
             )
             
             if response and len(response.strip()) > 10:
@@ -1783,37 +1768,25 @@ class MLOptimizationService:
             
             benchmark_context = "\n".join(benchmark_info) if benchmark_info else "No benchmark data available"
             
-            prompt = f"""
-            Generate specific, actionable strategies for improving conversion rates for this Facebook ad:
-
-            Current Ad Context:
-            - Ad Name: {ad_result.get('ad_name', 'Unknown')}
-            - Current ROAS: {ad_result['current_roas']:.2f}
-            - Creative Hook: {creative_metadata.get('hook', 'Unknown')}
-            - Creative Tone: {creative_metadata.get('tone', 'Unknown')}
-
-            Top Converting Ad Benchmarks:
-            {benchmark_context}
-
-            Conversion Change Required:
-            - Current Conversions: {int(purchase_change['current'])}
-            - Target Conversions: {int(purchase_change['optimized'])}
-            - Improvement Needed: {purchase_change['change_percent']:.1f}%
-
-            Provide 3-5 specific, actionable strategies (one per line) for improving conversion rates. Focus on:
-            1. Creative optimization
-            2. Audience refinement
-            3. Offer enhancement
-            4. Landing page optimization
-            5. Call-to-action improvements
-
-            Format as a simple list, one strategy per line.
-            """
+            # Get prompt from dynamic prompt service
+            prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("ml_conversion_strategies")
+            
+            # Format the prompt with variables
+            formatted_prompt = prompt_text.format(
+                ad_name=ad_result.get('ad_name', 'Unknown'),
+                current_roas=f"{ad_result['current_roas']:.2f}",
+                creative_hook=creative_metadata.get('hook', 'Unknown'),
+                creative_tone=creative_metadata.get('tone', 'Unknown'),
+                benchmark_context=benchmark_context,
+                current_conversions=int(purchase_change['current']),
+                target_conversions=int(purchase_change['optimized']),
+                improvement_percent=f"{purchase_change['change_percent']:.1f}"
+            )
             
             response = await openai_service.get_completion(
-                prompt=prompt,
-                max_tokens=300,
-                temperature=0.7
+                prompt=formatted_prompt,
+                max_tokens=max_tokens or 300,
+                temperature=temperature or 0.7
             )
             
             if response and len(response.strip()) > 10:
@@ -1841,161 +1814,7 @@ class MLOptimizationService:
         
         return strategies
 
-    async def _generate_ctr_ai_suggestion(
-        self, 
-        ad_result: Dict, 
-        ctr_change: Dict, 
-        creative_metadata: Dict, 
-        benchmark_creative: Dict
-    ) -> str:
-        """Generate AI-powered CTR improvement suggestion."""
-        try:
-            from app.services.openai_service import OpenAIService
-            openai_service = OpenAIService()
             
-            prompt = f"""
-            Generate a specific, actionable AI suggestion for improving CTR (Click-Through Rate) for this Facebook ad:
-
-            Current Ad Context:
-            - Ad Name: {ad_result.get('ad_name', 'Unknown')}
-            - Current ROAS: {ad_result['current_roas']:.2f}
-            - Creative Hook: {creative_metadata.get('hook', 'Unknown')}
-            - Creative Tone: {creative_metadata.get('tone', 'Unknown')}
-
-            High-Performing Benchmark:
-            - Hook: {benchmark_creative.get('hook', 'Unknown')}
-            - Tone: {benchmark_creative.get('tone', 'Unknown')}
-
-            CTR Change Required:
-            - Current CTR: {ctr_change['current']:.3f}%
-            - Target CTR: {ctr_change['optimized']:.3f}%
-            - Improvement Needed: {ctr_change['change_percent']:.1f}%
-
-            Provide a concise, actionable suggestion (2-3 sentences) that specifically addresses how to achieve this CTR improvement. Include specific tactics, not generic advice.
-            """
-            
-            response = await openai_service.get_completion(
-                prompt=prompt,
-                max_tokens=150,
-                temperature=0.7
-            )
-            
-            if response and len(response.strip()) > 10:
-                return response.strip()
-            else:
-                return self._get_fallback_suggestion("ctr", ctr_change['change_direction'], ctr_change['change_percent'])
-                
-        except Exception as e:
-            logger.error(f"Error generating CTR AI suggestion: {str(e)}")
-            return self._get_fallback_suggestion("ctr", ctr_change['change_direction'], ctr_change['change_percent'])
-
-    async def _generate_efficiency_ai_suggestion(
-        self, 
-        ad_result: Dict, 
-        metric: str, 
-        change_data: Dict, 
-        benchmark_ads: List[Dict]
-    ) -> str:
-        """Generate AI-powered efficiency improvement suggestion."""
-        try:
-            from app.services.openai_service import OpenAIService
-            openai_service = OpenAIService()
-            
-            # Get benchmark context
-            benchmark_info = []
-            for bench_ad in benchmark_ads[:2]:
-                creative = bench_ad.get("creative_metadata", {})
-                metrics = bench_ad.get("additional_metrics", {})
-                benchmark_info.append(f"- {creative.get('hook', 'Unknown')} ({metric.upper()}: ${metrics.get(metric, 0):.2f})")
-            
-            benchmark_context = "\n".join(benchmark_info) if benchmark_info else "No benchmark data available"
-            
-            prompt = f"""
-            Generate a specific, actionable AI suggestion for optimizing {metric.upper()} for this Facebook ad:
-
-            Current Ad Context:
-            - Ad Name: {ad_result.get('ad_name', 'Unknown')}
-            - Current ROAS: {ad_result['current_roas']:.2f}
-
-            Top Performing {metric.upper()} Benchmarks:
-            {benchmark_context}
-
-            Change Required:
-            - Current {metric.upper()}: ${change_data['current']:.2f}
-            - Target {metric.upper()}: ${change_data['optimized']:.2f}
-            - Improvement Needed: {abs(change_data['change_percent']):.1f}%
-
-            Provide a concise, actionable suggestion (2-3 sentences) that specifically addresses how to achieve this {metric.upper()} improvement.
-            """
-            
-            response = await openai_service.get_completion(
-                prompt=prompt,
-                max_tokens=150,
-                temperature=0.7
-            )
-            
-            if response and len(response.strip()) > 10:
-                return response.strip()
-            else:
-                return self._get_fallback_suggestion(metric, change_data['change_direction'], change_data['change_percent'])
-                
-        except Exception as e:
-            logger.error(f"Error generating {metric} AI suggestion: {str(e)}")
-            return self._get_fallback_suggestion(metric, change_data['change_direction'], change_data['change_percent'])
-
-    async def _generate_conversion_ai_suggestion(
-        self, 
-        ad_result: Dict, 
-        purchase_change: Dict, 
-        benchmark_ads: List[Dict]
-    ) -> str:
-        """Generate AI-powered conversion improvement suggestion."""
-        try:
-            from app.services.openai_service import OpenAIService
-            openai_service = OpenAIService()
-            
-            # Get benchmark context
-            benchmark_info = []
-            for bench_ad in benchmark_ads[:2]:
-                creative = bench_ad.get("creative_metadata", {})
-                purchases = bench_ad.get("purchases", 0)
-                benchmark_info.append(f"- {creative.get('hook', 'Unknown')} (conversions: {purchases})")
-            
-            benchmark_context = "\n".join(benchmark_info) if benchmark_info else "No benchmark data available"
-            
-            prompt = f"""
-            Generate a specific, actionable AI suggestion for improving conversions for this Facebook ad:
-
-            Current Ad Context:
-            - Ad Name: {ad_result.get('ad_name', 'Unknown')}
-            - Current ROAS: {ad_result['current_roas']:.2f}
-
-            Top Converting Benchmarks:
-            {benchmark_context}
-
-            Conversion Change Required:
-            - Current Conversions: {int(purchase_change['current'])}
-            - Target Conversions: {int(purchase_change['optimized'])}
-            - Improvement Needed: {purchase_change['change_percent']:.1f}%
-
-            Provide a concise, actionable suggestion (2-3 sentences) that specifically addresses how to achieve this conversion improvement.
-            """
-            
-            response = await openai_service.get_completion(
-                prompt=prompt,
-                max_tokens=150,
-                temperature=0.7
-            )
-            
-            if response and len(response.strip()) > 10:
-                return response.strip()
-            else:
-                return self._get_fallback_suggestion("purchases", purchase_change['change_direction'], purchase_change['change_percent'])
-                
-        except Exception as e:
-            logger.error(f"Error generating conversion AI suggestion: {str(e)}")
-            return self._get_fallback_suggestion("purchases", purchase_change['change_direction'], purchase_change['change_percent'])
-
     def _generate_fallback_recommendations(self, ad_data: List[Dict], target_improvement: float) -> Dict:
         """Generate basic recommendations when ML optimization fails."""
         return {
@@ -2028,28 +1847,27 @@ class MLOptimizationService:
             
             creative_metadata = ad_result.get("creative_metadata", {})
             
-            prompt = f"""
-            Generate a specific, actionable AI suggestion for {action_type.replace('_', ' ')} ad spend for this Facebook ad:
-
-            Current Ad Context:
-            - Ad Name: {ad_result.get('ad_name', 'Unknown')}
-            - Current ROAS: {ad_result['current_roas']:.2f}
-            - Creative Hook: {creative_metadata.get('hook', 'Unknown')}
-            - Creative Tone: {creative_metadata.get('tone', 'Unknown')}
-
-            Spend Change Required:
-            - Current Daily Spend: ${spend_change['current']:.2f}
-            - Target Daily Spend: ${spend_change['optimized']:.2f}
-            - Change: {spend_change['change_direction']} by {abs(spend_change['change_percent']):.1f}%
-            - Action: {action_type.replace('_', ' ').title()}
-
-            Provide a concise, actionable suggestion (2-3 sentences) for how to safely and effectively implement this spend change while maintaining or improving performance.
-            """
+            # Get prompt from dynamic prompt service
+            prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("ml_spend_suggestions")
+            
+            # Format the prompt with variables
+            formatted_prompt = prompt_text.format(
+                action_type=action_type.replace('_', ' '),
+                ad_name=ad_result.get('ad_name', 'Unknown'),
+                current_roas=f"{ad_result['current_roas']:.2f}",
+                creative_hook=creative_metadata.get('hook', 'Unknown'),
+                creative_tone=creative_metadata.get('tone', 'Unknown'),
+                current_spend=f"{spend_change['current']:.2f}",
+                target_spend=f"{spend_change['optimized']:.2f}",
+                change_direction=spend_change['change_direction'],
+                change_percent=f"{abs(spend_change['change_percent']):.1f}",
+                action_title=action_type.replace('_', ' ').title()
+            )
             
             response = await openai_service.get_completion(
-                prompt=prompt,
-                max_tokens=150,
-                temperature=0.7
+                prompt=formatted_prompt,
+                max_tokens=max_tokens or 150,
+                temperature=temperature or 0.7
             )
             
             if response and len(response.strip()) > 10:

@@ -122,6 +122,56 @@ class PromptTemplateService:
         
         default_prompts = [
             {
+                "prompt_key": "video_transcription",
+                "prompt_name": "Video Transcription",
+                "prompt_text": "This is a Pakistani Urdu advertisement. You may find words like Oud-al-abraj, outlet, purchase, online etc. Transcribe the spoken content in Urdu script.",
+                "model": "whisper-1",
+                "temperature": 0.0,
+                "max_tokens": None,
+                "description": "Transcribes Urdu video advertisements with specific context and terminology",
+                "category": "transcription"
+            },
+            {
+                "prompt_key": "ml_creative_optimization",
+                "prompt_name": "Creative Optimization Engine",
+                "prompt_text": "Optimize ad creative to {optimization_goal}.\n\nCurrent Creative:\n- Hook: {current_hook}\n- Tone: {current_tone}\n- Visual: {current_visual}\n- Power Phrases: {current_power_phrases}\n\nHigh-Performing Benchmark:\n- Hook: {benchmark_hook}\n- Tone: {benchmark_tone}\n- Visual: {benchmark_visual}\n\nIMPORTANT: Respond ONLY with valid JSON. No additional text before or after the JSON.\n\nFormat your response as this exact JSON structure:\n{{\n    \"hook\": \"Optimized hook text here\",\n    \"tone\": \"Optimized tone here\",\n    \"visual\": \"Visual recommendation here\",\n    \"power_phrases\": \"Power phrases here\",\n    \"cta\": \"Call to action here\",\n    \"reasoning\": \"Why these changes will {optimization_goal}\"\n}}",
+                "model": "gpt-3.5-turbo",
+                "temperature": 0.7,
+                "max_tokens": 400,
+                "description": "Generates optimized creative recommendations based on benchmarks for ML optimization",
+                "category": "ml_optimization"
+            },
+            {
+                "prompt_key": "ml_efficiency_strategies",
+                "prompt_name": "Ad Efficiency Strategy Generator",
+                "prompt_text": "Generate a specific, actionable AI suggestion for optimizing {metric} (Cost Per {'Click' if metric == 'cpc' else 'Mille'}) for this Facebook ad:\n\nCurrent Ad Context:\n- Ad Name: {ad_name}\n- Current ROAS: {current_roas}\n- Creative Hook: {creative_hook}\n- Creative Tone: {creative_tone}\n- Visual Style: {visual_style}\n\nTop Performing {metric} Benchmarks:\n{benchmark_context}\n\nParameter Change Required:\n- Metric: {metric}\n- Current Value: ${current_value}\n- Target Value: ${target_value}\n- Change Required: {change_direction} by {change_percent}%\n\nProvide a concise, actionable suggestion (2-3 sentences) that specifically addresses how to achieve this {metric} improvement. Use the benchmark data to suggest specific creative or strategic changes. Include specific tactics, not generic advice.",
+                "model": "gpt-3.5-turbo",
+                "temperature": 0.7,
+                "max_tokens": 150,
+                "description": "Generates efficiency improvement strategies for ML optimization",
+                "category": "ml_optimization"
+            },
+            {
+                "prompt_key": "ml_conversion_strategies",
+                "prompt_name": "Conversion Rate Strategy Generator",
+                "prompt_text": "Generate specific, actionable strategies for improving conversion rates for this Facebook ad:\n\nCurrent Ad Context:\n- Ad Name: {ad_name}\n- Current ROAS: {current_roas}\n- Creative Hook: {creative_hook}\n- Creative Tone: {creative_tone}\n\nTop Converting Ad Benchmarks:\n{benchmark_context}\n\nConversion Change Required:\n- Current Conversions: {current_conversions}\n- Target Conversions: {target_conversions}\n- Improvement Needed: {improvement_percent}%\n\nProvide 3-5 specific, actionable strategies (one per line) for improving conversion rates. Focus on:\n1. Creative optimization\n2. Audience refinement\n3. Offer enhancement\n4. Landing page optimization\n5. Call-to-action improvements\n\nFormat as a simple list, one strategy per line.",
+                "model": "gpt-3.5-turbo",
+                "temperature": 0.7,
+                "max_tokens": 300,
+                "description": "Generates conversion improvement strategies for ML optimization",
+                "category": "ml_optimization"
+            },
+            {
+                "prompt_key": "ml_spend_suggestions",
+                "prompt_name": "Budget Optimization Advisor",
+                "prompt_text": "Generate a specific, actionable AI suggestion for {action_type} ad spend for this Facebook ad:\n\nCurrent Ad Context:\n- Ad Name: {ad_name}\n- Current ROAS: {current_roas}\n- Creative Hook: {creative_hook}\n- Creative Tone: {creative_tone}\n\nSpend Change Required:\n- Current Daily Spend: ${current_spend}\n- Target Daily Spend: ${target_spend}\n- Change: {change_direction} by {change_percent}%\n- Action: {action_title}\n\nProvide a concise, actionable suggestion (2-3 sentences) for how to safely and effectively implement this spend change while maintaining or improving performance.",
+                "model": "gpt-3.5-turbo",
+                "temperature": 0.7,
+                "max_tokens": 150,
+                "description": "Generates spend optimization suggestions for ML optimization",
+                "category": "ml_optimization"
+            },
+            {
                 "prompt_key": "ad_script_generator",
                 "prompt_name": "Ad Script Generator",
                 "prompt_text": """Aap aik expert Urdu ad script writer hain. Aapka kaam hai aik zabardast Facebook video ad script likhna based on best-performing ad.
@@ -313,6 +363,56 @@ Please reply in only the following JSON format:
         
         # Define all default prompts
         all_default_prompts = {
+            "video_transcription": {
+                "prompt_key": "video_transcription",
+                "prompt_name": "Video Transcription",
+                "prompt_text": "This is a Pakistani Urdu advertisement. You may find words like Oud-al-abraj, outlet, purchase, online etc. Transcribe the spoken content in Urdu script.",
+                "model": "whisper-1",
+                "temperature": 0.0,
+                "max_tokens": None,
+                "description": "Transcribes Urdu video advertisements with specific context and terminology",
+                "category": "transcription"
+            },
+            "ml_creative_optimization": {
+                "prompt_key": "ml_creative_optimization",
+                "prompt_name": "Creative Optimization Engine",
+                "prompt_text": "Optimize ad creative to {optimization_goal}.\n\nCurrent Creative:\n- Hook: {current_hook}\n- Tone: {current_tone}\n- Visual: {current_visual}\n- Power Phrases: {current_power_phrases}\n\nHigh-Performing Benchmark:\n- Hook: {benchmark_hook}\n- Tone: {benchmark_tone}\n- Visual: {benchmark_visual}\n\nIMPORTANT: Respond ONLY with valid JSON. No additional text before or after the JSON.\n\nFormat your response as this exact JSON structure:\n{{\n    \"hook\": \"Optimized hook text here\",\n    \"tone\": \"Optimized tone here\",\n    \"visual\": \"Visual recommendation here\",\n    \"power_phrases\": \"Power phrases here\",\n    \"cta\": \"Call to action here\",\n    \"reasoning\": \"Why these changes will {optimization_goal}\"\n}}",
+                "model": "gpt-3.5-turbo",
+                "temperature": 0.7,
+                "max_tokens": 400,
+                "description": "Generates optimized creative recommendations based on benchmarks for ML optimization",
+                "category": "ml_optimization"
+            },
+            "ml_efficiency_strategies": {
+                "prompt_key": "ml_efficiency_strategies",
+                "prompt_name": "Ad Efficiency Strategy Generator",
+                "prompt_text": "Generate a specific, actionable AI suggestion for optimizing {metric} (Cost Per {'Click' if metric == 'cpc' else 'Mille'}) for this Facebook ad:\n\nCurrent Ad Context:\n- Ad Name: {ad_name}\n- Current ROAS: {current_roas}\n- Creative Hook: {creative_hook}\n- Creative Tone: {creative_tone}\n- Visual Style: {visual_style}\n\nTop Performing {metric} Benchmarks:\n{benchmark_context}\n\nParameter Change Required:\n- Metric: {metric}\n- Current Value: ${current_value}\n- Target Value: ${target_value}\n- Change Required: {change_direction} by {change_percent}%\n\nProvide a concise, actionable suggestion (2-3 sentences) that specifically addresses how to achieve this {metric} improvement. Use the benchmark data to suggest specific creative or strategic changes. Include specific tactics, not generic advice.",
+                "model": "gpt-3.5-turbo",
+                "temperature": 0.7,
+                "max_tokens": 150,
+                "description": "Generates efficiency improvement strategies for ML optimization",
+                "category": "ml_optimization"
+            },
+            "ml_conversion_strategies": {
+                "prompt_key": "ml_conversion_strategies",
+                "prompt_name": "Conversion Rate Strategy Generator",
+                "prompt_text": "Generate specific, actionable strategies for improving conversion rates for this Facebook ad:\n\nCurrent Ad Context:\n- Ad Name: {ad_name}\n- Current ROAS: {current_roas}\n- Creative Hook: {creative_hook}\n- Creative Tone: {creative_tone}\n\nTop Converting Ad Benchmarks:\n{benchmark_context}\n\nConversion Change Required:\n- Current Conversions: {current_conversions}\n- Target Conversions: {target_conversions}\n- Improvement Needed: {improvement_percent}%\n\nProvide 3-5 specific, actionable strategies (one per line) for improving conversion rates. Focus on:\n1. Creative optimization\n2. Audience refinement\n3. Offer enhancement\n4. Landing page optimization\n5. Call-to-action improvements\n\nFormat as a simple list, one strategy per line.",
+                "model": "gpt-3.5-turbo",
+                "temperature": 0.7,
+                "max_tokens": 300,
+                "description": "Generates conversion improvement strategies for ML optimization",
+                "category": "ml_optimization"
+            },
+            "ml_spend_suggestions": {
+                "prompt_key": "ml_spend_suggestions",
+                "prompt_name": "Budget Optimization Advisor",
+                "prompt_text": "Generate a specific, actionable AI suggestion for {action_type} ad spend for this Facebook ad:\n\nCurrent Ad Context:\n- Ad Name: {ad_name}\n- Current ROAS: {current_roas}\n- Creative Hook: {creative_hook}\n- Creative Tone: {creative_tone}\n\nSpend Change Required:\n- Current Daily Spend: ${current_spend}\n- Target Daily Spend: ${target_spend}\n- Change: {change_direction} by {change_percent}%\n- Action: {action_title}\n\nProvide a concise, actionable suggestion (2-3 sentences) for how to safely and effectively implement this spend change while maintaining or improving performance.",
+                "model": "gpt-3.5-turbo",
+                "temperature": 0.7,
+                "max_tokens": 150,
+                "description": "Generates spend optimization suggestions for ML optimization",
+                "category": "ml_optimization"
+            },
             "ad_script_generator": {
                 "prompt_key": "ad_script_generator",
                 "prompt_name": "Ad Script Generator",
