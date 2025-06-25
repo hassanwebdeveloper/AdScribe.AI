@@ -13,6 +13,7 @@ import Register from "@/pages/Register";
 import NotFound from "@/pages/NotFound";
 import SelectAdAccount from "@/pages/SelectAdAccount";
 import AdminLogin from "@/pages/AdminLogin";
+import Settings from "@/pages/Settings";
 
 // Lazy-loaded components
 const RecommendationsPage = lazy(() => import("@/pages/RecommendationsPage"));
@@ -85,6 +86,10 @@ const router = createBrowserRouter([
       {
         path: "ad-metrics",
         element: <SuspenseWrapper><AdMetricsPage /></SuspenseWrapper>,
+      },
+      {
+        path: "settings",
+        element: <Settings />,
       },
     ],
   },

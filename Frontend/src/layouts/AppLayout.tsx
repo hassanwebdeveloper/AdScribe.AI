@@ -11,6 +11,8 @@ import {
   X,
   BarChart3,
   Target,
+  Settings,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -173,6 +175,16 @@ const AppLayout = () => {
           <h1 className="text-lg font-bold">AdScribe.AI</h1>
         </Link>
         <div className="flex items-center gap-4">
+          {/* Mobile Settings Icon */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate("/app/settings")}
+            className="h-9 w-9"
+          >
+            <Settings className="h-4 w-4" />
+          </Button>
+          
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="rounded-full">
@@ -182,13 +194,22 @@ const AppLayout = () => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuLabel>My Account</DropdownMenuLabel>
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-medium leading-none">{user?.name || 'User'}</p>
+                  <p className="text-xs leading-none text-muted-foreground">
+                    {user?.email || 'user@example.com'}
+                  </p>
+                </div>
+              </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => navigate("/app/account")}>
-                <User className="mr-2 h-4 w-4" />
-                Profile
+              <DropdownMenuItem onClick={() => navigate("/app/settings")}>
+                <Settings className="mr-2 h-4 w-4" />
+                Settings
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout}>
+                <LogOut className="mr-2 h-4 w-4" />
                 Logout
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -239,11 +260,11 @@ const AppLayout = () => {
               className="w-full justify-start"
               onClick={() => {
                 setMobileMenuOpen(false);
-                navigate("/app/account");
+                navigate("/app/settings");
               }}
             >
-              <User className="mr-2 h-5 w-5" />
-              Account Settings
+              <Settings className="mr-2 h-5 w-5" />
+              Settings
             </Button>
             <Button
               variant="outline"
@@ -253,6 +274,7 @@ const AppLayout = () => {
                 setMobileMenuOpen(false);
               }}
             >
+              <LogOut className="mr-2 h-5 w-5" />
               Logout
             </Button>
           </div>
@@ -269,27 +291,48 @@ const AppLayout = () => {
           {/* Desktop Header */}
           <header className="sticky top-0 z-30 hidden h-16 items-center justify-between border-b bg-card px-4 lg:flex">
             <div className="flex-1" />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <Avatar className="h-8 w-8">
-                    <AvatarFallback>{getUserInitials()}</AvatarFallback>
-                  </Avatar>
-                  <span>{user?.name}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => navigate("/app/account")}>
-                  <User className="mr-2 h-4 w-4" />
-                  Profile
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleLogout}>
-                  Logout
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div className="flex items-center gap-4">
+              {/* Desktop Settings Icon */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => navigate("/app/settings")}
+                className="h-9 w-9"
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+              
+              {/* Desktop User Dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="relative h-9 w-9 rounded-full">
+                    <Avatar className="h-8 w-8">
+                      <AvatarFallback>{getUserInitials()}</AvatarFallback>
+                    </Avatar>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-56" align="end" forceMount>
+                  <DropdownMenuLabel className="font-normal">
+                    <div className="flex flex-col space-y-1">
+                      <p className="text-sm font-medium leading-none">{user?.name || 'User'}</p>
+                      <p className="text-xs leading-none text-muted-foreground">
+                        {user?.email || 'user@example.com'}
+                      </p>
+                    </div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => navigate("/app/settings")}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>Settings</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleLogout}>
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Log out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </header>
 
           {/* Content Area */}
