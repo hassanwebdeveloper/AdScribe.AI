@@ -9,7 +9,7 @@ const BACKEND_CHAT_ENDPOINT = '/webhook/chat';
 const CHAT_API_ENDPOINT = '/chat';
 
 interface ChatContextType extends ChatState {
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, productInfo?: { product?: string; product_type?: string }) => Promise<void>;
   createNewSession: () => void;
   selectSession: (sessionId: string) => void;
   deleteSession: (sessionId: string) => void;
@@ -75,7 +75,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAuthData();
   }, [user]);
 
-  // Load chat sessions from API on component mount
+  // Load script sessions from API on component mount
   useEffect(() => {
     const fetchSessions = async () => {
       if (user && user._id) {
@@ -115,11 +115,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isLoading: false
           });
         } catch (error) {
-          console.error('Error fetching chat sessions:', error);
+          console.error('Error fetching script sessions:', error);
           setChatState({
             ...chatState,
             isLoading: false,
-            error: 'Failed to load chat sessions'
+            error: 'Failed to load script sessions'
           });
         }
       }
@@ -132,7 +132,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user || !user._id) {
       toast({
         title: "Error",
-        description: "You must be logged in to create a new chat",
+        description: "You must be logged in to create a new script",
         variant: "destructive",
       });
       return;
@@ -144,13 +144,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading: true
       }));
       
-      console.log('Creating new chat session, API endpoint:', `${CHAT_API_ENDPOINT}/sessions`);
+      console.log('Creating new script session, API endpoint:', `${CHAT_API_ENDPOINT}/sessions`);
       
       const response = await api.post(`${CHAT_API_ENDPOINT}/sessions`, {
-        title: `New Chat ${chatState.sessions.length + 1}`
+        title: `New Script ${chatState.sessions.length + 1}`
       });
       
-      console.log('Chat session created, response:', response.data);
+      console.log('Script session created, response:', response.data);
       
       const newSession = response.data;
       // MongoDB returns _id, but our frontend uses id
@@ -181,7 +181,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading: false
       }));
     } catch (error: any) {
-      console.error('Error creating new chat session:', error);
+      console.error('Error creating new script session:', error);
       // Log details about the error for debugging
       if (error.response) {
         console.error('Response data:', error.response.data);
@@ -191,12 +191,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setChatState(prev => ({
         ...prev,
         isLoading: false,
-        error: 'Failed to create new chat session'
+        error: 'Failed to create new script session'
       }));
       
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to create new chat session",
+        description: error.response?.data?.detail || "Failed to create new script session",
         variant: "destructive",
       });
     }
@@ -213,7 +213,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user || !user._id) {
       toast({
         title: "Error",
-        description: "You must be logged in to delete a chat",
+        description: "You must be logged in to delete a script",
         variant: "destructive",
       });
       return;
@@ -234,11 +234,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // We should use the _id field if available, otherwise use the id field
       const backendSessionId = session._id || session.id;
       
-      console.log('Deleting chat session, API endpoint:', `${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`);
+      console.log('Deleting script session, API endpoint:', `${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`);
       
       await api.delete(`${CHAT_API_ENDPOINT}/sessions/${backendSessionId}`);
       
-      console.log('Chat session deleted successfully');
+      console.log('Script session deleted successfully');
       
       // Check if we're deleting the current session
       const isCurrentSession = sessionId === chatState.currentSessionId;
@@ -258,11 +258,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       toast({
         title: "Success",
-        description: "Chat deleted successfully",
+        description: "Script deleted successfully",
         variant: "default",
       });
     } catch (error: any) {
-      console.error('Error deleting chat session:', error);
+      console.error('Error deleting script session:', error);
       
       // Log details about the error for debugging
       if (error.response) {
@@ -273,12 +273,12 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setChatState(prev => ({
         ...prev,
         isLoading: false,
-        error: 'Failed to delete chat session'
+        error: 'Failed to delete script session'
       }));
       
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to delete chat session",
+        description: error.response?.data?.detail || "Failed to delete script session",
         variant: "destructive",
       });
     }
@@ -393,10 +393,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Helper function to send messages to webhook
-  const sendMessageToWebhook = async (content: string, session: ChatSession) => {
+  const sendMessageToWebhook = async (content: string, session: ChatSession, productInfo?: { product?: string; product_type?: string }) => {
     console.log('🔍 [DEBUG] sendMessageToWebhook called with content:', content.substring(0, 50) + '...');
     console.log('🔍 [DEBUG] Current session ID:', session.id);
     console.log('🔍 [DEBUG] Current session _id:', session._id);
+    console.log('🔍 [DEBUG] Product info:', productInfo);
     
     try {
       // Ensure we're authenticated
@@ -456,6 +457,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           endDate: effectiveDateRange.endDate,
           daysToAnalyze
         },
+        productInfo: productInfo || null
       };
       
       console.log('🔍 [DEBUG] Sending to backend API:', payload);
@@ -542,7 +544,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('🔍 [DEBUG] Updated session message count:', updatedSession.messages.length);
       
       // If it's still using the default title, update it based on the first message
-      if (updatedSession.title.startsWith('New Chat')) {
+      if (updatedSession.title.startsWith('New Script')) {
         updatedSession.title = content.slice(0, 30) + (content.length > 30 ? '...' : '');
         console.log('🔍 [DEBUG] Updated session title:', updatedSession.title);
       }
@@ -839,7 +841,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return result;
   };
 
-  const sendMessage = async (content: string) => {
+  const sendMessage = async (content: string, productInfo?: { product?: string; product_type?: string }) => {
     console.log('🔍 [DEBUG] sendMessage called with content:', content.substring(0, 50) + '...');
     
     if (!user || !user._id) {
@@ -873,7 +875,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         // Create a new session
         const response = await api.post(`${CHAT_API_ENDPOINT}/sessions`, {
-          title: `New Chat ${chatState.sessions.length + 1}`
+          title: `New Script ${chatState.sessions.length + 1}`
         });
         
         session = response.data;
@@ -946,7 +948,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Call the webhook endpoint with the message content
       console.log('🔍 [DEBUG] Calling sendMessageToWebhook');
       
-      const result = await sendMessageToWebhook(content, updatedSession);
+      const result = await sendMessageToWebhook(content, updatedSession, productInfo);
       
       // Update the session with the final messages (including API response)
       setChatState(prev => ({

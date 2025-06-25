@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import auth, health, webhook, chat, ad_analysis, ad_metrics
+from app.api.v1.endpoints import auth, health, webhook, chat, ad_analysis, ad_metrics, user_prerequisites, prompt_admin, admin_auth, recommendations
 from app.routers import prediction, visualization
 
 api_router = APIRouter()
@@ -11,5 +11,9 @@ api_router.include_router(webhook.router, prefix="/webhook", tags=["webhook"])
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(ad_analysis.router, prefix="/ad-analysis", tags=["ad-analysis"])
 api_router.include_router(ad_metrics.router, prefix="/ad-metrics", tags=["ad-metrics"])
+api_router.include_router(user_prerequisites.router, prefix="/prerequisites", tags=["prerequisites"])
+api_router.include_router(admin_auth.router, prefix="/admin/auth", tags=["admin-auth"])
+api_router.include_router(prompt_admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(prediction.router)
-api_router.include_router(visualization.router) 
+api_router.include_router(visualization.router)
+api_router.include_router(recommendations.router, prefix="/recommendations", tags=["recommendations"]) 

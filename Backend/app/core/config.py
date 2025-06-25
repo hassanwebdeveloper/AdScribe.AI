@@ -21,6 +21,20 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     
+    # Admin JWT Configuration (for admin panel OTP authentication)
+    jwt_secret_key: str = "your-secure-admin-jwt-secret-key-change-in-production"
+    environment: str = "development"
+    
+    # Email Configuration (for OTP sending)
+    smtp_server: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_username: str = ""  # Your email address
+    smtp_password: str = ""  # App password for Gmail
+    smtp_from_email: str = "noreply@adscribe.ai"
+    
+    # OpenAI Configuration
+    openai_api_key: str
+    
     # N8N Configuration
     N8N_WEBHOOK_URL: str
     N8N_WEBHOOK_URL_ANALYZE_ALL_ADS: str

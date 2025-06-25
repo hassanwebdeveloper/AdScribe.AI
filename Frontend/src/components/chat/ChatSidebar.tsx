@@ -1,9 +1,7 @@
 import React from 'react';
 import { useChat } from '@/contexts/ChatContext';
-import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Link } from 'react-router-dom';
-import { PlusCircle, MessageSquare, Settings, LogOut, Trash2 } from 'lucide-react';
+import { PlusCircle, MessageSquare, Trash2 } from 'lucide-react';
 import {
   Tooltip,
   TooltipContent,
@@ -13,7 +11,6 @@ import {
 
 const ChatSidebar: React.FC = () => {
   const { sessions, currentSessionId, createNewSession, selectSession, deleteSession } = useChat();
-  const { logout, user } = useAuth();
 
   return (
     <div className="flex flex-col h-full">
@@ -24,7 +21,7 @@ const ChatSidebar: React.FC = () => {
           variant="secondary"
         >
           <PlusCircle className="h-4 w-4" />
-          New Analysis
+          New Script
         </Button>
       </div>
       
@@ -57,7 +54,7 @@ const ChatSidebar: React.FC = () => {
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Delete chat</p>
+                      <p>Delete script</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -65,39 +62,9 @@ const ChatSidebar: React.FC = () => {
             ))
           ) : (
             <div className="text-center text-muted-foreground p-4">
-              No chats yet
+              No scripts yet
             </div>
           )}
-        </div>
-      </div>
-      
-      <div className="border-t p-4 flex-shrink-0">
-        <div className="px-2 py-2 mb-2">
-          <p className="text-sm font-medium">
-            {user?.name || 'User'}
-          </p>
-          <p className="text-xs text-muted-foreground truncate">
-            {user?.email || 'user@example.com'}
-          </p>
-        </div>
-        <div className="space-y-1">
-          <Link to="/settings" className="block w-full">
-            <Button
-              variant="ghost"
-              className="w-full justify-start"
-            >
-              <Settings className="h-4 w-4 mr-2" />
-              Settings
-            </Button>
-          </Link>
-          <Button
-            variant="ghost"
-            className="w-full justify-start"
-            onClick={logout}
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            Logout
-          </Button>
         </div>
       </div>
     </div>

@@ -1,19 +1,25 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw, History, Play, Trash2, Edit3, Check, X } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
+import { prerequisiteService } from '@/services/prerequisiteService';
+import { backgroundJobService, BackgroundJob, JobStatusUpdate } from '@/services/backgroundJobService';
+import JobProgress from '@/components/JobProgress';
 
 interface AdAnalysisDetail {
   hook?: string;
   tone?: string;
   power_phrases?: string;
   visual?: string;
+  product?: string;
+  product_type?: string;
 }
 
 interface AdSetTargeting {
@@ -245,9 +251,18 @@ const renderTargetingFields = (targeting: AdSetTargeting | undefined) => {
 const AdAnalysis = () => {
   const [adAnalyses, setAdAnalyses] = useState<AdAnalysis[]>([]);
   const [loading, setLoading] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isCollecting, setIsCollecting] = useState(false);
+  
+  // Background job states
+  const [currentJob, setCurrentJob] = useState<BackgroundJob | null>(null);
+  const [jobHistory, setJobHistory] = useState<BackgroundJob[]>([]);
+  const [showJobHistory, setShowJobHistory] = useState(false);
+  
+  // Editing states
+  const [editingFields, setEditingFields] = useState<{[key: string]: {product?: boolean, product_type?: boolean}}>({});
+  const [editValues, setEditValues] = useState<{[key: string]: {product?: string, product_type?: string}}>({});
+  
   const { token } = useAuth();
   const { toast } = useToast();
 
@@ -277,6 +292,152 @@ const AdAnalysis = () => {
     };
     checkCollectionStatus();
   }, [token]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      console.log('AdAnalysis component unmounting, cleaning up background job polling');
+      backgroundJobService.stopAllPolling();
+    };
+  }, []);
+
+  // Load job history and check for running jobs on mount
+  useEffect(() => {
+    console.log('AdAnalysis component mounted, loading job history');
+    loadJobHistory();
+    fetchAdAnalyses();
+  }, []);
+
+  // Periodic cleanup of stale polling intervals
+  useEffect(() => {
+    const cleanupInterval = setInterval(() => {
+      const activePolls = backgroundJobService.getActivePollingCount();
+      if (activePolls > 1) {
+        console.log(`Warning: ${activePolls} active polling intervals detected. Cleaning up stale polls.`);
+        // If we have more than 1 active poll but no current job, clean up
+        if (!currentJob || (currentJob.status !== 'running' && currentJob.status !== 'pending')) {
+          backgroundJobService.cleanupStalePolling();
+        }
+      }
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(cleanupInterval);
+  }, [currentJob]);
+
+  const loadJobHistory = async () => {
+    try {
+      const jobs = await backgroundJobService.getUserJobs();
+      
+      // Ensure jobs is an array
+      if (!Array.isArray(jobs)) {
+        console.error('Expected array but got:', typeof jobs, jobs);
+        setJobHistory([]);
+        return;
+      }
+      
+      setJobHistory(jobs);
+      
+      // Check if there's a running job
+      const runningJob = jobs.find(job => job.status === 'running' || job.status === 'pending');
+      if (runningJob && runningJob._id) {
+        console.log('Found running job:', runningJob._id);
+        setCurrentJob(runningJob);
+        startJobPolling(runningJob._id);
+      } else {
+        console.log('No running jobs found');
+        // Clear any stale current job if no running jobs exist
+        if (currentJob && (currentJob.status === 'running' || currentJob.status === 'pending')) {
+          console.log('Clearing stale current job');
+          setCurrentJob(null);
+          backgroundJobService.stopAllPolling();
+        }
+      }
+    } catch (error) {
+      console.error('Error loading job history:', error);
+      setJobHistory([]); // Set empty array on error
+    }
+  };
+
+  // Function to handle cleanup of stale jobs
+  const handleStaleJobCleanup = (jobId: string) => {
+    console.log('Cleaning up stale job:', jobId);
+    
+    // Stop polling for this specific job
+    backgroundJobService.stopPolling(jobId);
+    
+    // If this was the current job, clear it
+    if (currentJob && currentJob._id === jobId) {
+      setCurrentJob(null);
+    }
+    
+    // Refresh job history to get updated status
+    setTimeout(() => {
+      loadJobHistory();
+    }, 1000);
+  };
+
+  const startJobPolling = (jobId: string) => {
+    // Validate job ID before starting polling
+    if (!jobId || jobId === 'undefined' || jobId === 'null' || jobId.trim() === '') {
+      console.error('Cannot start polling with invalid job ID:', jobId);
+      return;
+    }
+
+    console.log('Starting job polling for:', jobId);
+    
+    backgroundJobService.startPolling(
+      jobId,
+      (update: JobStatusUpdate) => {
+        setCurrentJob(update.job);
+      },
+      (completedJob: BackgroundJob) => {
+        // Job completed successfully
+        setCurrentJob(completedJob);
+        
+        // Clear prerequisite cache since analysis was successful
+        prerequisiteService.clearCache();
+        
+        // Refresh ad analyses
+        fetchAdAnalyses();
+        
+        toast({
+          title: "Success",
+          description: "Ad analysis completed successfully!"
+        });
+        
+        // Auto-hide job progress after 5 seconds
+        setTimeout(() => {
+          setCurrentJob(null);
+        }, 5000);
+      },
+      (errorMessage: string) => {
+        // Job failed or was cancelled
+        console.error('Job polling error:', errorMessage);
+        
+        // Handle job not found errors differently
+        if (errorMessage.includes('Job not found') || errorMessage.includes('Invalid job ID')) {
+          console.log('Job not found, cleaning up stale job state');
+          handleStaleJobCleanup(jobId);
+          
+          toast({
+            variant: "destructive",
+            title: "Job Not Found",
+            description: "The job is no longer available. It may have been cleaned up or expired."
+          });
+          
+          return; // Don't show generic error toast
+        }
+        
+        toast({
+          variant: "destructive",
+          title: "Analysis Failed",
+          description: errorMessage
+        });
+        
+        // Keep job visible for user to see error for actual failures
+      }
+    );
+  };
 
   const toggleDataCollection = async () => {
     try {
@@ -321,7 +482,7 @@ const AdAnalysis = () => {
         }
       });
       
-      console.log('Ad analyses response:', response.data); // Add this to see the actual response structure
+      console.log('Ad analyses response:', response.data);
       
       // Validate response data is an array
       if (Array.isArray(response.data)) {
@@ -358,46 +519,49 @@ const AdAnalysis = () => {
   };
 
   const analyzeAds = async () => {
-    setAnalyzing(true);
     setError(null);
     try {
-      const response = await axios.post('/api/v1/ad-analysis/analyze/', {}, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 900000 // 15 minute timeout
+      // Start background job
+      const jobResponse = await backgroundJobService.startAdAnalysis();
+      
+      // Validate job response
+      if (!jobResponse.job_id || jobResponse.job_id === 'undefined') {
+        throw new Error('Invalid job ID received from server');
+      }
+  
+      console.log('Analysis job started with ID:', jobResponse.job_id);
+      
+      setCurrentJob({
+        _id: jobResponse.job_id,  // Map job_id to _id for consistency
+        user_id: '',
+        job_type: 'ad_analysis',
+        status: 'pending',
+        progress: 0,
+        message: jobResponse.message,
+        created_at: new Date().toISOString()
       });
       
-      // Validate response data is an array
-      if (Array.isArray(response.data)) {
-        setAdAnalyses(prevAnalyses => [...response.data, ...prevAnalyses]);
-        
-        toast({
-          title: "Success",
-          description: "Ads analyzed successfully!"
-        });
-      } else {
-        console.error('Expected array but got:', typeof response.data, response.data);
-        setError("Received invalid data format from server");
-        toast({
-          variant: "destructive",
-          title: "Data Error",
-          description: "Received unexpected data format from server"
-        });
-      }
-    } catch (error: any) {
-      console.error('Error analyzing ads:', error);
+      // Start polling for updates
+      startJobPolling(jobResponse.job_id);
       
-      let errorMessage = "Failed to analyze ads. Please try again later.";
-      if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-        errorMessage = "The request timed out after 15 minutes. Facebook's API may be slow or you have a very large number of ads to analyze. Please try again later with a smaller date range.";
-      } else if (error.response?.status === 401) {
+      // Refresh job history
+      loadJobHistory();
+      
+      toast({
+        title: "Analysis Started",
+        description: "Your ad analysis is running in the background. You can continue using the app."
+      });
+      
+    } catch (error: any) {
+      console.error('Error starting ad analysis:', error);
+      
+      let errorMessage = "Failed to start ad analysis. Please try again later.";
+      if (error.response?.status === 401) {
         errorMessage = "Authentication failed. Please log in again.";
-      } else if (error.response?.status === 405) {
-        errorMessage = "Method not allowed. API endpoint may have changed.";
-      } else if (error.response?.data?.detail) {
-        errorMessage = error.response.data.detail;
+      } else if (error.response?.status === 409) {
+        errorMessage = "An analysis is already running. Please wait for it to complete.";
+      } else if (error.message) {
+        errorMessage = error.message;
       }
       
       setError(errorMessage);
@@ -406,14 +570,258 @@ const AdAnalysis = () => {
         title: "Error",
         description: errorMessage
       });
-    } finally {
-      setAnalyzing(false);
     }
   };
 
-  useEffect(() => {
-    fetchAdAnalyses();
-  }, []);
+  const cancelCurrentJob = async () => {
+    if (!currentJob) return;
+    
+    try {
+      const success = await backgroundJobService.cancelJob(currentJob._id);
+      if (success) {
+        backgroundJobService.stopPolling(currentJob._id);
+        setCurrentJob(null);
+        toast({
+          title: "Analysis Cancelled",
+          description: "The ad analysis has been cancelled."
+        });
+      }
+    } catch (error) {
+      console.error('Error cancelling job:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to cancel the analysis."
+      });
+    }
+  };
+
+  const closeJobProgress = () => {
+    setCurrentJob(null);
+  };
+
+  const deleteAdAnalysis = async (analysisId: string, adTitle: string) => {
+    try {
+      await axios.delete(`/api/v1/ad-analysis/${analysisId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      // Remove the deleted analysis from the local state
+      setAdAnalyses(prevAnalyses => 
+        prevAnalyses.filter(analysis => analysis._id !== analysisId)
+      );
+
+      toast({
+        title: "Success",
+        description: `"${adTitle || 'Ad'}" has been deleted successfully.`
+      });
+      
+    } catch (error: any) {
+      console.error('Error deleting ad analysis:', error);
+      
+      let errorMessage = "Failed to delete ad analysis";
+      if (error.response?.status === 404) {
+        errorMessage = "Ad analysis not found";
+      } else if (error.response?.status === 401) {
+        errorMessage = "Authentication failed. Please log in again.";
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: errorMessage
+      });
+    }
+  };
+
+  const handleDeleteClick = (analysisId: string, adTitle: string) => {
+    if (window.confirm(`Are you sure you want to delete "${adTitle || 'this ad'}"? This action cannot be undone.`)) {
+      deleteAdAnalysis(analysisId, adTitle);
+    }
+  };
+
+  const startEditing = (analysisId: string, field: 'product' | 'product_type', currentValue: string) => {
+    setEditingFields(prev => ({
+      ...prev,
+      [analysisId]: {
+        ...prev[analysisId],
+        [field]: true
+      }
+    }));
+    setEditValues(prev => ({
+      ...prev,
+      [analysisId]: {
+        ...prev[analysisId],
+        [field]: currentValue || ''
+      }
+    }));
+  };
+
+  const cancelEditing = (analysisId: string, field: 'product' | 'product_type') => {
+    setEditingFields(prev => ({
+      ...prev,
+      [analysisId]: {
+        ...prev[analysisId],
+        [field]: false
+      }
+    }));
+    setEditValues(prev => ({
+      ...prev,
+      [analysisId]: {
+        ...prev[analysisId],
+        [field]: undefined
+      }
+    }));
+  };
+
+  const updateAdAnalysis = async (analysisId: string, field: 'product' | 'product_type', newValue: string) => {
+    try {
+      const updateData = {
+        [field]: newValue.trim()
+      };
+
+      const response = await axios.patch(`/api/v1/ad-analysis/${analysisId}`, updateData, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (response.data.success && response.data.updated_analysis) {
+        // Update the local state with the updated analysis
+        setAdAnalyses(prevAnalyses => 
+          prevAnalyses.map(analysis => 
+            analysis._id === analysisId 
+              ? { ...analysis, ad_analysis: { ...analysis.ad_analysis, [field]: newValue.trim() }}
+              : analysis
+          )
+        );
+
+        // Clear editing state
+        cancelEditing(analysisId, field);
+
+        toast({
+          title: "Success",
+          description: `${field === 'product' ? 'Product' : 'Product Type'} updated successfully.`
+        });
+      }
+      
+    } catch (error: any) {
+      console.error('Error updating ad analysis:', error);
+      
+      let errorMessage = "Failed to update analysis";
+      if (error.response?.status === 404) {
+        errorMessage = "Ad analysis not found";
+      } else if (error.response?.status === 401) {
+        errorMessage = "Authentication failed. Please log in again.";
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: errorMessage
+      });
+    }
+  };
+
+  const handleSaveEdit = (analysisId: string, field: 'product' | 'product_type') => {
+    const newValue = editValues[analysisId]?.[field] || '';
+    updateAdAnalysis(analysisId, field, newValue);
+  };
+
+  // Helper component for editable fields
+  const EditableField = ({ 
+    analysisId, 
+    field, 
+    value, 
+    label 
+  }: { 
+    analysisId: string; 
+    field: 'product' | 'product_type'; 
+    value: string; 
+    label: string; 
+  }) => {
+    const isEditing = editingFields[analysisId]?.[field] || false;
+    const editValue = editValues[analysisId]?.[field] || '';
+
+    if (isEditing) {
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <p className="font-bold text-gray-800">{label}</p>
+            <div className="flex items-center space-x-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-50"
+                onClick={() => handleSaveEdit(analysisId, field)}
+                title="Save changes"
+              >
+                <Check className="h-3 w-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-gray-600 hover:text-gray-700 hover:bg-gray-50"
+                onClick={() => cancelEditing(analysisId, field)}
+                title="Cancel editing"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          </div>
+          <Input
+            value={editValue}
+            onChange={(e) => setEditValues(prev => ({
+              ...prev,
+              [analysisId]: {
+                ...prev[analysisId],
+                [field]: e.target.value
+              }
+            }))}
+            className="h-8 text-sm"
+            placeholder={`Enter ${label.toLowerCase()}`}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                handleSaveEdit(analysisId, field);
+              } else if (e.key === 'Escape') {
+                cancelEditing(analysisId, field);
+              }
+            }}
+            autoFocus
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-bold text-gray-800">{label}</p>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+            onClick={() => startEditing(analysisId, field, value)}
+            title={`Edit ${label.toLowerCase()}`}
+          >
+            <Edit3 className="h-3 w-3" />
+          </Button>
+        </div>
+        <p className="cursor-pointer" onClick={() => startEditing(analysisId, field, value)}>
+          {value || 'N/A'}
+        </p>
+      </div>
+    );
+  };
+
+  const isJobRunning = currentJob && (currentJob.status === 'running' || currentJob.status === 'pending');
 
   return (
     <div className="flex flex-col h-screen">
@@ -432,14 +840,24 @@ const AdAnalysis = () => {
                   {isCollecting ? "Stop Data Collection" : "Start Data Collection"}
                 </Label>
               </div>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowJobHistory(!showJobHistory)}
+                className="flex items-center space-x-2"
+              >
+                <History className="h-4 w-4" />
+                <span>History</span>
+              </Button>
+              
               <Button 
                 onClick={analyzeAds}
-                disabled={analyzing}
+                disabled={isJobRunning}
+                className="flex items-center space-x-2"
               >
-                {analyzing ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : null}
-                {analyzing ? "Analyzing..." : "Analyze Ads (May Take Up To 15 Minutes)"}
+                <Play className="h-4 w-4" />
+                <span>{isJobRunning ? "Analysis Running..." : "Start Analysis"}</span>
               </Button>
             </div>
           </div>
@@ -447,16 +865,56 @@ const AdAnalysis = () => {
       </div>
 
       <div className="flex-1 overflow-auto py-6 px-8">
-        <div className="container mx-auto">
+        <div className="container mx-auto space-y-6">
+          {/* Current Job Progress */}
+          {currentJob && (
+            <JobProgress 
+              job={currentJob} 
+              onCancel={isJobRunning ? cancelCurrentJob : undefined}
+              onClose={!isJobRunning ? closeJobProgress : undefined}
+              showCloseButton={!isJobRunning}
+            />
+          )}
+
+          {/* Job History */}
+          {showJobHistory && jobHistory && jobHistory.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Recent Jobs</CardTitle>
+                <CardDescription>Your analysis job history</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {jobHistory.slice(0, 5).map((job) => (
+                    <div key={job._id} className="flex items-center justify-between p-3 border rounded-md">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-3 h-3 rounded-full ${
+                          job.status === 'completed' ? 'bg-green-500' :
+                          job.status === 'failed' ? 'bg-red-500' :
+                          job.status === 'cancelled' ? 'bg-gray-500' :
+                          'bg-blue-500'
+                        }`} />
+                        <div>
+                          <p className="text-sm font-medium">{job.status.toUpperCase()}</p>
+                          <p className="text-xs text-gray-500">
+                            {new Date(job.created_at).toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {job.progress}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Ad Analyses Results */}
           {loading ? (
             <div className="flex justify-center items-center h-64">
               <Loader2 className="h-8 w-8 animate-spin" />
-            </div>
-          ) : analyzing ? (
-            <div className="flex flex-col justify-center items-center h-64 text-center">
-              <Loader2 className="h-8 w-8 animate-spin mb-4" />
-              <p className="text-lg text-muted-foreground">Analyzing ads from Facebook...</p>
-              <p className="text-sm text-muted-foreground mt-2">This may take up to 15 minutes. Please don't close this page.</p>
             </div>
           ) : error ? (
             <div className="flex flex-col justify-center items-center h-64 text-center">
@@ -466,10 +924,10 @@ const AdAnalysis = () => {
           ) : adAnalyses.length === 0 ? (
             <div className="flex flex-col justify-center items-center h-64 text-center">
               <p className="text-lg text-muted-foreground mb-4">No ad analyses found.</p>
-              <p className="text-muted-foreground mb-6">Click the "Analyze Ads" button to analyze your Facebook ads.</p>
-              <Button onClick={analyzeAds} disabled={analyzing}>
-                {analyzing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-                {analyzing ? "Analyzing..." : "Analyze Ads (May Take Up To 15 Minutes)"}
+              <p className="text-muted-foreground mb-6">Click the "Start Analysis" button to analyze your Facebook ads.</p>
+              <Button onClick={analyzeAds} disabled={isJobRunning}>
+                <Play className="h-4 w-4 mr-2" />
+                {isJobRunning ? "Analysis Running..." : "Start Analysis"}
               </Button>
             </div>
           ) : (
@@ -486,13 +944,27 @@ const AdAnalysis = () => {
                           {analysis.ad_title || 'Untitled Ad'}
                         </Link>
                       </CardTitle>
-                      <span className={`absolute top-4 right-6 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                        analysis.ad_status === 'ACTIVE' 
-                          ? 'bg-green-100 text-green-800' 
-                          : 'bg-yellow-100 text-yellow-800'
-                      }`}>
-                        {analysis.ad_status || 'Unknown'}
-                      </span>
+                      <div className="absolute top-4 right-6 flex flex-col items-end space-y-2">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          analysis.ad_status === 'ACTIVE' 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {analysis.ad_status || 'Unknown'}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleDeleteClick(analysis._id, analysis.ad_title || 'Untitled Ad');
+                          }}
+                          title="Delete this ad analysis"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                     <CardDescription>
                       Campaign: {analysis.campaign_name || 'Unknown Campaign'}
@@ -506,7 +978,7 @@ const AdAnalysis = () => {
                   <CardContent>
                     <div className="space-y-5">
                       <div>
-                        <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div className="grid grid-cols-3 gap-3 text-sm">
                           <div>
                             <p className="font-bold text-gray-800 mb-1">Hook</p>
                             <p>{analysis.ad_analysis?.hook || 'N/A'}</p>
@@ -515,6 +987,12 @@ const AdAnalysis = () => {
                             <p className="font-bold text-gray-800 mb-1">Tone</p>
                             <p>{analysis.ad_analysis?.tone || 'N/A'}</p>
                           </div>
+                          <EditableField
+                            analysisId={analysis._id}
+                            field="product"
+                            value={analysis.ad_analysis?.product || ''}
+                            label="Product"
+                          />
                           <div>
                             <p className="font-bold text-gray-800 mb-1">Power Phrases</p>
                             <p>{analysis.ad_analysis?.power_phrases || 'N/A'}</p>
@@ -523,6 +1001,12 @@ const AdAnalysis = () => {
                             <p className="font-bold text-gray-800 mb-1">Visual</p>
                             <p>{analysis.ad_analysis?.visual || 'N/A'}</p>
                           </div>
+                          <EditableField
+                            analysisId={analysis._id}
+                            field="product_type"
+                            value={analysis.ad_analysis?.product_type || ''}
+                            label="Product Type"
+                          />
                         </div>
                       </div>
                       

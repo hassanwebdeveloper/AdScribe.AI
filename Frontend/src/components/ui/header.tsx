@@ -1,8 +1,18 @@
 import { cn } from "@/lib/utils";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "lucide-react";
+import { Calendar, Settings, LogOut, User } from "lucide-react";
 import { useChat } from "@/contexts/ChatContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface HeaderProps {
   className?: string;
@@ -10,7 +20,9 @@ interface HeaderProps {
 
 export function Header({ className }: HeaderProps) {
   const { dateRange, toggleAnalysisPanel } = useChat();
+  const { user, logout } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   
   // Calculate days between if dates are set
   const getDaysString = () => {
@@ -22,6 +34,20 @@ export function Header({ className }: HeaderProps) {
       return `${days} day${days !== 1 ? 's' : ''} selected`;
     }
     return "10 days selected"; // Default fallback
+  };
+
+  // Handle logout
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login");
+  };
+
+  // Get user initials for avatar
+  const getUserInitials = () => {
+    if (!user?.name) return "US";
+    const names = user.name.split(" ");
+    if (names.length === 1) return names[0].substring(0, 2).toUpperCase();
+    return (names[0][0] + names[names.length - 1][0]).toUpperCase();
   };
   
   return (
@@ -61,13 +87,22 @@ export function Header({ className }: HeaderProps) {
             Dashboard
           </Link>
           <Link 
-            to="/chat" 
+            to="/recommendations" 
             className={cn(
               "px-3 py-2 text-sm font-medium rounded-md",
-              location.pathname === "/chat" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+              location.pathname === "/recommendations" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
             )}
           >
-            Chat
+            Recommendations
+          </Link>
+          <Link 
+            to="/ai-scripter" 
+            className={cn(
+              "px-3 py-2 text-sm font-medium rounded-md",
+              location.pathname === "/ai-scripter" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+          >
+            AI Scripter
           </Link>
           <Link 
             to="/ad-analysis" 
@@ -78,19 +113,10 @@ export function Header({ className }: HeaderProps) {
           >
             Analyze Ads
           </Link>
-          <Link 
-            to="/settings" 
-            className={cn(
-              "px-3 py-2 text-sm font-medium rounded-md",
-              location.pathname === "/settings" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-            )}
-          >
-            Settings
-          </Link>
         </div>
         
         <div className="ml-auto flex items-center gap-4">
-          {location.pathname === "/chat" && (
+          {location.pathname === "/ai-scripter" && (
             <Button 
               variant="outline" 
               size="sm" 
@@ -102,6 +128,47 @@ export function Header({ className }: HeaderProps) {
               {getDaysString()}
             </Button>
           )}
+          
+          {/* Settings Icon */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate("/settings")}
+            className="h-9 w-9"
+          >
+            <Settings className="h-4 w-4" />
+          </Button>
+          
+          {/* User Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="relative h-9 w-9 rounded-full">
+                <Avatar className="h-8 w-8">
+                  <AvatarFallback>{getUserInitials()}</AvatarFallback>
+                </Avatar>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-56" align="end" forceMount>
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-medium leading-none">{user?.name || 'User'}</p>
+                  <p className="text-xs leading-none text-muted-foreground">
+                    {user?.email || 'user@example.com'}
+                  </p>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => navigate("/settings")}>
+                <Settings className="mr-2 h-4 w-4" />
+                <span>Settings</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleLogout}>
+                <LogOut className="mr-2 h-4 w-4" />
+                <span>Log out</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </header>

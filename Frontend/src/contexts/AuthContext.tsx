@@ -3,6 +3,7 @@ import { AuthState, User, FacebookAdAccount } from '@/types';
 import { useToast } from '@/components/ui/use-toast';
 import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { prerequisiteService } from '@/services/prerequisiteService';
 
 // Create an axios instance with the base URL
 const api = axios.create({
@@ -18,6 +19,7 @@ interface AuthContextType extends AuthState {
   handleFacebookCallback: (code: string) => Promise<void>;
   getFacebookAdAccounts: () => Promise<FacebookAdAccount[]>;
   setFacebookAdAccount: (accountId: string) => Promise<void>;
+  loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -70,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             
             // Check if the user has selected an ad account
             if (userData.facebook_credentials?.account_id) {
-              navigate('/chat');
+              navigate('/dashboard');
             } else {
               // Redirect to ad account selection page
               navigate('/select-ad-account');
@@ -314,7 +316,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       
       // Redirect to dashboard
-      navigate('/chat');
+      navigate('/dashboard');
     } catch (error) {
       let errorMessage = 'Failed to set ad account';
       
@@ -457,6 +459,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading: false,
       });
       
+      // Clear prerequisite cache since credentials may have changed
+      if (settings.fbGraphApiKey !== undefined || settings.fbAdAccountId !== undefined) {
+        prerequisiteService.clearCache();
+      }
+      
       toast({
         title: "Success",
         description: "Your settings have been updated successfully",
@@ -497,6 +504,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       handleFacebookCallback,
       getFacebookAdAccounts,
       setFacebookAdAccount,
+      loading: authState.isLoading,
     }}>
       {children}
     </AuthContext.Provider>

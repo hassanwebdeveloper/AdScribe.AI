@@ -4,7 +4,7 @@ motor==3.3.2
 pymongo==4.6.1
 redis==5.0.1
 python-dotenv==1.0.0
-pydantic==2.5.2
+pydantic==2.7.4
 pydantic-settings==2.1.0
 bcrypt==4.0.1
 python-jose[cryptography]==3.3.0
@@ -21,3 +21,32 @@ scikit-learn==1.4.0
 statsmodels==0.14.4
 plotly==5.18.0
 kaleido==0.2.1
+# AI Agent Dependencies
+# These are additional dependencies required for the AI Agent functionality
+
+# LangGraph for workflow orchestration
+langgraph==0.4.7
+
+# OpenAI for transcription and analysis
+openai==1.82.0
+
+# Computer Vision for frame extraction
+opencv-python
+
+# Additional dependencies that might be needed
+typing-extensions
+
+PyJWT 
+
+email-validator
+
+# ML and AI dependencies for recommendation system
+scikit-learn>=1.3.0
+pandas>=2.0.0
+numpy>=1.24.0
+joblib>=1.3.0
+openai>=1.0.0
+
+# Optional ML enhancements
+xgboost>=1.7.0
+lightgbm>=4.0.0

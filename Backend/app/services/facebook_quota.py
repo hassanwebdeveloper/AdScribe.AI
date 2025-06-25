@@ -151,6 +151,40 @@ class FacebookQuotaManager:
             
             return True
     
+    async def check_and_reserve_quota(self, user_id: str, request_count: int = 1) -> bool:
+        """
+        Check if we have enough quota for multiple requests and reserve it.
+        
+        Args:
+            user_id: The user ID making the request
+            request_count: Number of API requests to reserve quota for
+            
+        Returns:
+            True if quota is available and reserved, False otherwise
+        """
+        async with self._lock:
+            await self._load_usage_stats()
+            
+            # Check if we have enough quota for all requests
+            if self._requests_this_hour + request_count >= self.HOURLY_LIMIT * 0.95:
+                logger.warning(f"Hourly quota would be exceeded: {self._requests_this_hour}/{self.HOURLY_LIMIT}, requested: {request_count}")
+                return False
+            
+            if self._requests_today + request_count >= self.DAILY_LIMIT * 0.95:
+                logger.warning(f"Daily quota would be exceeded: {self._requests_today}/{self.DAILY_LIMIT}, requested: {request_count}")
+                return False
+            
+            # Reserve quota by updating counters
+            self._requests_this_hour += request_count
+            self._requests_today += request_count
+            
+            # Record the requests
+            for _ in range(request_count):
+                await self._record_request()
+            
+            logger.info(f"Reserved quota for {request_count} requests for user {user_id}")
+            return True
+    
     async def wait_for_quota(self, user_id: str, max_wait_seconds: int = 300) -> bool:
         """
         Wait until quota is available.

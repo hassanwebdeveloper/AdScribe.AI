@@ -6,13 +6,14 @@ from app.core.security import get_current_user_email
 from app.core.deps import get_current_user
 from app.services.user_service import get_user_by_email
 from app.models.user import User
-import httpx
+# import httpx  # No longer needed for n8n calls
 import os
 import re
 import json
 import logging
 from dotenv import load_dotenv
 from app.core.database import get_database
+from app.core.AI_Agent.Agent.Ad_Script_Generator_Agent import ad_script_generator_agent
 
 # Load environment variables
 load_dotenv()
@@ -20,8 +21,8 @@ load_dotenv()
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Get the N8N webhook URL from environment variables
-N8N_WEBHOOK_URL = settings.N8N_WEBHOOK_URL
+# AI Agent is used instead of N8N webhook
+# N8N_WEBHOOK_URL = settings.N8N_WEBHOOK_URL  # No longer needed
 
 router = APIRouter()
 
@@ -34,6 +35,10 @@ class UserInfo(BaseModel):
     fbGraphApiKey: Optional[str] = None
     fbAdAccountId: Optional[str] = None
 
+class ProductInfo(BaseModel):
+    product: Optional[str] = None
+    product_type: Optional[str] = None
+
 class Message(BaseModel):
     role: str
     content: str
@@ -43,6 +48,7 @@ class WebhookRequest(BaseModel):
     previousMessages: List[Message] = []
     dateRange: Optional[DateRange] = None
     userInfo: Optional[UserInfo] = None
+    productInfo: Optional[ProductInfo] = None
 
 @router.post("/chat")
 async def process_webhook(
@@ -50,16 +56,17 @@ async def process_webhook(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Process a chat message by forwarding it to the N8N webhook
+    Process a chat message using the LangGraph AI Agent
     and returning the response.
     
-    This endpoint acts as a proxy to protect sensitive tokens.
+    This endpoint processes user queries with intelligent routing
+    for ad script generation or general responses.
     """
-    # Make sure we have the webhook URL
-    if not N8N_WEBHOOK_URL:
+    # Initialize the agent response
+    if not ad_script_generator_agent:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="N8N webhook URL not configured"
+            detail="Ad Script Generator Agent not properly initialized"
         )
     
     # Clean the user message from any existing date range information
@@ -243,11 +250,12 @@ async def process_webhook(
         # Create the ad analysis data with additional fields
         ad_data = {
             "video_id": video_id,
-            "audio_description": analysis.get("audio_description"),
-            "video_description": analysis.get("video_description"),
-            "video_url": analysis.get("video_url"),
-            "ad_description": analysis.get("ad_message"),
-            "video_title": analysis.get("ad_title", "")  # Add video title from ad_title
+            "audio_description": analysis.get("audio_description") or "",
+            "video_description": analysis.get("video_description") or "",
+            "video_url": analysis.get("video_url") or "",
+            "ad_description": analysis.get("ad_message") or "",
+            "video_title": analysis.get("ad_title") or "",  # Add video title from ad_title
+            "ad_analysis": analysis.get("ad_analysis", {})  # Add detailed analysis components
         }
         
         # Add best ad metrics to the ad analysis data
@@ -265,11 +273,12 @@ async def process_webhook(
                 # Create the ad analysis data with additional fields
                 ad_data = {
                     "video_id": video_id,
-                    "audio_description": analysis.get("audio_description"),
-                    "video_description": analysis.get("video_description"),
-                    "video_url": analysis.get("video_url"),
-                    "ad_description": analysis.get("ad_message"),
-                    "video_title": analysis.get("ad_title", "")  # Add video title from ad_title
+                    "audio_description": analysis.get("audio_description") or "",
+                    "video_description": analysis.get("video_description") or "",
+                    "video_url": analysis.get("video_url") or "",
+                    "ad_description": analysis.get("ad_message") or "",
+                    "video_title": analysis.get("ad_title") or "",  # Add video title from ad_title
+                    "ad_analysis": analysis.get("ad_analysis", {})  # Add detailed analysis components
                 }
                 
                 # Add best ad metrics to the ad analysis data
@@ -288,7 +297,7 @@ async def process_webhook(
     else:
         logger.info(f"Using fallback ad analysis, total: {len(ad_analyses_data)}")
     
-    # Create the payload for the N8N webhook
+    # Create the payload for the AI Agent
     payload = {
         "userMessage": cleaned_message,  # Use the cleaned message without the date range
         "previousMessages": [
@@ -317,299 +326,151 @@ async def process_webhook(
     # since the adAnalyses array contains only the best ad's data
     
     try:
-        # Forward the request to N8N
-        async with httpx.AsyncClient(timeout=120.0) as client:  # Extended timeout for AI processing
-            response = await client.post(
-                N8N_WEBHOOK_URL, 
-                json=payload
-            )
-            
-            # Check if the request was successful
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"N8N webhook returned error: {response.text}"
-                )
-            
-            # Get the response data
+        # Process the request using LangGraph AI Agent instead of N8N
+        logger.info("Processing request with LangGraph AI Agent")
+        
+        # Convert previous messages to the format expected by the agent
+        previous_messages = []
+        for msg in request.previousMessages:
+            previous_messages.append({
+                "role": msg.role,
+                "content": msg.content
+            })
+        
+        # Initialize classification classes from database before using the agent
+        await ad_script_generator_agent.initialize_from_database()
+        
+        # Call the Ad Script Generator Agent
+        agent_response = await ad_script_generator_agent.process_request(
+            user_message=cleaned_message,
+            previous_messages=previous_messages,
+            ad_analyses=ad_analyses_data,
+            product_info=request.productInfo.model_dump() if request.productInfo else None
+        )
+        
+        logger.info(f"Ad Script Generator Agent response: {agent_response}")
+        
+        # Extract the output from agent response
+        output_content = agent_response.get("output", "No response generated")
+        
+        # Construct the final response with output
+        result["output"] = output_content
+        
+        # Create ad content from database if we have ad analyses data
+        ad_content = None
+        if ad_analyses_data and len(ad_analyses_data) > 0:
             try:
-                response_data = response.json()
-                logger.info(f"N8N response: {response_data}")
+                # Get the first (and should be only) ad analysis
+                ad_analysis = ad_analyses_data[0]
                 
-                # Check for ad content in the response
-                ad_content = None
-                output_content = None
-                
-                # Handle different response formats
-                if isinstance(response_data, dict):
-                    # Extract output content
-                    if "output" in response_data:
-                        output_content = response_data["output"]
-                    elif "result" in response_data:
-                        output_content = response_data["result"]
-                    elif "message" in response_data:
-                        output_content = response_data["message"]
-                    
-                    # Look for ad property
-                    if "ad" in response_data:
-                        ad_content = response_data["ad"]
-                        logger.info(f"Found ad content in response: {ad_content}")
-                elif isinstance(response_data, list) and len(response_data) > 0:
-                    # Extract from the first item if it's a list
-                    if isinstance(response_data[0], dict):
-                        if "output" in response_data[0]:
-                            output_content = response_data[0]["output"]
-                        if "ad" in response_data[0]:
-                            ad_content = response_data[0]["ad"]
-                            logger.info(f"Found ad content in list response: {ad_content}")
-                
-                # If no structured output was found, use the whole response
-                if output_content is None:
-                    output_content = response_data
-                
-                # Construct the final response with output and ad content
-                result["output"] = output_content
-                
-                # If ad content is not found in response, create it from database
-                if not ad_content and ad_analyses_data and len(ad_analyses_data) > 0:
-                    logger.info("No ad content in N8N response, creating from database")
-                    try:
-                        # Get the first (and should be only) ad analysis
-                        ad_analysis = ad_analyses_data[0]
+                # Get title from multiple potential sources
+                title = ad_analysis.get("video_title", "")
+                if not title and best_ad_id and result and result.get("best_ad"):
+                    # Try to get title from best_ad data
+                    title = result["best_ad"].get("ad_title", "")
+                    if not title:
+                        title = result["best_ad"].get("ad_name", "")
                         
-                        # Get title from multiple potential sources
-                        title = ad_analysis.get("video_title", "")
-                        if not title and best_ad_id and result and result.get("best_ad"):
-                            # Try to get title from best_ad data
-                            title = result["best_ad"].get("ad_title", "")
-                            if not title:
-                                title = result["best_ad"].get("ad_name", "")
-                                
-                            # If still no title, try from historical data
-                            if not title and result.get("historical") and len(result["historical"]) > 0:
-                                first_historical = result["historical"][0]
-                                title = first_historical.get("ad_name", "")
-                                if not title:
-                                    title = first_historical.get("ad_title", "")
-                        
+                    # If still no title, try from historical data
+                    if not title and result.get("historical") and len(result["historical"]) > 0:
+                        first_historical = result["historical"][0]
+                        title = first_historical.get("ad_name", "")
                         if not title:
-                            title = "Ad"
-                            
-                        logger.info(f"Using title: {title} for ad content")
-                        
-                        # Create ad content from database information
-                        ad_content = {
-                            "title": title,
-                            "description": ad_analysis.get("ad_description", ""),
-                            "video_url": ad_analysis.get("video_url", ""),
-                            "is_active": True,  # Default to active
-                            "purchases": 0      # Default to 0
-                        }
-                        
-                        # Add metrics if available
-                        if "metrics" in ad_analysis:
-                            ad_metrics = ad_analysis["metrics"]
-                            # Calculate total purchases from historical data if available
-                            if result and result.get("historical"):
-                                total_purchases = 0
-                                for historical_point in result["historical"]:
-                                    if historical_point.get("ad_id") == best_ad_id:
-                                        total_purchases += int(historical_point.get("conversions", 0))
-                                ad_content["purchases"] = total_purchases
-                                logger.info(f"Calculated total purchases for best ad: {total_purchases}")
-                            else:
-                                # Fallback to metrics if historical data not available
-                                if "conversions" in ad_metrics:
-                                    try:
-                                        ad_content["purchases"] = int(float(ad_metrics["conversions"]))
-                                    except (ValueError, TypeError):
-                                        ad_content["purchases"] = 0
-                            
-                            if "revenue" in ad_metrics:
-                                try:
-                                    ad_content["revenue"] = float(ad_metrics["revenue"])
-                                except (ValueError, TypeError):
-                                    ad_content["revenue"] = 0.0
-                            
-                            # Add more metrics that might be useful
-                            if "roas" in ad_metrics:
-                                try:
-                                    ad_content["roas"] = float(ad_metrics["roas"])
-                                except (ValueError, TypeError):
-                                    ad_content["roas"] = 0.0
-                            
-                            if "ctr" in ad_metrics:
-                                try:
-                                    ad_content["ctr"] = float(ad_metrics["ctr"])
-                                except (ValueError, TypeError):
-                                    ad_content["ctr"] = 0.0
-                        
-                        # Add video descriptions if available
-                        if "video_description" in ad_analysis and ad_analysis["video_description"]:
-                            ad_content["video_description"] = ad_analysis["video_description"]
-                        
-                        if "audio_description" in ad_analysis and ad_analysis["audio_description"]:
-                            ad_content["audio_description"] = ad_analysis["audio_description"]
-                            
-                        # Add video ID for reference
-                        if "video_id" in ad_analysis and ad_analysis["video_id"]:
-                            ad_content["video_id"] = ad_analysis["video_id"]
-                            
-                        logger.info(f"Created ad content from database: {ad_content}")
-                    except Exception as e:
-                        logger.error(f"Error creating ad content from database: {str(e)}", exc_info=True)
-                        # Create a basic fallback ad if all else fails
-                        ad_content = {
-                            "title": "Ad",
-                            "description": "Advertisement",
-                            "video_url": "",
-                            "is_active": True,
-                            "purchases": 0
-                        }
+                            title = first_historical.get("ad_title", "")
                 
-                # Add ad content if found or created
-                if ad_content:
-                    logger.info(f"Processing ad content of type: {type(ad_content)}")
+                if not title:
+                    title = "Ad"
                     
-                    # If ad is a string, ensure it's valid JSON and properly structured
-                    if isinstance(ad_content, str):
-                        logger.info(f"Ad content is a string: {ad_content[:100]}")
-                        
-                        # Check if it's a JSON-like string but not properly formatted
-                        # Example: {"title": Cash refund if not satisfied, "description":100% Pure White...}
-                        if ad_content.startswith('{') and '"title":' in ad_content and not ad_content.startswith('{"'):
-                            logger.info("Found malformed JSON-like string, attempting to fix")
-                            try:
-                                # Try to fix common issues with the JSON string
-                                # 1. Add quotes around property names if missing
-                                fixed_json = re.sub(r'([{,])\s*([a-zA-Z_]+):', r'\1"\2":', ad_content)
-                                # 2. Ensure values have quotes if they're strings without quotes
-                                fixed_json = re.sub(r':\s*([^",\d{}\[\]]+)([,}])', r':"\1"\2', fixed_json)
-                                
-                                logger.info(f"Attempting to parse fixed JSON: {fixed_json[:100]}")
-                                try:
-                                    parsed_ad = json.loads(fixed_json)
-                                    logger.info("Successfully parsed fixed JSON")
-                                    result["ad"] = parsed_ad
-                                except json.JSONDecodeError as e:
-                                    logger.warning(f"Still failed to parse fixed JSON: {e}")
-                                    # Fallback to manual field extraction
-                                    ad_obj = {}
-                                    # Extract fields using regex
-                                    title_match = re.search(r'"title":\s*([^,}]+)', ad_content)
-                                    if title_match:
-                                        ad_obj["title"] = title_match.group(1).strip().strip('"\'')
-                                    
-                                    desc_match = re.search(r'"description":\s*([^,}]+)', ad_content)
-                                    if desc_match:
-                                        ad_obj["description"] = desc_match.group(1).strip().strip('"\'')
-                                    
-                                    video_match = re.search(r'"video_url":\s*([^,}]+)', ad_content)
-                                    if video_match:
-                                        ad_obj["video_url"] = video_match.group(1).strip().strip('"\'')
-                                    
-                                    active_match = re.search(r'"is_active":\s*([^,}]+)', ad_content)
-                                    if active_match:
-                                        active_val = active_match.group(1).strip().lower()
-                                        ad_obj["is_active"] = active_val == "true"
-                                    
-                                    purchases_match = re.search(r'"purchases":\s*(\d+)', ad_content)
-                                    if purchases_match:
-                                        ad_obj["purchases"] = int(purchases_match.group(1))
-                                    
-                                    logger.info(f"Manual extraction created: {ad_obj}")
-                                    result["ad"] = ad_obj
-                            except Exception as e:
-                                logger.error(f"Error fixing malformed JSON: {e}")
-                                # Fallback to simple structure
-                                result["ad"] = {
-                                    "title": "Sponsored Content",
-                                    "description": ad_content,
-                                    "video_url": "",
-                                    "is_active": True,
-                                    "purchases": 0
-                                }
-                        else:
-                            try:
-                                # First, try to parse the JSON string normally
-                                parsed_ad = json.loads(ad_content)
-                                logger.info(f"Successfully parsed ad JSON: {parsed_ad}")
-                                
-                                # Check if this is already the expected format
-                                if isinstance(parsed_ad, dict) and all(key in parsed_ad for key in ["title", "description"]):
-                                    # It's already in the right format, use it directly
-                                    logger.info("Ad data is in the expected format")
-                                    result["ad"] = parsed_ad
-                                else:
-                                    # Not in the right format, but we have JSON
-                                    logger.warning(f"Ad data JSON doesn't have expected structure: {parsed_ad}")
-                                    result["ad"] = parsed_ad
-                            except json.JSONDecodeError as e:
-                                # If JSON parsing fails, maybe it's a quoted string - try to clean and parse
-                                logger.warning(f"JSON decode error for ad data: {e}")
-                                try:
-                                    # Remove leading/trailing quotes and try parsing again if it looks like JSON
-                                    cleaned_json = ad_content.strip('"\'')
-                                    if cleaned_json.startswith('{') and cleaned_json.endswith('}'):
-                                        logger.info(f"Trying to parse cleaned JSON: {cleaned_json[:100]}")
-                                        parsed_ad = json.loads(cleaned_json)
-                                        logger.info(f"Successfully parsed cleaned ad JSON: {parsed_ad}")
-                                        result["ad"] = parsed_ad
-                                    else:
-                                        # Not JSON, keep it as a string
-                                        logger.warning("Ad data is not valid JSON, keeping as string")
-                                        result["ad"] = {"title": "Ad", "description": ad_content, "video_url": "", "is_active": True, "purchases": 0}
-                                except Exception as inner_e:
-                                    logger.error(f"Error processing cleaned ad data: {inner_e}")
-                                    # Fallback to simple structure if all else fails
-                                    result["ad"] = {"title": "Ad", "description": ad_content, "video_url": "", "is_active": True, "purchases": 0}
-                    elif isinstance(ad_content, dict):
-                        # It's already a dict, ensure it has the expected format
-                        logger.info(f"Ad content is a dict: {ad_content}")
-                        
-                        # Check if all required fields are present
-                        required_fields = ["title", "description", "video_url", "is_active", "purchases"]
-                        if all(field in ad_content for field in required_fields):
-                            logger.info("Ad dict has all required fields")
-                            result["ad"] = ad_content
-                        else:
-                            # Missing required fields, create a structure with what we have
-                            logger.warning(f"Ad dict missing required fields. Available: {ad_content.keys()}")
-                            
-                            # Create a valid ad structure with defaults for missing fields
-                            valid_ad = {
-                                "title": ad_content.get("title", "Ad"),
-                                "description": ad_content.get("description", str(ad_content)),
-                                "video_url": ad_content.get("video_url", ""),
-                                "is_active": ad_content.get("is_active", True),
-                                "purchases": ad_content.get("purchases", 0)
-                            }
-                            result["ad"] = valid_ad
+                logger.info(f"Using title: {title} for ad content")
+                
+                # Create ad content from database information
+                ad_content = {
+                    "title": title or "Ad",
+                    "description": ad_analysis.get("ad_description") or "",
+                    "video_url": ad_analysis.get("video_url") or "",
+                    "is_active": True,  # Default to active
+                    "purchases": 0      # Default to 0
+                }
+                
+                # Add metrics if available
+                if "metrics" in ad_analysis:
+                    ad_metrics = ad_analysis["metrics"]
+                    # Calculate total purchases from historical data if available
+                    if result and result.get("historical"):
+                        total_purchases = 0
+                        for historical_point in result["historical"]:
+                            if historical_point.get("ad_id") == best_ad_id:
+                                total_purchases += int(historical_point.get("conversions", 0))
+                        ad_content["purchases"] = total_purchases
+                        logger.info(f"Calculated total purchases for best ad: {total_purchases}")
                     else:
-                        # Not a string or dict, convert to string representation
-                        logger.warning(f"Ad content is not a string or dict: {type(ad_content)}")
-                        result["ad"] = {
-                            "title": "Ad", 
-                            "description": str(ad_content), 
-                            "video_url": "", 
-                            "is_active": True, 
-                            "purchases": 0
-                        }
+                        # Fallback to metrics if historical data not available
+                        if "conversions" in ad_metrics:
+                            try:
+                                ad_content["purchases"] = int(float(ad_metrics["conversions"]))
+                            except (ValueError, TypeError):
+                                ad_content["purchases"] = 0
                     
-                    logger.info(f"Final ad content in result: {result['ad']}")
+                    if "revenue" in ad_metrics:
+                        try:
+                            ad_content["revenue"] = float(ad_metrics["revenue"])
+                        except (ValueError, TypeError):
+                            ad_content["revenue"] = 0.0
+                    
+                    # Add more metrics that might be useful
+                    if "roas" in ad_metrics:
+                        try:
+                            ad_content["roas"] = float(ad_metrics["roas"])
+                        except (ValueError, TypeError):
+                            ad_content["roas"] = 0.0
+                    
+                    if "ctr" in ad_metrics:
+                        try:
+                            ad_content["ctr"] = float(ad_metrics["ctr"])
+                        except (ValueError, TypeError):
+                            ad_content["ctr"] = 0.0
                 
-                return result
+                # Add video descriptions if available
+                video_desc = ad_analysis.get("video_description")
+                if video_desc:
+                    ad_content["video_description"] = video_desc
                 
+                audio_desc = ad_analysis.get("audio_description") 
+                if audio_desc:
+                    ad_content["audio_description"] = audio_desc
+                    
+                # Add video ID for reference
+                video_id_val = ad_analysis.get("video_id")
+                if video_id_val:
+                    ad_content["video_id"] = video_id_val
+                    
+                logger.info(f"Created ad content from database: {ad_content}")
             except Exception as e:
-                logger.error(f"Error processing N8N response: {str(e)}", exc_info=True)
-                # If we can't parse the JSON or encounter another error, return the raw text
-                return {"output": response.text}
-    
-    except httpx.RequestError as e:
+                logger.error(f"Error creating ad content from database: {str(e)}", exc_info=True)
+                # Create a basic fallback ad if all else fails
+                ad_content = {
+                    "title": "Ad",
+                    "description": "Advertisement",
+                    "video_url": "",
+                    "is_active": True,
+                    "purchases": 0,
+                    "video_description": "",
+                    "audio_description": ""
+                }
+        
+        # Add ad content to result if available
+        if ad_content:
+            result["ad"] = ad_content
+            logger.info(f"Added ad content to result: {ad_content}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error processing request with Ad Script Generator Agent: {str(e)}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Error communicating with N8N webhook: {str(e)}"
-        ) 
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing request: {str(e)}"
+        )
 
 @router.post("/callback", response_model=Dict[str, Any])
 async def webhook_callback(

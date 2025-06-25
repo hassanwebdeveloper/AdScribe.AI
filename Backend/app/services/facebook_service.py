@@ -49,6 +49,17 @@ class FacebookAdService:
             )
         return self._client
     
+    async def cleanup(self):
+        """Clean up resources, especially HTTP client and its thread pools."""
+        if self._client is not None:
+            try:
+                await self._client.aclose()
+                logger.debug("FacebookAdService HTTP client closed successfully")
+            except Exception as e:
+                logger.debug(f"Error closing FacebookAdService HTTP client: {e}")
+            finally:
+                self._client = None
+    
     @classmethod
     def _track_request_rate(cls):
         """Track request rate to help debug rate limiting."""
@@ -67,26 +78,42 @@ class FacebookAdService:
             requests_per_minute = len(cls._request_times)
             logger.warning(f"Facebook API request rate: {requests_per_minute} requests in the last minute")
     
-    async def _make_request(self, url: str, params: Dict[str, Any], retry_count: int = 0) -> Dict[str, Any]:
-        """Make a request to Facebook API with improved rate limiting."""
-        # Check quota before making request
-        user_id = params.get("user_id", "unknown")
+    async def _make_request(self, url: str, params: Dict[str, Any], retry_count: int = 0, cancellation_token: Dict[str, bool] = None) -> Dict[str, Any]:
+        """
+        Make a request to the Facebook API with proper error handling and rate limiting.
         
-        # First, track our own request rate
-        self._track_request_rate()
+        Args:
+            url: The URL to request
+            params: Request parameters
+            retry_count: Current retry attempt (internal use)
+            cancellation_token: Optional cancellation token to check for job cancellation
         
-        # Wait for quota if needed (max 2 minutes)
-        if not await self.quota_manager.wait_for_quota(user_id, max_wait_seconds=120):
-            raise ValueError(f"Facebook API quota exceeded, please try again later")
+        Returns:
+            JSON response data
+        """
+        # Check for cancellation before making request
+        if cancellation_token and cancellation_token.get("cancelled", False):
+            logger.info(f"Request to {url.split('?')[0]} cancelled before execution")
+            raise ValueError("Request cancelled")
         
         try:
-            # Add delay between requests
-            current_time = datetime.utcnow().timestamp()
-            time_since_last_request = current_time - self._last_request_time
-            if time_since_last_request < self.REQUEST_DELAY:
-                delay = self.REQUEST_DELAY - time_since_last_request
-                logger.debug(f"Adding delay of {delay:.2f}s between requests")
-                await asyncio.sleep(delay)
+            # Increment and track global request count
+            self.__class__._request_count += 1
+            self._track_request_rate()
+            
+            # Wait for rate limit before making the request
+            now = datetime.utcnow().timestamp()
+            if hasattr(self, '_last_request_time'):
+                time_since_last = now - self._last_request_time
+                if time_since_last < self.REQUEST_DELAY:
+                    wait_time = self.REQUEST_DELAY - time_since_last
+                    logger.debug(f"Rate limiting: waiting {wait_time:.2f} seconds before request")
+                    await asyncio.sleep(wait_time)
+            
+            # Check for cancellation after rate limit wait
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Request to {url.split('?')[0]} cancelled after rate limit wait")
+                raise ValueError("Request cancelled")
             
             self._last_request_time = datetime.utcnow().timestamp()
             
@@ -100,19 +127,35 @@ class FacebookAdService:
             timeout = 30.0 * (retry_count + 1)
             response = await client.get(url, params=params, timeout=timeout)
             
+            # Check for cancellation after receiving response
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Request to {url.split('?')[0]} cancelled after receiving response")
+                raise ValueError("Request cancelled")
+            
             # Log response time
             request_time = time.time() - request_start
             logger.debug(f"Response received in {request_time:.2f}s with status {response.status_code}")
             
             response.raise_for_status()
             return response.json()
-        except httpx.TimeoutError:
+        except ValueError as e:
+            # Don't retry for cancellation errors
+            if "cancelled" in str(e).lower():
+                raise e
+            # Re-raise other ValueError exceptions
+            raise e
+        except httpx.TimeoutException:
+            # Check if timeout was due to cancellation
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Request timeout for {url.split('?')[0]} - job was cancelled")
+                raise ValueError("Request cancelled")
+            
             if retry_count < self.MAX_RETRIES:
                 # Use a longer delay for timeouts
                 delay = (self.RATE_LIMIT_DELAY * 2 * (2 ** retry_count)) + random.uniform(1, 5)
                 logger.warning(f"Request timeout for URL {url.split('?')[0]}, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
                 await asyncio.sleep(delay)
-                return await self._make_request(url, params, retry_count + 1)
+                return await self._make_request(url, params, retry_count + 1, cancellation_token)
             else:
                 error_msg = f"Max retries reached after timeouts: {url.split('?')[0]}"
                 logger.error(error_msg)
@@ -125,7 +168,7 @@ class FacebookAdService:
                     logger.warning(f"Rate limit hit for URL {url.split('?')[0]}, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
                     logger.warning(f"Rate limit response: {e.response.text[:200]}")
                     await asyncio.sleep(delay)
-                    return await self._make_request(url, params, retry_count + 1)
+                    return await self._make_request(url, params, retry_count + 1, cancellation_token)
                 else:
                     error_msg = f"Max retries reached for rate limit: {url.split('?')[0]}"
                     logger.error(error_msg)
@@ -491,7 +534,18 @@ class FacebookAdService:
         end_date: str,
         time_increment: int = 1
     ) -> List[Dict[str, Any]]:
-        """Collect metrics for all ads in the specified date range with time increment."""
+        """
+        Collect ad metrics for a specific date range.
+        
+        Args:
+            user_id: User ID to associate with the metrics
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+            time_increment: Time increment for the data (1 = daily)
+            
+        Returns:
+            List of ad metrics
+        """
         try:
             # Get all ads first
             ads = await self.get_ads()
@@ -639,6 +693,266 @@ class FacebookAdService:
         except Exception as e:
             logger.error(f"Error collecting ad metrics for user {user_id}: {str(e)}")
             raise
+    
+    async def collect_ad_metrics_for_specific_ads(
+        self,
+        user_id: str,
+        ad_ids: List[str],
+        start_date: str,
+        end_date: str,
+        time_increment: int = 1
+    ) -> List[Dict[str, Any]]:
+        """
+        Collect ad metrics for specific ad IDs within a date range.
+        Uses an account-level API call with filtering for efficiency.
+        
+        Args:
+            user_id: User ID to associate with the metrics
+            ad_ids: List of ad IDs to fetch metrics for
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+            time_increment: Time increment for the data (1 = daily)
+            
+        Returns:
+            List of ad metrics for the specified ads
+        """
+        logger.info(f"Collecting metrics for {len(ad_ids)} specific ads from {start_date} to {end_date}")
+        
+        # Check if we have quota available
+        if not await self.quota_manager.check_and_reserve_quota(user_id, 1):  # Only one API call needed now
+            logger.warning(f"Facebook API quota exceeded for user {user_id}")
+            return []
+            
+        all_metrics = []
+        
+        try:
+            # Make a single account-level API call with filtering for the specific ad IDs
+            endpoint = f"act_{self.account_id}/insights"
+            
+            # For Facebook API, we need to use a specific format for filtering
+            if not ad_ids:
+                # No ad IDs provided
+                return []
+            
+            # Use the proper Facebook filtering syntax with an array of ad IDs
+            # Facebook expects an array of scalar values for the IN operator
+            filtering = [{
+                "field": "ad.id",
+                "operator": "IN",
+                "value": ad_ids  # Pass the list directly as an array
+            }]
+            
+            params = {
+                "level": "ad",
+                "fields": "ad_id,ad_name,campaign_id,campaign_name,adset_id,adset_name,date_start,impressions,clicks,spend,actions,action_values,ctr,cpc,cpm,purchase_roas",
+                "time_range": json.dumps({
+                    "since": start_date,
+                    "until": end_date
+                }),
+                "time_increment": time_increment,
+                # "filtering": json.dumps(filtering),
+                "limit": 500
+            }
+            
+            logger.info(f"Making account-level API call for {len(ad_ids)} specific ads")
+            
+            # Initialize with empty data array
+            all_insights_data = []
+            next_url = None
+            page_count = 0
+            
+            # Make initial request
+            response = await self._make_api_request(endpoint, params)
+            
+            if "data" not in response or not response["data"]:
+                logger.info(f"No insights data available for the specified ads in date range {start_date} to {end_date}")
+                return []
+            
+            # Add first page of results
+            all_insights_data.extend(response.get("data", []))
+            page_count += 1
+            logger.info(f"Retrieved {len(response.get('data', []))} insights on page {page_count}")
+            
+            # Check for pagination
+            while "paging" in response and "next" in response["paging"]:
+                next_url = response["paging"]["next"]
+                logger.info(f"Found next page, fetching additional data...")
+                
+                try:
+                    # Extract the cursor from the next URL
+                    # Facebook pagination URLs typically include an 'after' parameter with a cursor
+                    import urllib.parse
+                    parsed_url = urllib.parse.urlparse(next_url)
+                    query_params = urllib.parse.parse_qs(parsed_url.query)
+                    
+                    # Create new params with the original parameters plus the pagination cursor
+                    pagination_params = params.copy()
+                    
+                    # Add pagination parameters if present
+                    if 'after' in query_params:
+                        pagination_params['after'] = query_params['after'][0]
+                    if 'limit' in query_params:
+                        pagination_params['limit'] = query_params['limit'][0]
+                        
+                    logger.info(f"Fetching next page with cursor parameters")
+                    
+                    # Make the same API request but with pagination parameters
+                    response = await self._make_api_request(endpoint, pagination_params)
+                    
+                    if "data" in response and response["data"]:
+                        all_insights_data.extend(response["data"])
+                        page_count += 1
+                        logger.info(f"Retrieved {len(response['data'])} additional insights on page {page_count}")
+                    else:
+                        logger.info("No more data available, ending pagination")
+                        break
+                except Exception as e:
+                    logger.error(f"Error fetching next page: {str(e)}")
+                    break
+            
+            logger.info(f"Retrieved a total of {len(all_insights_data)} insight records across {page_count} pages")
+            
+            # Filter insights to only include those for the requested ad IDs
+            filtered_insights = [insight for insight in all_insights_data if insight.get("ad_id") in ad_ids]
+            logger.info(f"Filtered to {len(filtered_insights)} insights for the requested {len(ad_ids)} ad IDs")
+            
+            # Group insights by ad_id to ensure we have data for each requested ad
+            insights_by_ad = {}
+            for insight in filtered_insights:
+                ad_id = insight.get("ad_id")
+                if ad_id:
+                    if ad_id not in insights_by_ad:
+                        insights_by_ad[ad_id] = []
+                    insights_by_ad[ad_id].append(insight)
+                    
+            # Log which ads we found data for
+            found_ad_ids = set(insights_by_ad.keys())
+            missing_ad_ids = set(ad_ids) - found_ad_ids
+            if missing_ad_ids:
+                logger.warning(f"No insights found for {len(missing_ad_ids)} requested ad IDs: {list(missing_ad_ids)[:5]}...")
+            logger.info(f"Found insights for {len(found_ad_ids)} out of {len(ad_ids)} requested ad IDs")
+            
+            # Get ad details for all ads in a single batch to have complete information
+            ad_details = {}
+            for ad_id in ad_ids:
+                try:
+                    details = await self._make_api_request(
+                        f"/{ad_id}",
+                        {"fields": "id,name,adset{id,name},campaign{id,name},creative{id,object_story_spec{video_data{video_id}}}"}
+                    )
+                    ad_details[ad_id] = details
+                except Exception as e:
+                    logger.error(f"Error fetching details for ad {ad_id}: {str(e)}")
+            
+            # Process all insights data
+            for insight in filtered_insights:
+                ad_id = insight.get("ad_id")
+                
+                if not ad_id:
+                    continue
+                
+                # Get ad details
+                ad = ad_details.get(ad_id, {})
+                
+                # Process the insight data
+                processed_metric = await self._process_specific_ad_insight(
+                    ad, insight, user_id
+                )
+                
+                if processed_metric:
+                    # Add video_id from creative if available
+                    if "creative" in ad and "object_story_spec" in ad["creative"]:
+                        video_id = ad["creative"]["object_story_spec"].get("video_data", {}).get("video_id")
+                        if video_id:
+                            processed_metric["video_id"] = video_id
+                    
+                    all_metrics.append(processed_metric)
+            
+            logger.info(f"Successfully processed {len(all_metrics)} metrics for specific ads")
+            return all_metrics
+            
+        except Exception as e:
+            logger.error(f"Error collecting metrics for specific ads: {str(e)}")
+            return []
+            
+    async def _process_specific_ad_insight(
+        self, 
+        ad: Dict[str, Any], 
+        insight: Dict[str, Any],
+        user_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Process a single insight for a specific ad."""
+        try:
+            # Extract basic ad information
+            ad_id = ad.get("id")
+            ad_name = ad.get("name", "Unknown Ad")
+            
+            # Extract adset and campaign information
+            adset = ad.get("adset", {})
+            adset_id = adset.get("id") if adset else None
+            adset_name = adset.get("name", "Unknown AdSet") if adset else "Unknown AdSet"
+            
+            campaign = ad.get("campaign", {})
+            campaign_id = campaign.get("id") if campaign else None
+            campaign_name = campaign.get("name", "Unknown Campaign") if campaign else "Unknown Campaign"
+            
+            # Extract date
+            date_start = insight.get("date_start")
+            if not date_start:
+                return None
+                
+            # Convert date string to datetime
+            try:
+                collected_at = datetime.strptime(date_start, "%Y-%m-%d")
+            except ValueError:
+                collected_at = datetime.now()
+            
+            # Extract metrics
+            spend = float(insight.get("spend", 0))
+            impressions = int(insight.get("impressions", 0))
+            clicks = int(insight.get("clicks", 0))
+            
+            # Calculate derived metrics
+            ctr = (clicks / impressions * 100) if impressions > 0 else 0
+            cpc = (spend / clicks) if clicks > 0 else 0
+            cpm = (spend / impressions * 1000) if impressions > 0 else 0
+            
+            # Extract conversion metrics
+            purchases = int(insight.get("actions", [{}])[0].get("value", 0)) if insight.get("actions") else 0
+            purchases_value = float(insight.get("action_values", [{}])[0].get("value", 0)) if insight.get("action_values") else 0
+            
+            # Calculate ROAS
+            roas = purchases_value / spend if spend > 0 else 0
+            
+            # Create the metric object
+            metric = {
+                "user_id": user_id,
+                "ad_id": ad_id,
+                "ad_name": ad_name,
+                "adset_id": adset_id,
+                "adset_name": adset_name,
+                "campaign_id": campaign_id,
+                "campaign_name": campaign_name,
+                "collected_at": collected_at,
+                "date": date_start,
+                "purchases": purchases,
+                "additional_metrics": {
+                    "spend": spend,
+                    "impressions": impressions,
+                    "clicks": clicks,
+                    "ctr": ctr,
+                    "cpc": cpc,
+                    "cpm": cpm,
+                    "purchases_value": purchases_value,
+                    "roas": roas
+                }
+            }
+            
+            return metric
+            
+        except Exception as e:
+            logger.error(f"Error processing specific ad insight: {str(e)}")
+            return None
     
     # async def collect_ad_metrics(self, user_id: str) -> List[Dict[str, Any]]:
     #     """Collect metrics for all ads in the account."""

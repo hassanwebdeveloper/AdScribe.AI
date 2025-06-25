@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ChatProvider } from "@/contexts/ChatContext";
 import ProtectedRoute from "@/components/auth/ProtectedRoute";
+import PrerequisiteGuard from "@/components/PrerequisiteGuard";
 import { Layout } from "@/components/ui/layout";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
@@ -15,8 +16,11 @@ import Settings from "./pages/Settings";
 import AdAnalysis from "./pages/AdAnalysis";
 import AdDetail from "./pages/AdDetail";
 import Dashboard from "./pages/Dashboard";
+import RecommendationsPage from "./pages/RecommendationsPage";
 import NotFound from "./pages/NotFound";
 import SelectAdAccount from "./pages/SelectAdAccount";
+import PromptAdminPanel from "./pages/PromptAdminPanel";
+import AdminLogin from "./pages/AdminLogin";
 
 const queryClient = new QueryClient();
 
@@ -40,11 +44,17 @@ const App = () => (
               {/* Ad account selection */}
               <Route path="/select-ad-account" element={<SelectAdAccount />} />
               
+              {/* Admin Panel - now requires authentication */}
+              <Route path="/admin/login" element={<AdminLogin />} />
+              <Route path="/admin/prompts" element={<PromptAdminPanel />} />
+              
               <Route element={<ProtectedRoute />}>
-                <Route path="/chat" element={
-                  <Layout>
-                    <Chat />
-                  </Layout>
+                <Route path="/ai-scripter" element={
+                  <PrerequisiteGuard pageName="AI Scripter">
+                    <Layout>
+                      <Chat />
+                    </Layout>
+                  </PrerequisiteGuard>
                 } />
                 <Route path="/settings" element={
                   <Layout>
@@ -62,8 +72,15 @@ const App = () => (
                   </Layout>
                 } />
                 <Route path="/dashboard" element={
+                  <PrerequisiteGuard pageName="Dashboard">
+                    <Layout>
+                      <Dashboard />
+                    </Layout>
+                  </PrerequisiteGuard>
+                } />
+                <Route path="/recommendations" element={
                   <Layout>
-                    <Dashboard />
+                    <RecommendationsPage />
                   </Layout>
                 } />
               </Route>

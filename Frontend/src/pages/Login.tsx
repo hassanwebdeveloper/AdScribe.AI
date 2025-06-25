@@ -1,4 +1,3 @@
-
 import React from 'react';
 import LoginForm from '@/components/auth/LoginForm';
 import { Navigate } from 'react-router-dom';
@@ -8,7 +7,7 @@ const Login: React.FC = () => {
   const { isAuthenticated } = useAuth();
   
   if (isAuthenticated) {
-    return <Navigate to="/chat" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
   
   return (
