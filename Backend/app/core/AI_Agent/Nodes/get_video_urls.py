@@ -38,7 +38,7 @@ async def get_video_urls_from_ads(state: Dict[str, Any]) -> Dict[str, Any]:
         if progress_callback:
             await progress_callback(41, f"Extracting video URLs from {len(ads)} ads...")
 
-        # Initialize Facebook service to use the robust _make_request method
+                        # Initialize Facebook service to use the robust _make_api_request method
         fb_service = FacebookAdService(access_token=access_token, account_id=account_id or "dummy")
         
         try:
@@ -84,8 +84,8 @@ async def get_video_urls_from_ads(state: Dict[str, Any]) -> Dict[str, Any]:
                         logger.info(f"Job cancelled before video URL API call for video {video_id}")
                         return {"errors": ["Job was cancelled"]}
                     
-                    # Use the robust _make_request method with cancellation token
-                    data = await fb_service._make_request(video_url, params, cancellation_token=cancellation_token)
+                    # Use the robust _make_api_request method with cancellation token
+                    data = await fb_service._make_api_request(video_id, params, cancellation_token=cancellation_token)
 
                     video_info = {
                         "ad_id": ad.get("id"),
