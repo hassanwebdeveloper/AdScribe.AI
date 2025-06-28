@@ -51,7 +51,7 @@ async def get_ads_from_facebook(state: Dict[str, Any]) -> Dict[str, Any]:
             
             params = {
                 "access_token": access_token,
-                "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name},creative{id,video_id,effective_object_story_id,object_story_spec},status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend,cpc,cpm,ctr,purchase_roas}",
+                "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name,targeting},creative{id,video_id,effective_object_story_id,object_story_spec},status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend,cpc,cpm,ctr,purchase_roas}",
                 "limit": 100
             }
 
@@ -62,7 +62,7 @@ async def get_ads_from_facebook(state: Dict[str, Any]) -> Dict[str, Any]:
 
             # Make the API request with cancellation token
             data = await fb_service._make_api_request(f"act_{account_id}/ads", {
-                "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name},creative{id,video_id,effective_object_story_id,object_story_spec},status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend,cpc,cpm,ctr,purchase_roas}",
+                "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name,targeting},creative{id,video_id,effective_object_story_id,object_story_spec},status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend,cpc,cpm,ctr,purchase_roas}",
                 "limit": 100
             }, cancellation_token=cancellation_token)
             
