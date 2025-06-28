@@ -78,121 +78,20 @@ class FacebookAdService:
             requests_per_minute = len(cls._request_times)
             logger.warning(f"Facebook API request rate: {requests_per_minute} requests in the last minute")
     
-    async def _make_request(self, url: str, params: Dict[str, Any], retry_count: int = 0, cancellation_token: Dict[str, bool] = None) -> Dict[str, Any]:
-        """
-        Make a request to the Facebook API with proper error handling and rate limiting.
-        
-        Args:
-            url: The URL to request
-            params: Request parameters
-            retry_count: Current retry attempt (internal use)
-            cancellation_token: Optional cancellation token to check for job cancellation
-        
-        Returns:
-            JSON response data
-        """
-        # Check for cancellation before making request
-        if cancellation_token and cancellation_token.get("cancelled", False):
-            logger.info(f"Request to {url.split('?')[0]} cancelled before execution")
-            raise ValueError("Request cancelled")
-        
-        try:
-            # Increment and track global request count
-            self.__class__._request_count += 1
-            self._track_request_rate()
-            
-            # Wait for rate limit before making the request
-            now = datetime.utcnow().timestamp()
-            if hasattr(self, '_last_request_time'):
-                time_since_last = now - self._last_request_time
-                if time_since_last < self.REQUEST_DELAY:
-                    wait_time = self.REQUEST_DELAY - time_since_last
-                    logger.debug(f"Rate limiting: waiting {wait_time:.2f} seconds before request")
-                    await asyncio.sleep(wait_time)
-            
-            # Check for cancellation after rate limit wait
-            if cancellation_token and cancellation_token.get("cancelled", False):
-                logger.info(f"Request to {url.split('?')[0]} cancelled after rate limit wait")
-                raise ValueError("Request cancelled")
-            
-            self._last_request_time = datetime.utcnow().timestamp()
-            
-            # Log the request details
-            logger.debug(f"Making request to {url} params: {params.get('fields', '')[:50]}...")
-            request_start = time.time()
-            
-            client = await self.client
-            
-            # Use a timeout that increases with retry count
-            timeout = 30.0 * (retry_count + 1)
-            response = await client.get(url, params=params, timeout=timeout)
-            
-            # Check for cancellation after receiving response
-            if cancellation_token and cancellation_token.get("cancelled", False):
-                logger.info(f"Request to {url.split('?')[0]} cancelled after receiving response")
-                raise ValueError("Request cancelled")
-            
-            # Log response time
-            request_time = time.time() - request_start
-            logger.debug(f"Response received in {request_time:.2f}s with status {response.status_code}")
-            
-            response.raise_for_status()
-            return response.json()
-        except ValueError as e:
-            # Don't retry for cancellation errors
-            if "cancelled" in str(e).lower():
-                raise e
-            # Re-raise other ValueError exceptions
-            raise e
-        except httpx.TimeoutException:
-            # Check if timeout was due to cancellation
-            if cancellation_token and cancellation_token.get("cancelled", False):
-                logger.info(f"Request timeout for {url.split('?')[0]} - job was cancelled")
-                raise ValueError("Request cancelled")
-            
-            if retry_count < self.MAX_RETRIES:
-                # Use a longer delay for timeouts
-                delay = (self.RATE_LIMIT_DELAY * 2 * (2 ** retry_count)) + random.uniform(1, 5)
-                logger.warning(f"Request timeout for URL {url.split('?')[0]}, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
-                await asyncio.sleep(delay)
-                return await self._make_request(url, params, retry_count + 1, cancellation_token)
-            else:
-                error_msg = f"Max retries reached after timeouts: {url.split('?')[0]}"
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 403 and "Application request limit reached" in e.response.text:
-                if retry_count < self.MAX_RETRIES:
-                    # Exponential backoff with jitter
-                    delay = (self.RATE_LIMIT_DELAY * (2 ** retry_count)) + random.uniform(0, 1)
-                    logger.warning(f"Rate limit hit for URL {url.split('?')[0]}, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
-                    logger.warning(f"Rate limit response: {e.response.text[:200]}")
-                    await asyncio.sleep(delay)
-                    return await self._make_request(url, params, retry_count + 1, cancellation_token)
-                else:
-                    error_msg = f"Max retries reached for rate limit: {url.split('?')[0]}"
-                    logger.error(error_msg)
-                    raise ValueError(error_msg)
-            error_msg = f"HTTP {e.response.status_code} error: {e.response.text[:200]}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        except Exception as e:
-            error_msg = f"Error making request to {url.split('?')[0]}: {str(e)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+    # DEPRECATED: _make_request method has been replaced with _make_api_request
+    # which includes the same error handling, rate limiting, and retry logic
+    # but also adds automatic pagination support
     
     async def get_ad_accounts(self) -> List[Dict[str, Any]]:
         """Get all ad accounts for the user."""
-        url = f"{self.base_url}/me/adaccounts"
-        params = {
-            "access_token": self.access_token,
-            "fields": "id,name,account_status"
-        }
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-            return response.json().get("data", [])
+        try:
+            response = await self._make_api_request("me/adaccounts", {
+                "fields": "id,name,account_status"
+            })
+            return response.get("data", [])
+        except Exception as e:
+            logger.error(f"Error fetching ad accounts: {str(e)}")
+            raise
     
     async def get_ads_with_insights(self) -> List[Dict[str, Any]]:
         """Get all ads with their insights in a single call."""
@@ -211,7 +110,10 @@ class FacebookAdService:
         }
         
         try:
-            data = await self._make_request(url, params)
+            data = await self._make_api_request(f"act_{self.account_id}/ads", {
+                "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name},creative{id,video_id,effective_object_story_id,object_story_spec},status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend,cpc,cpm,ctr,purchase_roas}",
+                "limit": 100
+            })
             if not data:
                 logger.warning("No data returned from Facebook API")
                 return []
@@ -241,7 +143,9 @@ class FacebookAdService:
         }
         
         try:
-            data = await self._make_request(url, params)
+            data = await self._make_api_request(video_id, {
+                "fields": "source,permalink_url"
+            })
             return data.get("permalink_url") or data.get("source")
         except Exception as e:
             logger.error(f"Error getting video URL for {video_id}: {str(e)}")
@@ -371,33 +275,175 @@ class FacebookAdService:
             logger.error(error_msg)
             raise ValueError(error_msg)
     
-    async def _make_api_request(self, endpoint: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Make a request to the Facebook Graph API."""
+    async def _make_api_request(self, endpoint: str, params: Dict[str, Any] = None, retry_count: int = 0, cancellation_token: Dict[str, bool] = None) -> Dict[str, Any]:
+        """
+        Make a request to the Facebook Graph API with automatic pagination handling, proper error handling and rate limiting.
+        
+        Args:
+            endpoint: The API endpoint (without base URL)
+            params: Request parameters
+            retry_count: Current retry attempt (internal use)
+            cancellation_token: Optional cancellation token to check for job cancellation
+        
+        Returns:
+            JSON response data with complete paginated results
+        """
         if params is None:
             params = {}
         
         # Add access token to params
         params["access_token"] = self.access_token
         
-        # Make async request
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.get(f"{self.base_url}/{endpoint}", params=params)
-                response.raise_for_status()
-                return response.json()
-            except httpx.HTTPStatusError as e:
-                error_info = ""
-                try:
-                    error_data = e.response.json()
-                    error_info = f": {json.dumps(error_data)}"
-                except Exception:
-                    pass
+        # Construct full URL
+        url = f"{self.base_url}/{endpoint}"
+        
+        # Check for cancellation before making request
+        if cancellation_token and cancellation_token.get("cancelled", False):
+            logger.info(f"Request to {url.split('?')[0]} cancelled before execution")
+            raise ValueError("Request cancelled")
+        
+        try:
+            # Increment and track global request count
+            self.__class__._request_count += 1
+            self._track_request_rate()
+            
+            # Wait for rate limit before making the request
+            now = datetime.utcnow().timestamp()
+            if hasattr(self, '_last_request_time'):
+                time_since_last = now - self._last_request_time
+                if time_since_last < self.REQUEST_DELAY:
+                    wait_time = self.REQUEST_DELAY - time_since_last
+                    logger.debug(f"Rate limiting: waiting {wait_time:.2f} seconds before request")
+                    await asyncio.sleep(wait_time)
+            
+            # Check for cancellation after rate limit wait
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Request to {url.split('?')[0]} cancelled after rate limit wait")
+                raise ValueError("Request cancelled")
+            
+            self._last_request_time = datetime.utcnow().timestamp()
+            
+            # Log the request details
+            logger.debug(f"Making request to {url} params: {params.get('fields', '')[:50]}...")
+            request_start = time.time()
+            
+            client = await self.client
+            
+            # Use a timeout that increases with retry count
+            timeout = 30.0 * (retry_count + 1)
+            response = await client.get(url, params=params, timeout=timeout)
+            
+            # Check for cancellation after receiving response
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Request to {url.split('?')[0]} cancelled after receiving response")
+                raise ValueError("Request cancelled")
+            
+            # Log response time
+            request_time = time.time() - request_start
+            logger.debug(f"Response received in {request_time:.2f}s with status {response.status_code}")
+            
+            response.raise_for_status()
+            response_data = response.json()
+            
+            # Handle pagination for responses with data arrays
+            if "data" in response_data and isinstance(response_data["data"], list):
+                all_data = list(response_data["data"])  # Create a copy of the initial data
+                page_count = 1
+                logger.debug(f"Retrieved {len(response_data['data'])} items on page {page_count} from {endpoint}")
+                
+                # Handle pagination if available
+                while "paging" in response_data and "next" in response_data["paging"]:
+                    next_url = response_data["paging"]["next"]
+                    logger.debug(f"Found next page for {endpoint}, fetching additional data...")
                     
-                logger.error(f"Facebook API HTTP error {e.response.status_code}{error_info}")
-                raise ValueError(f"Facebook API Error: {e.response.status_code}{error_info}")
-            except httpx.RequestError as e:
-                logger.error(f"Facebook API request error: {str(e)}")
-                raise ValueError(f"Facebook API Request Error: {str(e)}")
+                    try:
+                        # Check for cancellation before next page request
+                        if cancellation_token and cancellation_token.get("cancelled", False):
+                            logger.info(f"Pagination cancelled for {endpoint}")
+                            break
+                        
+                        # Extract the cursor from the next URL
+                        import urllib.parse
+                        parsed_url = urllib.parse.urlparse(next_url)
+                        query_params = urllib.parse.parse_qs(parsed_url.query)
+                        
+                        # Create new params with the original parameters plus the pagination cursor
+                        pagination_params = params.copy()
+                        
+                        # Add pagination parameters if present
+                        if 'after' in query_params:
+                            pagination_params['after'] = query_params['after'][0]
+                        if 'limit' in query_params:
+                            pagination_params['limit'] = query_params['limit'][0]
+                        
+                        # Make recursive call for pagination (with same retry and cancellation support)
+                        paginated_response = await self._make_api_request(endpoint, pagination_params, 0, cancellation_token)
+                        
+                        if "data" in paginated_response and paginated_response["data"]:
+                            all_data.extend(paginated_response["data"])
+                            page_count += 1
+                            logger.debug(f"Retrieved {len(paginated_response['data'])} additional items on page {page_count} from {endpoint}")
+                            # Update response_data to check for next page
+                            response_data = paginated_response
+                        else:
+                            logger.debug(f"No more data available for {endpoint}, ending pagination")
+                            break
+                    except Exception as e:
+                        logger.error(f"Error fetching next page for {endpoint}: {str(e)}")
+                        break
+                
+                if page_count > 1:
+                    logger.info(f"Retrieved a total of {len(all_data)} items across {page_count} pages from {endpoint}")
+                
+                # Return the original response structure but with all paginated data
+                response_data["data"] = all_data
+                return response_data
+            else:
+                # Response doesn't have data array (single object response), return as-is
+                return response_data
+                
+        except ValueError as e:
+            # Don't retry for cancellation errors
+            if "cancelled" in str(e).lower():
+                raise e
+            # Re-raise other ValueError exceptions
+            raise e
+        except httpx.TimeoutException:
+            # Check if timeout was due to cancellation
+            if cancellation_token and cancellation_token.get("cancelled", False):
+                logger.info(f"Request timeout for {url.split('?')[0]} - job was cancelled")
+                raise ValueError("Request cancelled")
+            
+            if retry_count < self.MAX_RETRIES:
+                # Use a longer delay for timeouts
+                delay = (self.RATE_LIMIT_DELAY * 2 * (2 ** retry_count)) + random.uniform(1, 5)
+                logger.warning(f"Request timeout for URL {url.split('?')[0]}, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
+                await asyncio.sleep(delay)
+                return await self._make_api_request(endpoint, params, retry_count + 1, cancellation_token)
+            else:
+                error_msg = f"Max retries reached after timeouts: {url.split('?')[0]}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403 and "Application request limit reached" in e.response.text:
+                if retry_count < self.MAX_RETRIES:
+                    # Exponential backoff with jitter
+                    delay = (self.RATE_LIMIT_DELAY * (2 ** retry_count)) + random.uniform(0, 1)
+                    logger.warning(f"Rate limit hit for URL {url.split('?')[0]}, retrying in {delay:.2f} seconds... (Attempt {retry_count + 1}/{self.MAX_RETRIES})")
+                    logger.warning(f"Rate limit response: {e.response.text[:200]}")
+                    await asyncio.sleep(delay)
+                    return await self._make_api_request(endpoint, params, retry_count + 1, cancellation_token)
+                else:
+                    error_msg = f"Max retries reached for rate limit: {url.split('?')[0]}"
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+            error_msg = f"HTTP {e.response.status_code} error: {e.response.text[:200]}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        except Exception as e:
+            error_msg = f"Error making request to {url.split('?')[0]}: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
     
     async def get_ads(self) -> List[Dict[str, Any]]:
         """Get all ads in the account."""
@@ -756,61 +802,16 @@ class FacebookAdService:
             
             logger.info(f"Making account-level API call for {len(ad_ids)} specific ads")
             
-            # Initialize with empty data array
-            all_insights_data = []
-            next_url = None
-            page_count = 0
-            
-            # Make initial request
+            # Make the API request - pagination is now handled automatically by _make_api_request
             response = await self._make_api_request(endpoint, params)
             
             if "data" not in response or not response["data"]:
                 logger.info(f"No insights data available for the specified ads in date range {start_date} to {end_date}")
                 return []
             
-            # Add first page of results
-            all_insights_data.extend(response.get("data", []))
-            page_count += 1
-            logger.info(f"Retrieved {len(response.get('data', []))} insights on page {page_count}")
-            
-            # Check for pagination
-            while "paging" in response and "next" in response["paging"]:
-                next_url = response["paging"]["next"]
-                logger.info(f"Found next page, fetching additional data...")
-                
-                try:
-                    # Extract the cursor from the next URL
-                    # Facebook pagination URLs typically include an 'after' parameter with a cursor
-                    import urllib.parse
-                    parsed_url = urllib.parse.urlparse(next_url)
-                    query_params = urllib.parse.parse_qs(parsed_url.query)
-                    
-                    # Create new params with the original parameters plus the pagination cursor
-                    pagination_params = params.copy()
-                    
-                    # Add pagination parameters if present
-                    if 'after' in query_params:
-                        pagination_params['after'] = query_params['after'][0]
-                    if 'limit' in query_params:
-                        pagination_params['limit'] = query_params['limit'][0]
-                        
-                    logger.info(f"Fetching next page with cursor parameters")
-                    
-                    # Make the same API request but with pagination parameters
-                    response = await self._make_api_request(endpoint, pagination_params)
-                    
-                    if "data" in response and response["data"]:
-                        all_insights_data.extend(response["data"])
-                        page_count += 1
-                        logger.info(f"Retrieved {len(response['data'])} additional insights on page {page_count}")
-                    else:
-                        logger.info("No more data available, ending pagination")
-                        break
-                except Exception as e:
-                    logger.error(f"Error fetching next page: {str(e)}")
-                    break
-            
-            logger.info(f"Retrieved a total of {len(all_insights_data)} insight records across {page_count} pages")
+            # Get all insights data (pagination is handled automatically)
+            all_insights_data = response.get("data", [])
+            logger.info(f"Retrieved a total of {len(all_insights_data)} insight records (pagination handled automatically)")
             
             # Filter insights to only include those for the requested ad IDs
             filtered_insights = [insight for insight in all_insights_data if insight.get("ad_id") in ad_ids]

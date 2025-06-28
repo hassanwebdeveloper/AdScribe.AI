@@ -333,6 +333,127 @@ class OpenAIService:
                     formatted.append(f"- {key.upper()}: {value}")
         
         return '\n'.join(formatted) if formatted else "No performance data available"
+    
+    async def _make_transcription(
+        self,
+        audio_file_path: str,
+        model: str = "whisper-1", 
+        language: str = "ur",
+        prompt: Optional[str] = None,
+        cancellation_token: Optional[Dict[str, bool]] = None
+    ) -> Optional[str]:
+        """
+        Core method for making transcriptions with retry logic and rate limiting.
+        
+        Args:
+            audio_file_path: Path to the audio/video file
+            model: OpenAI model to use (default: whisper-1)
+            language: Language code (default: ur for Urdu)
+            prompt: Optional prompt to guide transcription
+            cancellation_token: Optional cancellation token
+        
+        Returns:
+            Transcribed text or None if failed
+        """
+        if not self.client:
+            logger.error("OpenAI client not initialized")
+            return None
+        
+        # Check for cancellation
+        if cancellation_token and cancellation_token.get("cancelled", False):
+            logger.info("Transcription cancelled before making OpenAI call")
+            return None
+        
+        # Track request rate
+        self._track_request_rate()
+        
+        # Rate limiting - ensure we don't exceed request limits
+        current_time = time.time()
+        time_since_last_request = current_time - self._last_request_time
+        
+        if time_since_last_request < self.REQUEST_DELAY:
+            delay = self.REQUEST_DELAY - time_since_last_request
+            logger.debug(f"Rate limiting: waiting {delay:.2f} seconds")
+            await asyncio.sleep(delay)
+        
+        self._last_request_time = time.time()
+        
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                # Check for cancellation before each attempt
+                if cancellation_token and cancellation_token.get("cancelled", False):
+                    logger.info(f"Transcription cancelled during attempt {attempt + 1}")
+                    return None
+                
+                logger.debug(f"Making OpenAI transcription request (attempt {attempt + 1}/{self.MAX_RETRIES})")
+                
+                # Prepare transcription parameters
+                transcription_params = {
+                    "model": model,
+                    "language": language,
+                    "timeout": 60  # Longer timeout for audio processing
+                }
+                
+                if prompt:
+                    transcription_params["prompt"] = prompt
+                
+                # Use the new OpenAI client for transcription
+                with open(audio_file_path, "rb") as audio_file:
+                    response = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self.client.audio.transcriptions.create(
+                            file=audio_file,
+                            **transcription_params
+                        )
+                    )
+                
+                result = response.text
+                logger.debug(f"OpenAI transcription successful (attempt {attempt + 1})")
+                
+                return result.strip() if result else None
+                
+            except RateLimitError as e:
+                logger.warning(f"Rate limit error in transcription (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RATE_LIMIT_DELAY * (2 ** attempt) + random.uniform(0, 1)
+                    logger.info(f"Waiting {delay:.2f} seconds before retry...")
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Max retries exceeded for transcription rate limit error")
+                    raise ValueError("Rate limit exceeded after max retries")
+                    
+            except APITimeoutError as e:
+                logger.warning(f"Timeout error in transcription (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAY * (attempt + 1)
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Max retries exceeded for transcription timeout error")
+                    return None
+                    
+            except APIError as e:
+                logger.error(f"OpenAI API error in transcription (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAY * (attempt + 1)
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Max retries exceeded for transcription API error")
+                    return None
+                    
+            except FileNotFoundError as e:
+                logger.error(f"Audio file not found: {audio_file_path}")
+                return None
+                    
+            except Exception as e:
+                logger.error(f"Unexpected error in transcription (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                if attempt < self.MAX_RETRIES - 1:
+                    delay = self.RETRY_DELAY * (attempt + 1)
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("Max retries exceeded for transcription unexpected error")
+                    return None
+        
+        return None
 
 # Global instance for use across nodes
 openai_service = OpenAIService() 

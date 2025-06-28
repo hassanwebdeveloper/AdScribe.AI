@@ -92,6 +92,26 @@ interface AdRecommendation {
     creative_improvements?: string;
     budget_pacing?: string;
     recommended_target_audience?: string;
+    targeting_changes?: {
+      geo_locations?: {
+        countries?: string[];
+        places?: Array<{
+          name: string;
+          country: string;
+          radius?: number;
+        }>;
+      };
+      age_min?: number;
+      age_max?: number;
+      genders?: number[];
+      targeting_automation?: {
+        advantage_audience?: boolean;
+      };
+      interests?: string[];
+      behaviors?: string[];
+      custom_audiences?: string[];
+      excluded_audiences?: string[];
+    };
     [key: string]: any;
   };
   conversion_strategies?: string | string[] | {
@@ -101,6 +121,26 @@ interface AdRecommendation {
     landing_page_optimization?: string;
     call_to_action_improvements?: string;
     recommended_target_audience?: string;
+    targeting_changes?: {
+      geo_locations?: {
+        countries?: string[];
+        places?: Array<{
+          name: string;
+          country: string;
+          radius?: number;
+        }>;
+      };
+      age_min?: number;
+      age_max?: number;
+      genders?: number[];
+      targeting_automation?: {
+        advantage_audience?: boolean;
+      };
+      interests?: string[];
+      behaviors?: string[];
+      custom_audiences?: string[];
+      excluded_audiences?: string[];
+    };
     [key: string]: any;
   };
   implementation_strategy?: string[];
@@ -455,14 +495,92 @@ const RecommendationsPage: React.FC = () => {
         : null
     );
 
-    // Format AI suggested targeting
-    const aiTargeting = {
-      age_range: targetingChanges?.age_range || 'Not specified',
-      gender: targetingChanges?.genders || 'Not specified',
-      countries: targetingChanges?.countries || 'Not specified',
-      location_types: targetingChanges?.location_types || 'Not specified',
-      advantage_audience: targetingChanges?.advantage_audience || 'Not specified'
+    // Format AI suggested targeting - now properly handle the new object structure
+    const formatAITargeting = (targetingChanges: any) => {
+      if (!targetingChanges || typeof targetingChanges !== 'object') {
+        return {
+          age_range: 'Not specified',
+          gender: 'Not specified',
+          countries: 'Not specified',
+          location_types: 'Not specified',
+          advantage_audience: 'Not specified'
+        };
+      }
+
+      // Age range
+      let age_range = 'Not specified';
+      if (targetingChanges.age_min && targetingChanges.age_max) {
+        age_range = `${targetingChanges.age_min}-${targetingChanges.age_max}`;
+      } else if (targetingChanges.age_min) {
+        age_range = `${targetingChanges.age_min}+`;
+      } else if (targetingChanges.age_max) {
+        age_range = `up to ${targetingChanges.age_max}`;
+      }
+
+      // Gender
+      let gender = 'Not specified';
+      if (targetingChanges.genders && Array.isArray(targetingChanges.genders)) {
+        if (targetingChanges.genders.includes(1) && targetingChanges.genders.includes(2)) {
+          gender = 'All';
+        } else if (targetingChanges.genders.includes(1)) {
+          gender = 'Men only';
+        } else if (targetingChanges.genders.includes(2)) {
+          gender = 'Women only';
+        }
+      }
+
+      // Countries from geo_locations
+      let countries = 'Not specified';
+      const geoLocations = targetingChanges.geo_locations;
+      if (geoLocations) {
+        if (geoLocations.countries && Array.isArray(geoLocations.countries) && geoLocations.countries.length > 0) {
+          if (geoLocations.countries.length === 1) {
+            countries = geoLocations.countries[0];
+          } else {
+            countries = geoLocations.countries.slice(0, 2).join(', ');
+            if (geoLocations.countries.length > 2) {
+              countries += `... (+${geoLocations.countries.length - 2} more)`;
+            }
+          }
+        } else if (geoLocations.places && Array.isArray(geoLocations.places) && geoLocations.places.length > 0) {
+          const places = geoLocations.places.map(place => `${place.name || 'Unknown'}, ${place.country || 'Unknown'}`);
+          if (places.length === 1) {
+            countries = places[0];
+          } else {
+            countries = places.slice(0, 2).join(', ');
+            if (places.length > 2) {
+              countries += `... (+${places.length - 2} more)`;
+            }
+          }
+        }
+      }
+
+      // Location types - for AI recommendations, we'll show interests/behaviors if available
+      let location_types = 'Not specified';
+      const interests = targetingChanges.interests;
+      const behaviors = targetingChanges.behaviors;
+      if (interests && Array.isArray(interests) && interests.length > 0) {
+        location_types = `Interests: ${interests.slice(0, 2).join(', ')}${interests.length > 2 ? '...' : ''}`;
+      } else if (behaviors && Array.isArray(behaviors) && behaviors.length > 0) {
+        location_types = `Behaviors: ${behaviors.slice(0, 2).join(', ')}${behaviors.length > 2 ? '...' : ''}`;
+      }
+
+      // Advantage audience
+      let advantage_audience = 'Not specified';
+      if (targetingChanges.targeting_automation?.advantage_audience !== undefined) {
+        advantage_audience = targetingChanges.targeting_automation.advantage_audience ? 'Enabled' : 'Disabled';
+      }
+
+      return {
+        age_range,
+        gender,
+        countries,
+        location_types,
+        advantage_audience
+      };
     };
+
+    const aiTargeting = formatAITargeting(targetingChanges);
 
     const colorClass = strategy === 'efficiency_improvements' ? 'purple' : 'orange';
 
@@ -532,32 +650,48 @@ const RecommendationsPage: React.FC = () => {
             <p className={`text-xs font-medium text-${colorClass}-900 mb-2`}>AI Recommended</p>
             <div className="text-xs space-y-1">
               {recommendedTargetAudience ? (
-                <div>{recommendedTargetAudience}</div>
-              ) : (
+                <div className="mb-2 p-2 bg-white/50 rounded border">
+                  <span className="font-medium">Audience:</span> {recommendedTargetAudience}
+                </div>
+              ) : null}
+              
+              {/* Always show targeting changes if available */}
+              {aiTargeting.age_range !== 'Not specified' && (
+                <div><span className="font-medium">Age:</span> {aiTargeting.age_range}</div>
+              )}
+              {aiTargeting.gender !== 'Not specified' && (
+                <div><span className="font-medium">Gender:</span> {aiTargeting.gender}</div>
+              )}
+              {aiTargeting.countries !== 'Not specified' && (
+                <div><span className="font-medium">Countries:</span> {aiTargeting.countries}</div>
+              )}
+              {aiTargeting.location_types !== 'Not specified' && (
+                <div><span className="font-medium">Details:</span> {aiTargeting.location_types}</div>
+              )}
+              {aiTargeting.advantage_audience !== 'Not specified' && (
+                <div><span className="font-medium">Advantage:</span> {aiTargeting.advantage_audience}</div>
+              )}
+              
+              {/* Show additional targeting details if available */}
+              {targetingChanges && (
                 <>
-                  {aiTargeting.age_range !== 'Not specified' && (
-                    <div><span className="font-medium">Age:</span> {aiTargeting.age_range}</div>
+                  {targetingChanges.custom_audiences && Array.isArray(targetingChanges.custom_audiences) && targetingChanges.custom_audiences.length > 0 && (
+                    <div><span className="font-medium">Custom Audiences:</span> {targetingChanges.custom_audiences.slice(0, 2).join(', ')}{targetingChanges.custom_audiences.length > 2 ? '...' : ''}</div>
                   )}
-                  {aiTargeting.gender !== 'Not specified' && (
-                    <div><span className="font-medium">Gender:</span> {aiTargeting.gender}</div>
-                  )}
-                  {aiTargeting.countries !== 'Not specified' && (
-                    <div><span className="font-medium">Countries:</span> {aiTargeting.countries}</div>
-                  )}
-                  {aiTargeting.location_types !== 'Not specified' && (
-                    <div><span className="font-medium">Location:</span> {aiTargeting.location_types}</div>
-                  )}
-                  {aiTargeting.advantage_audience !== 'Not specified' && (
-                    <div><span className="font-medium">Advantage:</span> {aiTargeting.advantage_audience}</div>
-                  )}
-                  {aiTargeting.age_range === 'Not specified' && 
-                   aiTargeting.gender === 'Not specified' && 
-                   aiTargeting.countries === 'Not specified' && 
-                   aiTargeting.location_types === 'Not specified' && 
-                   aiTargeting.advantage_audience === 'Not specified' && !recommendedTargetAudience && (
-                    <div className="text-gray-500 italic">No targeting recommendations</div>
+                  {targetingChanges.excluded_audiences && Array.isArray(targetingChanges.excluded_audiences) && targetingChanges.excluded_audiences.length > 0 && (
+                    <div><span className="font-medium">Excluded:</span> {targetingChanges.excluded_audiences.slice(0, 2).join(', ')}{targetingChanges.excluded_audiences.length > 2 ? '...' : ''}</div>
                   )}
                 </>
+              )}
+              
+              {aiTargeting.age_range === 'Not specified' && 
+               aiTargeting.gender === 'Not specified' && 
+               aiTargeting.countries === 'Not specified' && 
+               aiTargeting.location_types === 'Not specified' && 
+               aiTargeting.advantage_audience === 'Not specified' && 
+               !recommendedTargetAudience && 
+               (!targetingChanges || Object.keys(targetingChanges).length === 0) && (
+                <div className="text-gray-500 italic">No targeting recommendations</div>
               )}
             </div>
             {targetingChanges?.explanation && (

@@ -523,7 +523,7 @@ class MLOptimizationService:
             if campaign_id and analysis.get("ad_analysis"):
                 creative_map[campaign_id] = analysis["ad_analysis"]
         
-        # STEP 7: Format data for ML
+        # STEP 7: Format data for ML and fetch targeting info
         formatted_data = []
         for result in results:
             ad_id = result["_id"]
@@ -566,6 +566,23 @@ class MLOptimizationService:
                 logger.warning(f"Skipping ad {ad_id} - no creative metadata found despite being in initial list")
                 continue
             
+            # Get targeting information from ad_analyses
+            current_targeting = {}
+            current_targeting_summary = "No targeting information available"
+            
+            # Look for targeting info in the ad_analyses data
+            for analysis in ad_analyses:
+                if analysis.get("ad_id") == ad_id:
+                    if analysis.get("adset_targeting"):
+                        current_targeting = analysis["adset_targeting"]
+                        current_targeting_summary = await self._generate_targeting_summary(current_targeting)
+                    break
+                elif analysis.get("campaign_id") == campaign_id:
+                    if analysis.get("adset_targeting"):
+                        current_targeting = analysis["adset_targeting"]
+                        current_targeting_summary = await self._generate_targeting_summary(current_targeting)
+                    break
+            
             formatted_data.append({
                 "ad_id": ad_id,
                 "ad_name": result.get("ad_name", f"Ad {ad_id}"),
@@ -583,6 +600,8 @@ class MLOptimizationService:
                     "roas": roas
                 },
                 "creative_metadata": creative_metadata,
+                "current_targeting": current_targeting,
+                "current_targeting_summary": current_targeting_summary,
                 "data_points": result.get("data_points", 0)
             })
         
@@ -966,6 +985,7 @@ class MLOptimizationService:
                 "creative_metadata": ad_data.get("creative_metadata", {}),
                 "campaign_id": ad_data.get("campaign_id"),
                 "video_id": ad_data.get("video_id"),
+                "current_targeting": ad_data.get("current_targeting", {}),
                 "optimization_success": True,
                 "optimization_status": "converged" if (hasattr(result, 'success') and result.success) else "max_iterations",
                 "optimization_message": getattr(result, 'message', 'Optimization completed')
@@ -1290,9 +1310,25 @@ class MLOptimizationService:
             # Find benchmark ads for this metric to provide context
             benchmark_ads = await self._find_benchmark_ads(user_id, metric)
             
-            # Generate AI-powered strategies instead of static ones
-            ai_strategies = await self._generate_ai_efficiency_strategies(
-                ad_result, metric, change_data, benchmark_ads
+            # Get current ad's targeting information (already fetched in _get_user_ad_data)
+            current_targeting = ad_result.get("current_targeting", {})
+            current_targeting_summary = ad_result.get("current_targeting_summary", "No targeting information available")
+            
+            # Get benchmark targeting information from benchmark ads (now included)
+            benchmark_targeting_objects = []
+            benchmark_targeting_summaries = []
+            
+            for benchmark_ad in benchmark_ads[:3]:  # Top 3 benchmarks
+                targeting_info = benchmark_ad.get("targeting_info", {})
+                targeting_summary = benchmark_ad.get("targeting_summary", "No targeting information available")
+                
+                if targeting_info:
+                    benchmark_targeting_objects.append(targeting_info)
+                    benchmark_targeting_summaries.append(targeting_summary)
+            
+            # Generate AI-powered strategies as JSON object using existing prompt
+            ai_strategies_object = await self._generate_ai_efficiency_strategies_json(
+                ad_result, metric, change_data, benchmark_ads, current_targeting, benchmark_targeting_objects
             )
             
             # Get spend changes for context
@@ -1333,9 +1369,14 @@ class MLOptimizationService:
                 "benchmark_metrics": benchmark_data,
                 "current_roas": ad_result["current_roas"],
                 "predicted_roas": ad_result["predicted_roas"],
-                "optimization_strategies": ai_strategies,
+                "optimization_strategies": ai_strategies_object,  # Now an object instead of list
                 "expected_roas_improvement": f"{ad_result['improvement_percent']:.1f}%",
-                "account_level_roas_impact": f"{ad_result.get('account_level_roas_impact', 0):.2f}%"
+                "account_level_roas_impact": f"{ad_result.get('account_level_roas_impact', 0):.2f}%",
+                # Add targeting information
+                "current_targeting": current_targeting,
+                "current_targeting_summary": current_targeting_summary,
+                "benchmark_targeting_objects": benchmark_targeting_objects,
+                "benchmark_targeting_summaries": benchmark_targeting_summaries
             })
         
         return {
@@ -1357,9 +1398,25 @@ class MLOptimizationService:
                 # Find benchmark ads with high conversion rates
                 benchmark_ads = await self._find_benchmark_ads(user_id, "purchases")
                 
-                # Generate AI-powered conversion strategies
-                ai_conversion_strategies = await self._generate_ai_conversion_strategies(
-                    ad_result, purchase_change, benchmark_ads
+                # Get current ad's targeting information (already fetched in _get_user_ad_data)
+                current_targeting = ad_result.get("current_targeting", {})
+                current_targeting_summary = ad_result.get("current_targeting_summary", "No targeting information available")
+                
+                # Get benchmark targeting information from benchmark ads (now included)
+                benchmark_targeting_objects = []
+                benchmark_targeting_summaries = []
+                
+                for benchmark_ad in benchmark_ads[:3]:  # Top 3 benchmarks
+                    targeting_info = benchmark_ad.get("targeting_info", {})
+                    targeting_summary = benchmark_ad.get("targeting_summary", "No targeting information available")
+                    
+                    if targeting_info:
+                        benchmark_targeting_objects.append(targeting_info)
+                        benchmark_targeting_summaries.append(targeting_summary)
+                
+                # Generate AI-powered conversion strategies as JSON object using existing prompt
+                ai_conversion_strategies_object = await self._generate_ai_conversion_strategies_json(
+                    ad_result, purchase_change, benchmark_ads, current_targeting, benchmark_targeting_objects
                 )
                 
                 # Get spend changes for context
@@ -1399,9 +1456,14 @@ class MLOptimizationService:
                     "benchmark_metrics": benchmark_data,
                     "current_roas": ad_result["current_roas"],
                     "predicted_roas": ad_result["predicted_roas"],
-                    "conversion_strategies": ai_conversion_strategies,
+                    "conversion_strategies": ai_conversion_strategies_object,  # Now an object instead of list
                     "expected_roas_improvement": f"{ad_result['improvement_percent']:.1f}%",
-                    "account_level_roas_impact": f"{ad_result.get('account_level_roas_impact', 0):.2f}%"
+                    "account_level_roas_impact": f"{ad_result.get('account_level_roas_impact', 0):.2f}%",
+                    # Add targeting information
+                    "current_targeting": current_targeting,
+                    "current_targeting_summary": current_targeting_summary,
+                    "benchmark_targeting_objects": benchmark_targeting_objects,
+                    "benchmark_targeting_summaries": benchmark_targeting_summaries
                 })
         
         return {
@@ -1412,7 +1474,7 @@ class MLOptimizationService:
     
     # Helper methods for generating specific recommendations
     async def _find_benchmark_ads(self, user_id: str, metric: str) -> List[Dict]:
-        """Find high-performing ads to use as benchmarks with their creative metadata."""
+        """Find high-performing ads to use as benchmarks with their creative metadata and targeting info."""
         db = get_database()
         
         # First, find ad_ids that exist in ad_analyses collection to ensure we have creative metadata
@@ -1445,7 +1507,7 @@ class MLOptimizationService:
             sort_field: {"$gt": 0}
         }).sort(sort_field, -1).limit(5).to_list(length=5)
         
-        # Enrich with creative metadata from ad_analyses collection
+        # Enrich with creative metadata and targeting info from ad_analyses collection
         for ad in benchmark_ads:
             ad_id = ad.get("ad_id")
             campaign_id = ad.get("campaign_id")
@@ -1461,6 +1523,13 @@ class MLOptimizationService:
             
             if creative_analysis and creative_analysis.get("ad_analysis"):
                 ad["creative_metadata"] = creative_analysis["ad_analysis"]
+                # Also add targeting information
+                if creative_analysis.get("adset_targeting"):
+                    ad["targeting_info"] = creative_analysis["adset_targeting"]
+                    ad["targeting_summary"] = await self._generate_targeting_summary(creative_analysis["adset_targeting"])
+                else:
+                    ad["targeting_info"] = {}
+                    ad["targeting_summary"] = "No targeting information available"
             else:
                 ad["creative_metadata"] = {
                     "hook": "Unknown",
@@ -1468,6 +1537,8 @@ class MLOptimizationService:
                     "visual": "Unknown",
                     "power_phrases": "Unknown"
                 }
+                ad["targeting_info"] = {}
+                ad["targeting_summary"] = "No targeting information available"
         
         return benchmark_ads
     
@@ -1508,17 +1579,35 @@ class MLOptimizationService:
             # Get prompt from dynamic prompt service
             prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("ml_creative_optimization")
             
-            # Format the prompt with variables
-            formatted_prompt = prompt_text.format(
-                optimization_goal=optimization_goal,
-                current_hook=current_creative.get('hook', 'Unknown'),
-                current_tone=current_creative.get('tone', 'Unknown'),
-                current_visual=current_creative.get('visual', 'Unknown'),
-                current_power_phrases=current_creative.get('power_phrases', 'Unknown'),
-                benchmark_hook=benchmark_creative.get('hook', 'Unknown'),
-                benchmark_tone=benchmark_creative.get('tone', 'Unknown'),
-                benchmark_visual=benchmark_creative.get('visual', 'Unknown')
-            )
+            # Sanitize all format variables to prevent KeyError from malformed content
+            def sanitize_format_value(value):
+                """Sanitize values for safe string formatting"""
+                if value is None:
+                    return "Unknown"
+                # Convert to string and escape any curly braces that might interfere with formatting
+                str_value = str(value)
+                # Replace curly braces to prevent format string issues
+                str_value = str_value.replace('{', '{{').replace('}', '}}')
+                # Remove any problematic characters that might cause issues
+                str_value = str_value.replace('\x00', '').strip()
+                return str_value if str_value else "Unknown"
+            
+            # Format the prompt with sanitized variables
+            try:
+                formatted_prompt = prompt_text.format(
+                    optimization_goal=sanitize_format_value(optimization_goal),
+                    current_hook=sanitize_format_value(current_creative.get('hook', 'Unknown')),
+                    current_tone=sanitize_format_value(current_creative.get('tone', 'Unknown')),
+                    current_visual=sanitize_format_value(current_creative.get('visual', 'Unknown')),
+                    current_power_phrases=sanitize_format_value(current_creative.get('power_phrases', 'Unknown')),
+                    benchmark_hook=sanitize_format_value(benchmark_creative.get('hook', 'Unknown')),
+                    benchmark_tone=sanitize_format_value(benchmark_creative.get('tone', 'Unknown')),
+                    benchmark_visual=sanitize_format_value(benchmark_creative.get('visual', 'Unknown'))
+                )
+            except KeyError as format_error:
+                logger.error(f"Creative optimization prompt formatting failed with KeyError: {format_error}")
+                # Use a simplified prompt without problematic variables
+                formatted_prompt = f"Optimize ad creative to {optimization_goal}. Provide JSON response with hook, tone, visual, power_phrases, cta, and reasoning fields."
             
             response = await openai_service.get_completion(
                 prompt=formatted_prompt,
@@ -1635,67 +1724,338 @@ class MLOptimizationService:
             "historical_data": "Based on 3 similar scaling examples in your account"
         }
     
-    async def _generate_ai_efficiency_strategies(
+    async def _generate_ai_efficiency_strategies_json(
         self, 
         ad_result: Dict, 
         metric: str, 
         change_data: Dict, 
-        benchmark_ads: List[Dict]
-    ) -> List[str]:
-        """Generate AI-powered efficiency improvement strategies."""
+        benchmark_ads: List[Dict],
+        current_targeting: Dict,
+        benchmark_targeting_objects: List[Dict]
+    ) -> Dict:
+        """Generate AI-powered efficiency improvement strategies as JSON object using existing prompt."""
         try:
-            from app.services.openai_service import OpenAIService
-            openai_service = OpenAIService()
-            
-            # Prepare benchmark data for context
+            # Prepare benchmark data for context including targeting from benchmark ads directly
             benchmark_info = []
             for bench_ad in benchmark_ads[:3]:  # Top 3 for context
                 creative = bench_ad.get("creative_metadata", {})
                 metrics = bench_ad.get("additional_metrics", {})
-                benchmark_info.append(f"- {creative.get('hook', 'Unknown')} (tone: {creative.get('tone', 'Unknown')}, {metric.upper()}: ${metrics.get(metric, 0):.2f})")
+                targeting_summary = bench_ad.get("targeting_summary", "No targeting info")
+                
+                benchmark_info.append(f"- {creative.get('hook', 'Unknown')} (tone: {creative.get('tone', 'Unknown')}, {metric.upper()}: ${metrics.get(metric, 0):.2f}, targeting: {targeting_summary})")
             
             benchmark_context = "\n".join(benchmark_info) if benchmark_info else "No benchmark data available"
             
             # Get ad's creative metadata for context
             current_creative = ad_result.get("creative_metadata", {})
+            current_targeting_summary = ad_result.get("current_targeting_summary", "No targeting information available")
             
-            # Get prompt from dynamic prompt service
+            # Get prompt from dynamic prompt service (use existing prompt key)
             prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("ml_efficiency_strategies")
             
-            # Format the prompt with variables
-            formatted_prompt = prompt_text.format(
-                metric=metric.upper(),
-                ad_name=ad_result.get('ad_name', 'Unknown'),
-                current_roas=f"{ad_result['current_roas']:.2f}",
-                creative_hook=current_creative.get('hook', 'Unknown'),
-                creative_tone=current_creative.get('tone', 'Unknown'),
-                visual_style=current_creative.get('visual', 'Unknown'),
-                benchmark_context=benchmark_context,
-                current_value=f"{change_data['current']:.2f}",
-                target_value=f"{change_data['optimized']:.2f}",
-                change_direction=change_data['change_direction'],
-                change_percent=f"{abs(change_data['change_percent']):.1f}"
-            )
+            # Sanitize all format variables to prevent KeyError from malformed content
+            def sanitize_format_value(value):
+                """Sanitize values for safe string formatting"""
+                if value is None:
+                    return "Unknown"
+                # Convert to string and escape any curly braces that might interfere with formatting
+                str_value = str(value)
+                # Replace curly braces to prevent format string issues
+                str_value = str_value.replace('{', '{{').replace('}', '}}')
+                # Remove any problematic characters that might cause issues
+                str_value = str_value.replace('\x00', '').strip()
+                return str_value if str_value else "Unknown"
+            
+            # Format the prompt with sanitized variables
+            try:
+                formatted_prompt = prompt_text.format(
+                    metric=sanitize_format_value(metric.upper()),
+                    ad_name=sanitize_format_value(ad_result.get('ad_name', 'Unknown')),
+                    current_roas=sanitize_format_value(f"{ad_result['current_roas']:.2f}"),
+                    creative_hook=sanitize_format_value(current_creative.get('hook', 'Unknown')),
+                    creative_tone=sanitize_format_value(current_creative.get('tone', 'Unknown')),
+                    visual_style=sanitize_format_value(current_creative.get('visual', 'Unknown')),
+                    current_targeting_summary=sanitize_format_value(current_targeting_summary),
+                    benchmark_context=sanitize_format_value(benchmark_context),
+                    current_value=sanitize_format_value(f"{change_data['current']:.2f}"),
+                    target_value=sanitize_format_value(f"{change_data['optimized']:.2f}"),
+                    change_direction=sanitize_format_value(change_data['change_direction']),
+                    change_percent=sanitize_format_value(f"{abs(change_data['change_percent']):.1f}")
+                )
+            except KeyError as format_error:
+                logger.error(f"Prompt formatting failed with KeyError: {format_error}")
+                logger.error(f"Problematic values - benchmark_context: {benchmark_context[:200]}...")
+                # Use a simplified prompt without problematic variables
+                formatted_prompt = f"Generate efficiency improvement strategies for optimizing {metric} for this Facebook ad. Current ROAS: {ad_result['current_roas']:.2f}. Provide JSON response with bidding_strategy, audience_refinement, ad_placement_optimization, creative_improvements, budget_pacing, recommended_target_audience, and targeting_changes fields."
             
             response = await openai_service.get_completion(
                 prompt=formatted_prompt,
-                max_tokens=max_tokens or 150,
+                max_tokens=max_tokens or 500,
                 temperature=temperature or 0.7
             )
             
+            # Log AI response for debugging targeting_changes
+            logger.info(f"AI efficiency strategies raw response: {response[:1000]}..." if response and len(response) > 1000 else f"AI efficiency strategies raw response: {response}")
+            
             if response and len(response.strip()) > 10:
-                # Convert single response to list of strategies
-                strategies = [s.strip() for s in response.split('\n') if s.strip() and len(s.strip()) > 10]
-                if strategies:
-                    return strategies[:3]  # Return up to 3 strategies
-                else:
-                    return [response.strip()]
-            else:
-                return [self._get_fallback_suggestion(metric, change_data['change_direction'], change_data['change_percent'])]
+                import json
+                import re
                 
+                # Try to parse JSON response
+                try:
+                    # First, try to parse the entire response as JSON
+                    strategies_object = json.loads(response.strip())
+                    
+                    # Ensure all required fields exist
+                    required_fields = [
+                        "bidding_strategy", "audience_refinement", "ad_placement_optimization",
+                        "creative_improvements", "budget_pacing", "recommended_target_audience"
+                    ]
+                    
+                    for field in required_fields:
+                        if field not in strategies_object:
+                            strategies_object[field] = ""
+                    
+                    # Only ensure targeting_changes exists if it doesn't exist at all
+                    # Don't overwrite existing targeting_changes from AI
+                    if "targeting_changes" not in strategies_object:
+                        strategies_object["targeting_changes"] = {}
+                    
+                    # Log what AI returned for targeting_changes
+                    logger.info(f"AI returned targeting_changes: {strategies_object.get('targeting_changes')}")
+                    
+                    return strategies_object
+                    
+                except json.JSONDecodeError as json_error:
+                    logger.warning(f"Initial JSON parse failed: {json_error}")
+                    try:
+                        # Try to find JSON block within the response
+                        json_start = response.find('{')
+                        json_end = response.rfind('}') + 1
+                        if json_start >= 0 and json_end > json_start:
+                            json_str = response[json_start:json_end]
+                            
+                            # Better JSON cleanup - preserve structure but fix common issues
+                            # Remove trailing commas before closing brackets/braces
+                            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                            
+                            # Remove any text outside the JSON block
+                            json_str = json_str.strip()
+                            
+                            # Try parsing the cleaned JSON
+                            strategies_object = json.loads(json_str)
+                            
+                            # Ensure all required fields exist
+                            required_fields = [
+                                "bidding_strategy", "audience_refinement", "ad_placement_optimization",
+                                "creative_improvements", "budget_pacing", "recommended_target_audience"
+                            ]
+                            
+                            for field in required_fields:
+                                if field not in strategies_object:
+                                    strategies_object[field] = ""
+                            
+                            # Only ensure targeting_changes exists if it doesn't exist at all
+                            # Don't overwrite existing targeting_changes from AI
+                            if "targeting_changes" not in strategies_object:
+                                strategies_object["targeting_changes"] = {}
+                            
+                            # Log what AI returned for targeting_changes
+                            logger.info(f"AI returned targeting_changes (fallback parse): {strategies_object.get('targeting_changes')}")
+                            
+                            return strategies_object
+                    except Exception as fallback_error:
+                        logger.warning(f"Fallback JSON parse also failed: {fallback_error}")
+                        pass
+            
+            # Fallback if parsing fails
+            logger.warning(f"Failed to parse AI efficiency strategies JSON response, using fallback")
+            return {
+                "bidding_strategy": f"Optimize {metric} through strategic bidding adjustments to {change_data['change_direction']} by {abs(change_data['change_percent']):.1f}%",
+                "audience_refinement": "Refine audience targeting based on top-performing benchmark ads",
+                "ad_placement_optimization": "Optimize ad placements for better efficiency",
+                "creative_improvements": "Enhance creative elements to improve performance",
+                "budget_pacing": "Adjust budget pacing for optimal results",
+                "recommended_target_audience": benchmark_context.split('\n')[0].split('targeting: ')[-1] if benchmark_context and 'targeting: ' in benchmark_context else "Similar to top-performing ads",
+                "targeting_changes": {}
+            }
+            
         except Exception as e:
-            logger.error(f"Error generating AI suggestion for {metric}: {str(e)}")
-            return [self._get_fallback_suggestion(metric, change_data['change_direction'], change_data['change_percent'])]
+            logger.error(f"Error generating AI efficiency strategies JSON: {str(e)}")
+            return {
+                "bidding_strategy": f"Optimize {metric} through strategic bidding adjustments",
+                "audience_refinement": "Refine audience targeting based on performance data",
+                "ad_placement_optimization": "Optimize ad placements for better efficiency",
+                "creative_improvements": "Enhance creative elements to improve performance",
+                "budget_pacing": "Adjust budget pacing for optimal results",
+                "recommended_target_audience": "Similar to top-performing ads",
+                "targeting_changes": {}
+            }
+    
+    async def _generate_ai_conversion_strategies_json(
+        self, 
+        ad_result: Dict, 
+        purchase_change: Dict, 
+        benchmark_ads: List[Dict],
+        current_targeting: Dict,
+        benchmark_targeting_objects: List[Dict]
+    ) -> Dict:
+        """Generate AI-powered conversion improvement strategies as JSON object using existing prompt."""
+        try:
+            # Prepare benchmark data for context including targeting from benchmark ads directly
+            benchmark_info = []
+            for bench_ad in benchmark_ads[:3]:
+                creative = bench_ad.get("creative_metadata", {})
+                purchases = bench_ad.get("purchases", 0)
+                targeting_summary = bench_ad.get("targeting_summary", "No targeting info")
+                
+                benchmark_info.append(f"- {creative.get('hook', 'Unknown')} (conversions: {purchases}, targeting: {targeting_summary})")
+            
+            benchmark_context = "\n".join(benchmark_info) if benchmark_info else "No benchmark data available"
+            
+            creative_metadata = ad_result.get("creative_metadata", {})
+            current_targeting_summary = ad_result.get("current_targeting_summary", "No targeting information available")
+            
+            # Get prompt from dynamic prompt service (use existing prompt key)
+            prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("ml_conversion_strategies")
+            
+            # Sanitize all format variables to prevent KeyError from malformed content
+            def sanitize_format_value(value):
+                """Sanitize values for safe string formatting"""
+                if value is None:
+                    return "Unknown"
+                # Convert to string and escape any curly braces that might interfere with formatting
+                str_value = str(value)
+                # Replace curly braces to prevent format string issues
+                str_value = str_value.replace('{', '{{').replace('}', '}}')
+                # Remove any problematic characters that might cause issues
+                str_value = str_value.replace('\x00', '').strip()
+                return str_value if str_value else "Unknown"
+            
+            # Format the prompt with sanitized variables
+            try:
+                formatted_prompt = prompt_text.format(
+                    ad_name=sanitize_format_value(ad_result.get('ad_name', 'Unknown')),
+                    current_roas=sanitize_format_value(f"{ad_result['current_roas']:.2f}"),
+                    creative_hook=sanitize_format_value(creative_metadata.get('hook', 'Unknown')),
+                    creative_tone=sanitize_format_value(creative_metadata.get('tone', 'Unknown')),
+                    current_targeting_summary=sanitize_format_value(current_targeting_summary),
+                    benchmark_context=sanitize_format_value(benchmark_context),
+                    current_conversions=sanitize_format_value(int(purchase_change['current'])),
+                    target_conversions=sanitize_format_value(int(purchase_change['optimized'])),
+                    improvement_percent=sanitize_format_value(f"{purchase_change['change_percent']:.1f}")
+                )
+            except KeyError as format_error:
+                logger.error(f"Conversion prompt formatting failed with KeyError: {format_error}")
+                logger.error(f"Problematic values - benchmark_context: {benchmark_context[:200]}...")
+                # Use a simplified prompt without problematic variables
+                formatted_prompt = f"Generate conversion improvement strategies for this Facebook ad. Current ROAS: {ad_result['current_roas']:.2f}. Provide JSON response with creative_optimization, audience_refinement, offer_enhancement, landing_page_optimization, call_to_action_improvements, recommended_target_audience, and targeting_changes fields."
+            
+            response = await openai_service.get_completion(
+                prompt=formatted_prompt,
+                max_tokens=max_tokens or 500,
+                temperature=temperature or 0.7
+            )
+            
+            # Log AI response for debugging targeting_changes
+            logger.info(f"AI conversion strategies raw response: {response[:1000]}..." if response and len(response) > 1000 else f"AI conversion strategies raw response: {response}")
+            
+            if response and len(response.strip()) > 10:
+                import json
+                import re
+                
+                # Try to parse JSON response
+                try:
+                    # First, try to parse the entire response as JSON
+                    strategies_object = json.loads(response.strip())
+                    
+                    # Ensure all required fields exist
+                    required_fields = [
+                        "creative_optimization", "audience_refinement", "offer_enhancement",
+                        "landing_page_optimization", "call_to_action_improvements", 
+                        "recommended_target_audience"
+                    ]
+                    
+                    for field in required_fields:
+                        if field not in strategies_object:
+                            strategies_object[field] = ""
+                    
+                    # Only ensure targeting_changes exists if it doesn't exist at all
+                    # Don't overwrite existing targeting_changes from AI
+                    if "targeting_changes" not in strategies_object:
+                        strategies_object["targeting_changes"] = {}
+                    
+                    # Log what AI returned for targeting_changes
+                    logger.info(f"AI returned conversion targeting_changes: {strategies_object.get('targeting_changes')}")
+                    
+                    return strategies_object
+                    
+                except json.JSONDecodeError as json_error:
+                    logger.warning(f"Initial JSON parse failed: {json_error}")
+                    try:
+                        # Try to find JSON block within the response
+                        json_start = response.find('{')
+                        json_end = response.rfind('}') + 1
+                        if json_start >= 0 and json_end > json_start:
+                            json_str = response[json_start:json_end]
+                            
+                            # Better JSON cleanup - preserve structure but fix common issues
+                            # Remove trailing commas before closing brackets/braces
+                            json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                            
+                            # Remove any text outside the JSON block
+                            json_str = json_str.strip()
+                            
+                            # Try parsing the cleaned JSON
+                            strategies_object = json.loads(json_str)
+                            
+                            # Ensure all required fields exist
+                            required_fields = [
+                                "creative_optimization", "audience_refinement", "offer_enhancement",
+                                "landing_page_optimization", "call_to_action_improvements", 
+                                "recommended_target_audience"
+                            ]
+                            
+                            for field in required_fields:
+                                if field not in strategies_object:
+                                    strategies_object[field] = ""
+                            
+                            # Only ensure targeting_changes exists if it doesn't exist at all
+                            # Don't overwrite existing targeting_changes from AI
+                            if "targeting_changes" not in strategies_object:
+                                strategies_object["targeting_changes"] = {}
+                            
+                            # Log what AI returned for targeting_changes
+                            logger.info(f"AI returned conversion targeting_changes (fallback parse): {strategies_object.get('targeting_changes')}")
+                            
+                            return strategies_object
+                    except Exception as fallback_error:
+                        logger.warning(f"Fallback JSON parse also failed: {fallback_error}")
+                        pass
+            
+            # Fallback if parsing fails
+            logger.warning(f"Failed to parse AI conversion strategies JSON response, using fallback")
+            return {
+                "creative_optimization": f"Optimize creative elements to increase conversions by {purchase_change['change_percent']:.1f}%",
+                "audience_refinement": "Refine audience targeting for higher-intent customers based on benchmark ads",
+                "offer_enhancement": "Enhance offer strength and value proposition",
+                "landing_page_optimization": "Optimize landing page for better conversions",
+                "call_to_action_improvements": "Improve call-to-action elements",
+                "recommended_target_audience": benchmark_context.split('\n')[0].split('targeting: ')[-1] if benchmark_context and 'targeting: ' in benchmark_context else "Similar to top-performing ads",
+                "targeting_changes": {}
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating AI conversion strategies JSON: {str(e)}")
+            return {
+                "creative_optimization": "Optimize creative elements to improve conversion rates",
+                "audience_refinement": "Refine audience targeting for higher-intent customers",
+                "offer_enhancement": "Enhance offer strength and value proposition",
+                "landing_page_optimization": "Optimize landing page for better conversions",
+                "call_to_action_improvements": "Improve call-to-action elements",
+                "recommended_target_audience": "Similar to top-performing ads",
+                "targeting_changes": {}
+            }
     
     def _get_fallback_suggestion(self, param: str, change_direction: str, change_percent: float) -> str:
         """Fallback suggestions when AI fails."""
@@ -1746,59 +2106,7 @@ class MLOptimizationService:
         }
         return timeline_map.get(param, "7-14 days")
 
-    async def _generate_ai_conversion_strategies(
-        self, 
-        ad_result: Dict, 
-        purchase_change: Dict, 
-        benchmark_ads: List[Dict]
-    ) -> List[str]:
-        """Generate AI-powered conversion improvement strategies."""
-        try:
-            from app.services.openai_service import OpenAIService
-            openai_service = OpenAIService()
-            
-            creative_metadata = ad_result.get("creative_metadata", {})
-            
-            # Prepare benchmark data for context
-            benchmark_info = []
-            for bench_ad in benchmark_ads[:3]:
-                creative = bench_ad.get("creative_metadata", {})
-                purchases = bench_ad.get("purchases", 0)
-                benchmark_info.append(f"- {creative.get('hook', 'Unknown')} (conversions: {purchases})")
-            
-            benchmark_context = "\n".join(benchmark_info) if benchmark_info else "No benchmark data available"
-            
-            # Get prompt from dynamic prompt service
-            prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("ml_conversion_strategies")
-            
-            # Format the prompt with variables
-            formatted_prompt = prompt_text.format(
-                ad_name=ad_result.get('ad_name', 'Unknown'),
-                current_roas=f"{ad_result['current_roas']:.2f}",
-                creative_hook=creative_metadata.get('hook', 'Unknown'),
-                creative_tone=creative_metadata.get('tone', 'Unknown'),
-                benchmark_context=benchmark_context,
-                current_conversions=int(purchase_change['current']),
-                target_conversions=int(purchase_change['optimized']),
-                improvement_percent=f"{purchase_change['change_percent']:.1f}"
-            )
-            
-            response = await openai_service.get_completion(
-                prompt=formatted_prompt,
-                max_tokens=max_tokens or 300,
-                temperature=temperature or 0.7
-            )
-            
-            if response and len(response.strip()) > 10:
-                # Split response into individual strategies
-                strategies = [s.strip() for s in response.split('\n') if s.strip() and len(s.strip()) > 10]
-                return strategies[:5]  # Limit to 5 strategies
-            else:
-                return self._get_fallback_conversion_strategies(purchase_change)
-                
-        except Exception as e:
-            logger.error(f"Error generating AI conversion strategies: {str(e)}")
-            return self._get_fallback_conversion_strategies(purchase_change)
+
     
     def _get_fallback_conversion_strategies(self, purchase_change: Dict) -> List[str]:
         """Fallback conversion strategies when AI fails."""
@@ -1850,25 +2158,44 @@ class MLOptimizationService:
             # Get prompt from dynamic prompt service
             prompt_text, model, temperature, max_tokens = await dynamic_prompt_service.get_prompt_and_settings("ml_spend_suggestions")
             
-            # Format the prompt with variables
-            formatted_prompt = prompt_text.format(
-                action_type=action_type.replace('_', ' '),
-                ad_name=ad_result.get('ad_name', 'Unknown'),
-                current_roas=f"{ad_result['current_roas']:.2f}",
-                creative_hook=creative_metadata.get('hook', 'Unknown'),
-                creative_tone=creative_metadata.get('tone', 'Unknown'),
-                current_spend=f"{spend_change['current']:.2f}",
-                target_spend=f"{spend_change['optimized']:.2f}",
-                change_direction=spend_change['change_direction'],
-                change_percent=f"{abs(spend_change['change_percent']):.1f}",
-                action_title=action_type.replace('_', ' ').title()
-            )
+            # Sanitize all format variables to prevent KeyError from malformed content
+            def sanitize_format_value(value):
+                """Sanitize values for safe string formatting"""
+                if value is None:
+                    return "Unknown"
+                # Convert to string and escape any curly braces that might interfere with formatting
+                str_value = str(value)
+                # Replace curly braces to prevent format string issues
+                str_value = str_value.replace('{', '{{').replace('}', '}}')
+                # Remove any problematic characters that might cause issues
+                str_value = str_value.replace('\x00', '').strip()
+                return str_value if str_value else "Unknown"
+            
+            # Format the prompt with sanitized variables
+            try:
+                formatted_prompt = prompt_text.format(
+                    action_type=sanitize_format_value(action_type.replace('_', ' ')),
+                    ad_name=sanitize_format_value(ad_result.get('ad_name', 'Unknown')),
+                    current_roas=sanitize_format_value(f"{ad_result['current_roas']:.2f}"),
+                    creative_hook=sanitize_format_value(creative_metadata.get('hook', 'Unknown')),
+                    creative_tone=sanitize_format_value(creative_metadata.get('tone', 'Unknown')),
+                    current_spend=sanitize_format_value(f"{spend_change['current']:.2f}"),
+                    target_spend=sanitize_format_value(f"{spend_change['optimized']:.2f}"),
+                    change_direction=sanitize_format_value(spend_change['change_direction']),
+                    change_percent=sanitize_format_value(f"{abs(spend_change['change_percent']):.1f}"),
+                    action_title=sanitize_format_value(action_type.replace('_', ' ').title())
+                )
+            except KeyError as format_error:
+                logger.error(f"Spend suggestion prompt formatting failed with KeyError: {format_error}")
+                # Use a simplified prompt without problematic variables
+                formatted_prompt = f"Generate spend optimization suggestion for {action_type.replace('_', ' ')} ad spend. Current spend: ${spend_change['current']:.2f}, target: ${spend_change['optimized']:.2f}."
             
             response = await openai_service.get_completion(
                 prompt=formatted_prompt,
                 max_tokens=max_tokens or 150,
                 temperature=temperature or 0.7
             )
+            
             
             if response and len(response.strip()) > 10:
                 return response.strip()
@@ -1884,6 +2211,75 @@ class MLOptimizationService:
                 return f"Gradually increase spend by {spend_change['change_percent']:.1f}% while monitoring ROAS closely."
             else:
                 return f"Reduce spend by {abs(spend_change['change_percent']):.1f}% while maintaining targeting efficiency."
+
+    async def _generate_targeting_summary(self, targeting: Dict) -> str:
+        """Generate a human-readable summary of targeting parameters."""
+        if not targeting:
+            return "No targeting information available"
+        
+        summary_parts = []
+        
+        # Age range
+        if targeting.get("age_min") and targeting.get("age_max"):
+            summary_parts.append(f"Age {targeting['age_min']}-{targeting['age_max']}")
+        elif targeting.get("age_min"):
+            summary_parts.append(f"Age {targeting['age_min']}+")
+        elif targeting.get("age_max"):
+            summary_parts.append(f"Age up to {targeting['age_max']}")
+        
+        # Gender
+        if targeting.get("genders"):
+            if 1 in targeting["genders"] and 2 in targeting["genders"]:
+                summary_parts.append("All genders")
+            elif 1 in targeting["genders"]:
+                summary_parts.append("Men only")
+            elif 2 in targeting["genders"]:
+                summary_parts.append("Women only")
+        
+        # Geographic targeting - handle both countries and places
+        geo_locations = targeting.get("geo_locations", {})
+        
+        # Countries format
+        if geo_locations:
+            if geo_locations.get("countries"):
+                countries = geo_locations["countries"]
+                if len(countries) == 1:
+                    summary_parts.append(f"Country: {countries[0]}")
+                elif len(countries) <= 3:
+                    summary_parts.append(f"Countries: {', '.join(countries)}")
+                else:
+                    summary_parts.append(f"Countries: {', '.join(countries[:2])} + {len(countries)-2} more")
+            
+            # Places format (more detailed location targeting)
+            elif geo_locations.get("places"):
+                places = geo_locations["places"]
+                if len(places) == 1:
+                    place = places[0]
+                    place_name = place.get("name", "Unknown location")
+                    radius = place.get("radius", 0)
+                    country = place.get("country", "Unknown country")
+                    if radius > 0:
+                        summary_parts.append(f"Location: {place_name}, {country} ({radius}km radius)")
+                    else:
+                        summary_parts.append(f"Location: {place_name}, {country}")
+                elif len(places) <= 3:
+                    place_details = [f"{place.get('name', 'Unknown')}, {place.get('country', 'Unknown')}" for place in places]
+                    summary_parts.append(f"Locations: {', '.join(place_details)}")
+                else:
+                    place_details = [f"{place.get('name', 'Unknown')}, {place.get('country', 'Unknown')}" for place in places[:2]]
+                    summary_parts.append(f"Locations: {', '.join(place_details)} + {len(places)-2} more")
+        # Advantage audience
+        targeting_automation = targeting.get("targeting_automation", {})
+        if targeting_automation:
+            if targeting_automation.get("advantage_audience"):
+                if targeting_automation["advantage_audience"]:
+                    summary_parts.append("Advantage Audience: Enabled")
+                else:
+                    summary_parts.append("Advantage Audience: Disabled")
+            else:
+                summary_parts.append("Advantage Audience: Not set")
+        
+        return ", ".join(summary_parts) if summary_parts else "Basic targeting"
 
 # Create global instance
 ml_optimization_service = MLOptimizationService()
