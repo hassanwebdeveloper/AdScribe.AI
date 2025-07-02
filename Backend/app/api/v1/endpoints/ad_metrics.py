@@ -286,7 +286,7 @@ async def get_metrics_by_ad(
         
         logger.info(f"Previous period: {prev_start_date} to {prev_end_date}")
         
-        # Check if we have complete data for the requested period
+        # Check if we have complete data for the requested period - pass datetime objects
         has_complete_data = await metrics_service.has_complete_data_for_range(
             current_user.id, start_date_obj, end_date_obj
         )
@@ -310,18 +310,18 @@ async def get_metrics_by_ad(
         if need_to_fetch:
             logger.info(f"Attempting to fetch metrics from Facebook for user {current_user.id}")
             try:
-                # Use time_increment=1 to get daily breakdown
+                # Use time_increment=1 to get daily breakdown - pass string dates
                 await metrics_service.fetch_metrics_from_facebook(
                     user_id=current_user.id,
-                    start_date=start_date_obj,
-                    end_date=end_date_obj,
+                    start_date=start_date,
+                    end_date=end_date,
                     credentials=fb_credentials
                 )
             except Exception as e:
                 logger.error(f"Error fetching metrics from Facebook: {str(e)}")
                 # Continue with available data
         
-        # Get raw metrics for the date range
+        # Get raw metrics for the date range - pass string dates
         metrics = await metrics_service.get_metrics_by_date_range(current_user.id, start_date, end_date)
         
         if not metrics:
@@ -354,8 +354,8 @@ async def get_metrics_by_ad(
         for metric in metrics:
             collected_at = metric.get("collected_at")
             date_str = collected_at.strftime("%Y-%m-%d") if isinstance(collected_at, datetime) else str(collected_at).split("T")[0]
-            ad_id = metric.get("ad_id", "unknown")
-            ad_name = metric.get("ad_name", "Unknown Ad")
+            ad_id = metric.get("ad_id", "unknown") or "unknown"  # Use "unknown" if ad_id is None
+            ad_name = metric.get("ad_name", "Unknown Ad") or "Unknown Ad"  # Use "Unknown Ad" if ad_name is None
             
             # Track unique ads
             if ad_id not in unique_ads:
@@ -371,16 +371,16 @@ async def get_metrics_by_ad(
                     "ad_id": ad_id, 
                     "ad_name": ad_name,
                     "ad_title": ad_title or "",  # Empty string instead of None
-                    "campaign_id": metric.get("campaign_id", None),
-                    "campaign_name": metric.get("campaign_name", None),
-                    "adset_id": metric.get("adset_id", None),
-                    "adset_name": metric.get("adset_name", None)
+                    "campaign_id": metric.get("campaign_id") or None,  # Ensure None instead of empty string
+                    "campaign_name": metric.get("campaign_name") or None,  # Ensure None instead of empty string
+                    "adset_id": metric.get("adset_id") or None,  # Ensure None instead of empty string
+                    "adset_name": metric.get("adset_name") or None  # Ensure None instead of empty string
                 }
             
             # Create key for grouping
             key = f"{date_str}_{ad_id}"
             
-            additional = metric.get("additional_metrics", {})
+            additional = metric.get("additional_metrics", {}) or {}  # Handle None case
             current_spend = float(additional.get("spend", 0))
             current_clicks = int(additional.get("clicks", 0))
             current_impressions = int(additional.get("impressions", 0))
@@ -407,10 +407,10 @@ async def get_metrics_by_ad(
                     "ad_id": ad_id,
                     "ad_name": ad_name,
                     "ad_title": ad_title or "",  # Empty string instead of None
-                    "campaign_id": metric.get("campaign_id", None),
-                    "campaign_name": metric.get("campaign_name", None),
-                    "adset_id": metric.get("adset_id", None),
-                    "adset_name": metric.get("adset_name", None),
+                    "campaign_id": metric.get("campaign_id") or None,  # Ensure None instead of empty string
+                    "campaign_name": metric.get("campaign_name") or None,  # Ensure None instead of empty string
+                    "adset_id": metric.get("adset_id") or None,  # Ensure None instead of empty string
+                    "adset_name": metric.get("adset_name") or None,  # Ensure None instead of empty string
                     "spend": current_spend,
                     "clicks": current_clicks,
                     "impressions": current_impressions,
@@ -435,7 +435,8 @@ async def get_metrics_by_ad(
         
         # Convert to list and sort by date and ad_id
         ad_metrics = list(metrics_by_date_and_ad.values())
-        ad_metrics.sort(key=lambda x: (x["date"], x["ad_id"]))
+        # Use a safe sort key function that handles None values
+        ad_metrics.sort(key=lambda x: (x["date"], x["ad_id"] or ""))
         
         return AdMetricsByAdResponse(
             ad_metrics=ad_metrics,

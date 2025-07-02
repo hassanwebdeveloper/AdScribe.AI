@@ -125,7 +125,7 @@ class MetricsService:
             logger.error(f"Error getting metrics by date range: {str(e)}")
             return []
     
-    async def has_complete_data_for_range(self, user_id: str, start_date: str, end_date: str) -> bool:
+    async def has_complete_data_for_range(self, user_id: str, start_date, end_date) -> bool:
         """
         Check if we have metrics data for each day in the specified date range.
         Returns True if we have complete data, False otherwise.
@@ -137,7 +137,7 @@ class MetricsService:
             
             # Calculate expected number of days in the date range
             expected_days = (end_date_obj - start_date_obj).days + 1
-            logger.info(f"Checking data completeness for user {user_id} from {start_date} to {end_date} ({expected_days} days)")
+            logger.info(f"Checking data completeness for user {user_id} from {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')} ({expected_days} days)")
             
             # Get the metrics collection
             collection = await get_metrics_collection()
@@ -193,7 +193,7 @@ class MetricsService:
             
             # If no results, we don't have any data
             if not result:
-                logger.info(f"No data found for user {user_id} from {start_date} to {end_date}, expected {expected_days} days")
+                logger.info(f"No data found for user {user_id} from {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')}, expected {expected_days} days")
                 return False
                 
             days_with_data = result[0].get("total_days", 0)
@@ -733,8 +733,8 @@ class MetricsService:
     async def ensure_data_completeness(
         self,
         user_id: str,
-        start_date: str,
-        end_date: str,
+        start_date,
+        end_date,
         force_refresh: bool = False
     ) -> Dict[str, Any]:
         """
@@ -851,11 +851,15 @@ class MetricsService:
             if need_to_fetch and fb_credentials:
                 logger.info(f"Attempting to fetch metrics from Facebook for user {user_id}")
                 try:
+                    # Convert datetime objects to string format for fetch_metrics_from_facebook
+                    start_date_str = start_date_obj.strftime("%Y-%m-%d")
+                    end_date_str = end_date_obj.strftime("%Y-%m-%d")
+                    
                     # Fetch metrics for the date range
                     num_metrics = await self.fetch_metrics_from_facebook(
                         user_id=user_id,
-                        start_date=start_date_obj,
-                        end_date=end_date_obj,
+                        start_date=start_date_str,
+                        end_date=end_date_str,
                         credentials=fb_credentials
                     )
                     
@@ -863,11 +867,11 @@ class MetricsService:
                     if isinstance(num_metrics, list):
                         result["metrics_fetched"] = len(num_metrics) > 0
                         result["metrics_count"] = len(num_metrics)
-                        logger.info(f"Fetched {len(num_metrics)} metrics from Facebook for date range {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')}")
+                        logger.info(f"Fetched {len(num_metrics)} metrics from Facebook for date range {start_date_str} to {end_date_str}")
                     else:
                         result["metrics_fetched"] = num_metrics > 0
                         result["metrics_count"] = num_metrics
-                        logger.info(f"Fetched {num_metrics} metrics from Facebook for date range {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')}")
+                        logger.info(f"Fetched {num_metrics} metrics from Facebook for date range {start_date_str} to {end_date_str}")
                     
                     # Check if we now have complete data
                     result["has_complete_data"] = await self.has_complete_data_for_range(user_id, start_date_obj, end_date_obj)
@@ -962,20 +966,24 @@ class MetricsService:
                 current_date += timedelta(days=1)
             return all_dates 
 
-    async def has_any_data_for_range(self, user_id: str, start_date: datetime, end_date: datetime) -> bool:
+    async def has_any_data_for_range(self, user_id: str, start_date, end_date) -> bool:
         """
         Check if there is any data available for the specified date range.
         Less strict than has_complete_data_for_range - only checks if we have at least one data point.
         
         Args:
             user_id: The user ID
-            start_date: Start date as datetime
-            end_date: End date as datetime
+            start_date: Start date (string in format YYYY-MM-DD or datetime object)
+            end_date: End date (string in format YYYY-MM-DD or datetime object)
             
         Returns:
             True if there is at least one data point in the range, False otherwise
         """
         try:
+            # Convert string dates to datetime if needed
+            start_date_obj = start_date if isinstance(start_date, datetime) else datetime.strptime(start_date, "%Y-%m-%d")
+            end_date_obj = end_date if isinstance(end_date, datetime) else datetime.strptime(end_date, "%Y-%m-%d")
+            
             # Get metrics collection
             collection = await get_metrics_collection()
             
@@ -983,8 +991,8 @@ class MetricsService:
             count = await collection.count_documents({
                 "user_id": user_id,
                 "collected_at": {
-                    "$gte": start_date,
-                    "$lte": end_date
+                    "$gte": start_date_obj,
+                    "$lte": end_date_obj
                 }
             })
             
