@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, RefreshCw, History, Play, Trash2, Edit3, Check, X } from 'lucide-react';
+import { Loader2, RefreshCw, History, Play, Trash2, Edit3, Check, X, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { Switch } from '@/components/ui/switch';
@@ -253,6 +253,7 @@ const AdAnalysis = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isCollecting, setIsCollecting] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   
   // Background job states
   const [currentJob, setCurrentJob] = useState<BackgroundJob | null>(null);
@@ -644,6 +645,67 @@ const AdAnalysis = () => {
     }
   };
 
+  const deleteAllAdAnalyses = async () => {
+    setDeletingAll(true);
+    try {
+      const response = await axios.delete('/api/v1/ad-analysis/all', {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      // Clear the local state
+      setAdAnalyses([]);
+
+      toast({
+        title: "Success",
+        description: `${response.data.deleted_count || 'All'} ad analyses have been deleted successfully.`
+      });
+      
+    } catch (error: any) {
+      console.error('Error deleting all ad analyses:', error);
+      
+      let errorMessage = "Failed to delete all ad analyses";
+      if (error.response?.status === 401) {
+        errorMessage = "Authentication failed. Please log in again.";
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+      
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: errorMessage
+      });
+    } finally {
+      setDeletingAll(false);
+    }
+  };
+
+  const handleDeleteAllClick = () => {
+    if (adAnalyses.length === 0) {
+      toast({
+        title: "No Data",
+        description: "There are no ad analyses to delete."
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ALL ${adAnalyses.length} ad analyses? This action cannot be undone and will permanently remove all your ad analysis data.`
+    );
+    
+    if (confirmed) {
+      const doubleConfirmed = window.confirm(
+        "This is your final warning. Are you absolutely sure you want to delete ALL ad analyses? This action is irreversible."
+      );
+      
+      if (doubleConfirmed) {
+        deleteAllAdAnalyses();
+      }
+    }
+  };
+
   const startEditing = (analysisId: string, field: 'product' | 'product_type', currentValue: string) => {
     setEditingFields(prev => ({
       ...prev,
@@ -849,6 +911,21 @@ const AdAnalysis = () => {
               >
                 <History className="h-4 w-4" />
                 <span>History</span>
+              </Button>
+              
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDeleteAllClick}
+                disabled={deletingAll || isJobRunning}
+                className="flex items-center space-x-2"
+              >
+                {deletingAll ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4" />
+                )}
+                <span>{deletingAll ? "Deleting..." : "Delete All"}</span>
               </Button>
               
               <Button 

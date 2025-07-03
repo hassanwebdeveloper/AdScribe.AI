@@ -499,6 +499,42 @@ async def get_unique_products(current_user: User = Depends(get_current_user)):
             detail=f"Error fetching products: {str(e)}"
         )
 
+@router.delete("/all")
+async def delete_all_ad_analyses(current_user: User = Depends(get_current_user)):
+    """
+    Delete all ad analyses for the current user.
+    """
+    try:
+        db = get_database()
+        
+        # Count how many analyses exist for the user before deletion
+        count_before = await db.ad_analyses.count_documents({"user_id": str(current_user.id)})
+        
+        if count_before == 0:
+            return {
+                "success": True,
+                "message": "No ad analyses found to delete",
+                "deleted_count": 0
+            }
+        
+        # Delete all analyses for the current user
+        result = await db.ad_analyses.delete_many({"user_id": str(current_user.id)})
+        
+        logger.info(f"Deleted {result.deleted_count} ad analyses for user {current_user.id}")
+        
+        return {
+            "success": True,
+            "message": f"Successfully deleted {result.deleted_count} ad analyses",
+            "deleted_count": result.deleted_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting all ad analyses for user {current_user.id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error deleting all ad analyses"
+        )
+
 @router.delete("/{analysis_id}")
 async def delete_ad_analysis(analysis_id: str, current_user: User = Depends(get_current_user)):
     """
