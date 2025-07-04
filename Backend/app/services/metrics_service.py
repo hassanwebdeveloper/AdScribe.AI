@@ -449,10 +449,14 @@ class MetricsService:
     async def calculate_aggregated_kpis(self, user_id: str, start_date: str, end_date: str) -> Dict[str, float]:
         """
         Calculate aggregated KPIs for the specified date range.
-        Returns a dict with KPI metrics using the highest values for each metric.
+        Only includes metrics for ads that are present in the ad_analyses collection.
+        Returns a dict with KPI metrics using daily averages for all metrics.
         """
         # Get metrics for the date range
-        metrics = await self.get_metrics_by_date_range(user_id, start_date, end_date)
+        all_metrics = await self.get_metrics_by_date_range(user_id, start_date, end_date)
+        
+        # Filter metrics to only include analyzed ads
+        metrics = await self._filter_metrics_by_analyses(all_metrics, user_id)
         
         if not metrics:
             return {
@@ -465,25 +469,24 @@ class MetricsService:
                 "revenue": 0
             }
         
-        # Initialize with minimum values
-        max_spend = 0
-        max_clicks = 0
-        max_impressions = 0
-        max_purchases = 0
-        max_revenue = 0
-        
         # Group metrics by date to find the highest values for each day
         metrics_by_date = {}
         for metric in metrics:
             collected_at = metric.get("collected_at")
             date_str = collected_at.strftime("%Y-%m-%d") if isinstance(collected_at, datetime) else str(collected_at).split("T")[0]
             
-            additional = metric.get("additional_metrics", {})
+            additional = metric.get("additional_metrics", {}) or {}
             current_spend = float(additional.get("spend", 0))
             current_clicks = int(additional.get("clicks", 0))
             current_impressions = int(additional.get("impressions", 0))
             current_purchases = int(metric.get("purchases", 0))
             current_revenue = float(additional.get("purchases_value", 0))
+            
+            # Get pre-calculated ratios from Facebook data
+            current_ctr = float(additional.get("ctr", 0))
+            current_cpc = float(additional.get("cpc", 0))
+            current_cpm = float(additional.get("cpm", 0))
+            current_roas = float(additional.get("roas", 0))
             
             if date_str not in metrics_by_date:
                 metrics_by_date[date_str] = {
@@ -491,43 +494,87 @@ class MetricsService:
                     "clicks": current_clicks,
                     "impressions": current_impressions,
                     "purchases": current_purchases,
-                    "revenue": current_revenue
+                    "revenue": current_revenue,
+                    "ctr": current_ctr,
+                    "cpc": current_cpc,
+                    "cpm": current_cpm,
+                    "roas": current_roas
                 }
             else:
-                # Update with max values
+                # Update with max values for totals
                 metrics_by_date[date_str]["spend"] = max(metrics_by_date[date_str]["spend"], current_spend)
                 metrics_by_date[date_str]["clicks"] = max(metrics_by_date[date_str]["clicks"], current_clicks)
                 metrics_by_date[date_str]["impressions"] = max(metrics_by_date[date_str]["impressions"], current_impressions)
                 metrics_by_date[date_str]["purchases"] = max(metrics_by_date[date_str]["purchases"], current_purchases)
                 metrics_by_date[date_str]["revenue"] = max(metrics_by_date[date_str]["revenue"], current_revenue)
+                
+                # Update with max values for ratios (taking the highest performing ratio for the day)
+                metrics_by_date[date_str]["ctr"] = max(metrics_by_date[date_str]["ctr"], current_ctr)
+                metrics_by_date[date_str]["cpc"] = max(metrics_by_date[date_str]["cpc"], current_cpc)
+                metrics_by_date[date_str]["cpm"] = max(metrics_by_date[date_str]["cpm"], current_cpm)
+                metrics_by_date[date_str]["roas"] = max(metrics_by_date[date_str]["roas"], current_roas)
         
-        # Sum up the daily maximum values
-        for daily_max in metrics_by_date.values():
-            max_spend += daily_max["spend"]
-            max_clicks += daily_max["clicks"]
-            max_impressions += daily_max["impressions"]
-            max_purchases += daily_max["purchases"]
-            max_revenue += daily_max["revenue"]
+        # Count days with data
+        valid_days_count = len(metrics_by_date)
+        if valid_days_count == 0:
+            return {
+                "roas": 0,
+                "ctr": 0,
+                "cpc": 0,
+                "cpm": 0,
+                "conversions": 0,
+                "spend": 0,
+                "revenue": 0
+            }
         
-        # Calculate KPIs
-        ctr = max_clicks / max_impressions if max_impressions > 0 else 0
-        cpc = max_spend / max_clicks if max_clicks > 0 else 0
-        cpm = (max_spend / max_impressions) * 1000 if max_impressions > 0 else 0
-        roas = max_revenue / max_spend if max_spend > 0 else 0
+        # Sum up daily values
+        total_spend = 0
+        total_clicks = 0
+        total_impressions = 0
+        total_purchases = 0
+        total_revenue = 0
+        total_ctr = 0
+        total_cpc = 0
+        total_cpm = 0
+        total_roas = 0
+        
+        for daily_metrics in metrics_by_date.values():
+            # Sum up all metrics
+            total_spend += daily_metrics["spend"]
+            total_clicks += daily_metrics["clicks"]
+            total_impressions += daily_metrics["impressions"]
+            total_purchases += daily_metrics["purchases"]
+            total_revenue += daily_metrics["revenue"]
+            total_ctr += daily_metrics["ctr"]
+            total_cpc += daily_metrics["cpc"]
+            total_cpm += daily_metrics["cpm"]
+            total_roas += daily_metrics["roas"]
+        
+        # Calculate daily averages by dividing by the number of days with data
+        avg_spend = total_spend / valid_days_count
+        avg_clicks = total_clicks / valid_days_count
+        avg_impressions = total_impressions / valid_days_count
+        avg_purchases = total_purchases / valid_days_count
+        avg_revenue = total_revenue / valid_days_count
+        avg_ctr = total_ctr / valid_days_count
+        avg_cpc = total_cpc / valid_days_count
+        avg_cpm = total_cpm / valid_days_count
+        avg_roas = total_roas / valid_days_count
         
         return {
-            "roas": roas,
-            "ctr": ctr,
-            "cpc": cpc,
-            "cpm": cpm,
-            "conversions": max_purchases,
-            "spend": max_spend,
-            "revenue": max_revenue
+            "roas": avg_roas,
+            "ctr": avg_ctr,
+            "cpc": avg_cpc,
+            "cpm": avg_cpm,
+            "conversions": round(avg_purchases),  # Round to integer as expected by the model
+            "spend": avg_spend,
+            "revenue": avg_revenue
         }
     
     async def get_daily_metrics(self, user_id: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
         """
         Get daily metrics for trend charts.
+        Only includes metrics for ads that are present in the ad_analyses collection.
         Returns a list of daily metrics with date, spend, revenue, ctr, and roas.
         Ensures all dates in the range have entries, even if there's no data.
         """
@@ -538,12 +585,42 @@ class MetricsService:
             
             # Include the full end day
             end_date_obj = end_date_obj.replace(hour=23, minute=59, second=59)
+
+            # Get valid ad/campaign IDs from ad_analyses
+            valid_ad_ids, valid_campaign_ids = await self._get_valid_ad_ids_from_analyses(user_id)
+            
+            # If no valid ads found, return empty data for all dates
+            if not valid_ad_ids and not valid_campaign_ids:
+                logger.info(f"No ads found in ad_analyses collection for user {user_id}, returning empty daily metrics")
+                all_days = []
+                current_date = start_date_obj
+                while current_date <= end_date_obj:
+                    date_str = current_date.strftime("%Y-%m-%d")
+                    all_days.append({
+                        "date": date_str,
+                        "spend": 0,
+                        "revenue": 0,
+                        "clicks": 0,
+                        "impressions": 0,
+                        "purchases": 0,
+                        "ctr": 0,
+                        "roas": 0
+                    })
+                    current_date += timedelta(days=1)
+                return all_days
             
             # Get metrics collection
             collection = await get_metrics_collection()
             
             # Log the date range being queried
             logger.info(f"Querying daily metrics from {start_date_obj} to {end_date_obj} for user {user_id}")
+            
+            # Create filter for valid ads - include metrics that match either ad_id or campaign_id
+            ad_filter = {"$or": []}
+            if valid_ad_ids:
+                ad_filter["$or"].append({"ad_id": {"$in": list(valid_ad_ids)}})
+            if valid_campaign_ids:
+                ad_filter["$or"].append({"campaign_id": {"$in": list(valid_campaign_ids)}})
             
             # Aggregate metrics by day - use the actual collected_at field from the database
             pipeline = [
@@ -553,7 +630,8 @@ class MetricsService:
                         "collected_at": {
                             "$gte": start_date_obj,
                             "$lte": end_date_obj
-                        }
+                        },
+                        **ad_filter  # Add filter for analyzed ads only
                     }
                 },
                 {
@@ -1001,3 +1079,55 @@ class MetricsService:
         except Exception as e:
             logger.error(f"Error checking if any data exists for range: {str(e)}")
             return False 
+
+    async def _get_valid_ad_ids_from_analyses(self, user_id: str) -> tuple[set, set]:
+        """
+        Helper method to get valid ad_ids and campaign_ids from ad_analyses collection.
+        Returns a tuple of (valid_ad_ids, valid_campaign_ids).
+        """
+        try:
+            db = get_database()
+            ad_analyses = await db.ad_analyses.find({"user_id": str(user_id)}).to_list(length=1000)
+            
+            valid_ad_ids = set()
+            valid_campaign_ids = set()
+            
+            for analysis in ad_analyses:
+                # Add ad_id if present
+                if "ad_id" in analysis and analysis["ad_id"]:
+                    valid_ad_ids.add(analysis["ad_id"])
+                
+                # Add campaign_id if present
+                if "campaign_id" in analysis and analysis["campaign_id"]:
+                    valid_campaign_ids.add(analysis["campaign_id"])
+            
+            logger.info(f"Found {len(valid_ad_ids)} valid ad IDs and {len(valid_campaign_ids)} valid campaign IDs from ad_analyses for user {user_id}")
+            return valid_ad_ids, valid_campaign_ids
+            
+        except Exception as e:
+            logger.error(f"Error getting valid ad IDs from ad_analyses: {str(e)}")
+            return set(), set()
+
+    async def _filter_metrics_by_analyses(self, metrics: List[Dict[str, Any]], user_id: str) -> List[Dict[str, Any]]:
+        """
+        Helper method to filter metrics to only include ads that are present in ad_analyses collection.
+        """
+        valid_ad_ids, valid_campaign_ids = await self._get_valid_ad_ids_from_analyses(user_id)
+        
+        # If no valid ads found, return empty list
+        if not valid_ad_ids and not valid_campaign_ids:
+            logger.info(f"No ads found in ad_analyses collection for user {user_id}, filtering all metrics")
+            return []
+        
+        # Filter metrics
+        filtered_metrics = []
+        for metric in metrics:
+            ad_id = metric.get("ad_id")
+            campaign_id = metric.get("campaign_id")
+            
+            # Include metric if either ad_id or campaign_id is in the valid sets
+            if (ad_id and ad_id in valid_ad_ids) or (campaign_id and campaign_id in valid_campaign_ids):
+                filtered_metrics.append(metric)
+        
+        logger.info(f"Filtered metrics from {len(metrics)} to {len(filtered_metrics)} based on ad_analyses collection for user {user_id}")
+        return filtered_metrics 
