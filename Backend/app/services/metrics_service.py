@@ -450,7 +450,7 @@ class MetricsService:
         """
         Calculate aggregated KPIs for the specified date range.
         Only includes metrics for ads that are present in the ad_analyses collection.
-        Returns a dict with KPI metrics using daily averages for all metrics.
+        First calculates daily averages across all ads for each day, then averages those daily averages.
         """
         # Get metrics for the date range
         all_metrics = await self.get_metrics_by_date_range(user_id, start_date, end_date)
@@ -469,11 +469,16 @@ class MetricsService:
                 "revenue": 0
             }
         
-        # Group metrics by date to find the highest values for each day
-        metrics_by_date = {}
+        # Group metrics by date and ad_id to organize data properly
+        metrics_by_date_and_ad = {}
+        
         for metric in metrics:
             collected_at = metric.get("collected_at")
             date_str = collected_at.strftime("%Y-%m-%d") if isinstance(collected_at, datetime) else str(collected_at).split("T")[0]
+            ad_id = metric.get("ad_id", "unknown")
+            
+            # Create key for grouping
+            key = f"{date_str}_{ad_id}"
             
             additional = metric.get("additional_metrics", {}) or {}
             current_spend = float(additional.get("spend", 0))
@@ -488,8 +493,10 @@ class MetricsService:
             current_cpm = float(additional.get("cpm", 0))
             current_roas = float(additional.get("roas", 0))
             
-            if date_str not in metrics_by_date:
-                metrics_by_date[date_str] = {
+            if key not in metrics_by_date_and_ad:
+                metrics_by_date_and_ad[key] = {
+                    "date": date_str,
+                    "ad_id": ad_id,
                     "spend": current_spend,
                     "clicks": current_clicks,
                     "impressions": current_impressions,
@@ -501,21 +508,70 @@ class MetricsService:
                     "roas": current_roas
                 }
             else:
-                # Update with max values for totals
-                metrics_by_date[date_str]["spend"] = max(metrics_by_date[date_str]["spend"], current_spend)
-                metrics_by_date[date_str]["clicks"] = max(metrics_by_date[date_str]["clicks"], current_clicks)
-                metrics_by_date[date_str]["impressions"] = max(metrics_by_date[date_str]["impressions"], current_impressions)
-                metrics_by_date[date_str]["purchases"] = max(metrics_by_date[date_str]["purchases"], current_purchases)
-                metrics_by_date[date_str]["revenue"] = max(metrics_by_date[date_str]["revenue"], current_revenue)
-                
-                # Update with max values for ratios (taking the highest performing ratio for the day)
-                metrics_by_date[date_str]["ctr"] = max(metrics_by_date[date_str]["ctr"], current_ctr)
-                metrics_by_date[date_str]["cpc"] = max(metrics_by_date[date_str]["cpc"], current_cpc)
-                metrics_by_date[date_str]["cpm"] = max(metrics_by_date[date_str]["cpm"], current_cpm)
-                metrics_by_date[date_str]["roas"] = max(metrics_by_date[date_str]["roas"], current_roas)
+                # Update with max values for the same ad on the same day
+                metrics_by_date_and_ad[key]["spend"] = max(metrics_by_date_and_ad[key]["spend"], current_spend)
+                metrics_by_date_and_ad[key]["clicks"] = max(metrics_by_date_and_ad[key]["clicks"], current_clicks)
+                metrics_by_date_and_ad[key]["impressions"] = max(metrics_by_date_and_ad[key]["impressions"], current_impressions)
+                metrics_by_date_and_ad[key]["purchases"] = max(metrics_by_date_and_ad[key]["purchases"], current_purchases)
+                metrics_by_date_and_ad[key]["revenue"] = max(metrics_by_date_and_ad[key]["revenue"], current_revenue)
+                metrics_by_date_and_ad[key]["ctr"] = max(metrics_by_date_and_ad[key]["ctr"], current_ctr)
+                metrics_by_date_and_ad[key]["cpc"] = max(metrics_by_date_and_ad[key]["cpc"], current_cpc)
+                metrics_by_date_and_ad[key]["cpm"] = max(metrics_by_date_and_ad[key]["cpm"], current_cpm)
+                metrics_by_date_and_ad[key]["roas"] = max(metrics_by_date_and_ad[key]["roas"], current_roas)
+        
+        # Calculate total conversions (sum of max purchases for each unique ad-day combination)
+        total_conversions = 0
+        for metrics_data in metrics_by_date_and_ad.values():
+            total_conversions += metrics_data["purchases"]
+        
+        # Group by date to calculate daily averages across all ads
+        daily_averages = {}
+        ads_per_day = {}
+        
+        # First, count how many ads we have per day
+        for key, metrics_data in metrics_by_date_and_ad.items():
+            date = metrics_data["date"]
+            if date not in ads_per_day:
+                ads_per_day[date] = 0
+                daily_averages[date] = {
+                    "spend": 0,
+                    "clicks": 0,
+                    "impressions": 0,
+                    "purchases": 0,
+                    "revenue": 0,
+                    "ctr": 0,
+                    "cpc": 0,
+                    "cpm": 0,
+                    "roas": 0
+                }
+            ads_per_day[date] += 1
+            
+            # Sum metrics for each day
+            daily_averages[date]["spend"] += metrics_data["spend"]
+            daily_averages[date]["clicks"] += metrics_data["clicks"]
+            daily_averages[date]["impressions"] += metrics_data["impressions"]
+            daily_averages[date]["purchases"] += metrics_data["purchases"]
+            daily_averages[date]["revenue"] += metrics_data["revenue"]
+            daily_averages[date]["ctr"] += metrics_data["ctr"]
+            daily_averages[date]["cpc"] += metrics_data["cpc"]
+            daily_averages[date]["cpm"] += metrics_data["cpm"]
+            daily_averages[date]["roas"] += metrics_data["roas"]
+        
+        # Calculate daily averages by dividing by number of ads for each day
+        for date, ad_count in ads_per_day.items():
+            if ad_count > 0:
+                daily_averages[date]["spend"] /= ad_count
+                daily_averages[date]["clicks"] /= ad_count
+                daily_averages[date]["impressions"] /= ad_count
+                daily_averages[date]["purchases"] /= ad_count
+                daily_averages[date]["revenue"] /= ad_count
+                daily_averages[date]["ctr"] /= ad_count
+                daily_averages[date]["cpc"] /= ad_count
+                daily_averages[date]["cpm"] /= ad_count
+                daily_averages[date]["roas"] /= ad_count
         
         # Count days with data
-        valid_days_count = len(metrics_by_date)
+        valid_days_count = len(daily_averages)
         if valid_days_count == 0:
             return {
                 "roas": 0,
@@ -527,48 +583,48 @@ class MetricsService:
                 "revenue": 0
             }
         
-        # Sum up daily values
-        total_spend = 0
-        total_clicks = 0
-        total_impressions = 0
-        total_purchases = 0
-        total_revenue = 0
-        total_ctr = 0
-        total_cpc = 0
-        total_cpm = 0
-        total_roas = 0
+        # Sum up daily averages
+        total_avg_spend = 0
+        total_avg_clicks = 0
+        total_avg_impressions = 0
+        total_avg_purchases = 0
+        total_avg_revenue = 0
+        total_avg_ctr = 0
+        total_avg_cpc = 0
+        total_avg_cpm = 0
+        total_avg_roas = 0
         
-        for daily_metrics in metrics_by_date.values():
-            # Sum up all metrics
-            total_spend += daily_metrics["spend"]
-            total_clicks += daily_metrics["clicks"]
-            total_impressions += daily_metrics["impressions"]
-            total_purchases += daily_metrics["purchases"]
-            total_revenue += daily_metrics["revenue"]
-            total_ctr += daily_metrics["ctr"]
-            total_cpc += daily_metrics["cpc"]
-            total_cpm += daily_metrics["cpm"]
-            total_roas += daily_metrics["roas"]
+        for daily_avg in daily_averages.values():
+            # Sum up all daily averages
+            total_avg_spend += daily_avg["spend"]
+            total_avg_clicks += daily_avg["clicks"]
+            total_avg_impressions += daily_avg["impressions"]
+            total_avg_purchases += daily_avg["purchases"]
+            total_avg_revenue += daily_avg["revenue"]
+            total_avg_ctr += daily_avg["ctr"]
+            total_avg_cpc += daily_avg["cpc"]
+            total_avg_cpm += daily_avg["cpm"]
+            total_avg_roas += daily_avg["roas"]
         
-        # Calculate daily averages by dividing by the number of days with data
-        avg_spend = total_spend / valid_days_count
-        avg_clicks = total_clicks / valid_days_count
-        avg_impressions = total_impressions / valid_days_count
-        avg_purchases = total_purchases / valid_days_count
-        avg_revenue = total_revenue / valid_days_count
-        avg_ctr = total_ctr / valid_days_count
-        avg_cpc = total_cpc / valid_days_count
-        avg_cpm = total_cpm / valid_days_count
-        avg_roas = total_roas / valid_days_count
+        # Calculate overall averages by dividing by the number of days
+        final_avg_spend = total_avg_spend / valid_days_count
+        final_avg_clicks = total_avg_clicks / valid_days_count
+        final_avg_impressions = total_avg_impressions / valid_days_count
+        final_avg_purchases = total_avg_purchases / valid_days_count
+        final_avg_revenue = total_avg_revenue / valid_days_count
+        final_avg_ctr = total_avg_ctr / valid_days_count
+        final_avg_cpc = total_avg_cpc / valid_days_count
+        final_avg_cpm = total_avg_cpm / valid_days_count
+        final_avg_roas = total_avg_roas / valid_days_count
         
         return {
-            "roas": avg_roas,
-            "ctr": avg_ctr,
-            "cpc": avg_cpc,
-            "cpm": avg_cpm,
-            "conversions": round(avg_purchases),  # Round to integer as expected by the model
-            "spend": avg_spend,
-            "revenue": avg_revenue
+            "roas": final_avg_roas,
+            "ctr": final_avg_ctr,
+            "cpc": final_avg_cpc,
+            "cpm": final_avg_cpm,
+            "conversions": total_conversions,  # Use total conversions instead of average
+            "spend": final_avg_spend,
+            "revenue": final_avg_revenue
         }
     
     async def get_daily_metrics(self, user_id: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:

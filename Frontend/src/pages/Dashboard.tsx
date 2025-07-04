@@ -443,7 +443,11 @@ const Dashboard = () => {
     const isPositive = change >= 0;
     
     // For cost metrics (CPC, CPM), lower is better
-    const isImproving = title.includes('Cost') ? !isPositive : isPositive;
+    const isCostMetric = title.includes('CPC') || title.includes('CPM');
+    const isImproving = isCostMetric ? !isPositive : isPositive;
+    
+    // Determine which arrow to show based on both the metric type and direction of change
+    const showUpArrow = isCostMetric ? !isImproving : isImproving;
     
     return (
       <Card>
@@ -456,15 +460,18 @@ const Dashboard = () => {
             {prefix}{formatter(value)}{suffix}
           </div>
           <div className="flex items-center pt-1 text-xs">
-            {isImproving ? (
-              <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
+            {showUpArrow ? (
+              <TrendingUp className={`mr-1 h-3 w-3 ${isImproving ? 'text-green-500' : 'text-red-500'}`} />
             ) : (
-              <TrendingDown className="mr-1 h-3 w-3 text-red-500" />
+              <TrendingDown className={`mr-1 h-3 w-3 ${isImproving ? 'text-green-500' : 'text-red-500'}`} />
             )}
             <span className={isImproving ? 'text-green-500' : 'text-red-500'}>
               {isPositive ? '+' : ''}{change.toFixed(1)}%
             </span>
-            <span className="text-muted-foreground ml-1">vs previous period</span>
+            <span className="text-muted-foreground ml-1">vs previous</span>
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            Previous: {prefix}{formatter(previousValue)}{suffix}
           </div>
         </CardContent>
       </Card>
