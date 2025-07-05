@@ -122,6 +122,9 @@ const Dashboard = () => {
   // Add pagination state for ad performance
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [adsPerPage] = useState<number>(12); // Show 12 ads per page
+  
+  // Add state for chart type toggle
+  const [showDistribution, setShowDistribution] = useState<boolean>(true); // Default to distribution chart
 
   // Calculate previous date range
   const getPreviousRange = (from: Date, to: Date) => {
@@ -1134,13 +1137,37 @@ const Dashboard = () => {
               {/* Ad Performance Subtabs */}
               <Tabs defaultValue="current" className="w-full">
                 <TabsList className="mb-4">
-                  <TabsTrigger value="current">Current Ad Performance</TabsTrigger>
+                  <TabsTrigger value="current">Ad Performance</TabsTrigger>
                   <TabsTrigger value="comparison">Metric Comparison</TabsTrigger>
                 </TabsList>
                 
-                {/* Current Ad Performance Subtab */}
+                                {/* Ad Performance Subtab */}
                 <TabsContent value="current">
-                  <div className="flex justify-end items-center mb-4">
+                  <div className="flex flex-wrap justify-between items-center mb-4">
+                    <div className="flex items-center gap-4 mb-2 sm:mb-0">
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="chart-type-toggle" className="text-sm">Chart Type</Label>
+                        <div className="flex items-center border rounded-md p-1">
+                          <Button
+                            variant={showDistribution ? "secondary" : "ghost"}
+                            size="sm"
+                            onClick={() => setShowDistribution(true)}
+                            className="text-xs h-8"
+                          >
+                            Distribution
+                          </Button>
+                          <Button
+                            variant={!showDistribution ? "secondary" : "ghost"}
+                            size="sm"
+                            onClick={() => setShowDistribution(false)}
+                            className="text-xs h-8"
+                          >
+                            Line Chart
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                    
                     <div className="flex items-center gap-2">
                       <Label htmlFor="metric-selector" className="text-sm">Metric</Label>
                       <Select
@@ -1294,20 +1321,36 @@ const Dashboard = () => {
                               };
                             });
                             
-                            // Create chart data
-                            const chartData = [{
-                              x: dataPoints.map(p => p.x),
-                              y: dataPoints.map(p => p.y),
-                              type: 'scatter',
-                              mode: 'lines+markers',
-                              name: getMetricTitle(selectedMetric),
-                              line: { 
-                                color: 'rgba(99, 102, 241, 0.7)', 
-                                width: 2,
-                                shape: 'linear'
-                              },
-                              marker: { size: 6 }
-                            }];
+                            // Create chart data based on selected chart type
+                            const chartData = showDistribution 
+                              ? [
+                                  {
+                                    x: dataPoints.map(p => p.y), // Use metric values on x-axis for distribution
+                                    type: 'histogram',
+                                    name: getMetricTitle(selectedMetric),
+                                    marker: { 
+                                      color: 'rgba(99, 102, 241, 0.7)'
+                                    },
+                                    autobinx: true, // Auto-calculate bin size
+                                    histnorm: 'count', // Show frequency count
+                                    opacity: 0.8
+                                  }
+                                ]
+                              : [
+                                  {
+                                    x: dataPoints.map(p => p.x),
+                                    y: dataPoints.map(p => p.y),
+                                    type: 'scatter',
+                                    mode: 'lines+markers',
+                                    name: getMetricTitle(selectedMetric),
+                                    line: { 
+                                      color: 'rgba(99, 102, 241, 0.7)', 
+                                      width: 2,
+                                      shape: 'linear'
+                                    },
+                                    marker: { size: 6 }
+                                  }
+                                ];
                             
                             return (
                               <Card key={adId} className="cursor-pointer hover:shadow-md transition-shadow">
@@ -1322,16 +1365,18 @@ const Dashboard = () => {
                                     data={chartData}
                                     layout={{
                                       yaxis: { 
-                                        title: getMetricTitle(selectedMetric),
+                                        title: showDistribution ? 'Frequency' : getMetricTitle(selectedMetric),
                                         autorange: true,
                                         titlefont: { size: 10 }
                                       },
                                       xaxis: { 
+                                        title: showDistribution ? getMetricTitle(selectedMetric) : 'Date',
                                         titlefont: { size: 10 },
                                         tickfont: { size: 8 }
                                       },
                                       margin: { l: 40, r: 20, t: 10, b: 30 },
-                                      showlegend: false
+                                      showlegend: false,
+                                      bargap: showDistribution ? 0.05 : 0.2 // Tighter spacing for histogram
                                     }}
                                   />
                                 </CardContent>
