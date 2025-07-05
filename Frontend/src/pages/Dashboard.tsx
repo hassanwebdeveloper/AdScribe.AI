@@ -35,6 +35,8 @@ interface AdMetricsData {
     conversions: number;
     spend: number;
     revenue: number;
+    clicks: number;
+    impressions: number;
   };
   previous_period: {
     start_date: string;
@@ -46,6 +48,8 @@ interface AdMetricsData {
     conversions: number;
     spend: number;
     revenue: number;
+    clicks: number;
+    impressions: number;
   };
   daily_metrics: Array<{
     date: string;
@@ -1034,7 +1038,7 @@ const Dashboard = () => {
             {/* Account Performance Tab */}
             <TabsContent value="account" className="space-y-6">
               {/* KPI Cards */}
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 mb-6">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 mb-6">
                 <MetricCard 
                   title="ROAS" 
                   value={metrics?.current_period?.roas || 0} 
@@ -1073,6 +1077,36 @@ const Dashboard = () => {
                   previousValue={metrics?.previous_period?.conversions || 0} 
                   icon={<ShoppingCart />} 
                   formatter={(n) => n.toFixed(0)}
+                />
+                <MetricCard 
+                  title="Spend" 
+                  value={metrics?.current_period?.spend || 0} 
+                  previousValue={metrics?.previous_period?.spend || 0} 
+                  icon={<DollarSign />} 
+                  prefix="$"
+                  formatter={(n) => formatCurrency(n)}
+                />
+                <MetricCard 
+                  title="Revenue" 
+                  value={metrics?.current_period?.revenue || 0} 
+                  previousValue={metrics?.previous_period?.revenue || 0} 
+                  icon={<DollarSign />} 
+                  prefix="$"
+                  formatter={(n) => formatCurrency(n)}
+                />
+                <MetricCard 
+                  title="Clicks" 
+                  value={metrics?.current_period?.clicks || 0} 
+                  previousValue={metrics?.previous_period?.clicks || 0} 
+                  icon={<MousePointerClick />} 
+                  formatter={(n) => n.toLocaleString()}
+                />
+                <MetricCard 
+                  title="Impressions" 
+                  value={metrics?.current_period?.impressions || 0} 
+                  previousValue={metrics?.previous_period?.impressions || 0} 
+                  icon={<Eye />} 
+                  formatter={(n) => n.toLocaleString()}
                 />
               </div>
 

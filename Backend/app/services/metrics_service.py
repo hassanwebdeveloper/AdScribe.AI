@@ -466,7 +466,9 @@ class MetricsService:
                 "cpm": 0,
                 "conversions": 0,
                 "spend": 0,
-                "revenue": 0
+                "revenue": 0,
+                "clicks": 0,
+                "impressions": 0
             }
 
         # Initialize total sums
@@ -528,7 +530,9 @@ class MetricsService:
             "cpm": cpm,
             "conversions": total_purchases,
             "spend": total_spend,
-            "revenue": total_revenue
+            "revenue": total_revenue,
+            "clicks": total_clicks,
+            "impressions": total_impressions
         }
     
     async def get_daily_metrics(self, user_id: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:

@@ -27,6 +27,8 @@ class PeriodMetrics(BaseModel):
     conversions: int = 0
     spend: float = 0
     revenue: float = 0
+    clicks: int = 0
+    impressions: int = 0
 
 class DailyMetric(BaseModel):
     date: str
