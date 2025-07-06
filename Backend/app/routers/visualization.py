@@ -81,6 +81,8 @@ async def get_ad_performance_segments(
             bins=[0, 1.5, 3, float('inf')],
             labels=['Low', 'Moderate', 'High Fatigue Risk']
         )
+        # Fill any NaN values (which fall outside defined bins) with a default category to avoid "Fatigue Risk: nan" facet
+        df['fatigue_risk'] = df['fatigue_risk'].fillna('Low')
 
         high_ctr_threshold = 1.5
         high_cpc_threshold = 0.5
