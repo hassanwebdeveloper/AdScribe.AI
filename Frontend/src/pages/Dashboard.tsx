@@ -15,6 +15,7 @@ import PredictionService, { BestAdPrediction, AdMetrics } from '@/services/Predi
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import AdPerformanceSegments from '@/components/AdPerformanceSegments';
+import AdComparisonCharts from '@/components/AdComparisonCharts';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
 
@@ -34,6 +35,8 @@ interface AdMetricsData {
     conversions: number;
     spend: number;
     revenue: number;
+    clicks: number;
+    impressions: number;
   };
   previous_period: {
     start_date: string;
@@ -45,6 +48,8 @@ interface AdMetricsData {
     conversions: number;
     spend: number;
     revenue: number;
+    clicks: number;
+    impressions: number;
   };
   daily_metrics: Array<{
     date: string;
@@ -121,6 +126,9 @@ const Dashboard = () => {
   // Add pagination state for ad performance
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [adsPerPage] = useState<number>(12); // Show 12 ads per page
+  
+  // Add state for chart type toggle
+  const [showDistribution, setShowDistribution] = useState<boolean>(true); // Default to distribution chart
 
   // Calculate previous date range
   const getPreviousRange = (from: Date, to: Date) => {
@@ -443,7 +451,11 @@ const Dashboard = () => {
     const isPositive = change >= 0;
     
     // For cost metrics (CPC, CPM), lower is better
-    const isImproving = title.includes('Cost') ? !isPositive : isPositive;
+    const isCostMetric = title.includes('CPC') || title.includes('CPM');
+    const isImproving = isCostMetric ? !isPositive : isPositive;
+    
+    // Determine which arrow to show based on both the metric type and direction of change
+    const showUpArrow = isCostMetric ? !isImproving : isImproving;
     
     return (
       <Card>
@@ -456,15 +468,18 @@ const Dashboard = () => {
             {prefix}{formatter(value)}{suffix}
           </div>
           <div className="flex items-center pt-1 text-xs">
-            {isImproving ? (
-              <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
+            {showUpArrow ? (
+              <TrendingUp className={`mr-1 h-3 w-3 ${isImproving ? 'text-green-500' : 'text-red-500'}`} />
             ) : (
-              <TrendingDown className="mr-1 h-3 w-3 text-red-500" />
+              <TrendingDown className={`mr-1 h-3 w-3 ${isImproving ? 'text-green-500' : 'text-red-500'}`} />
             )}
             <span className={isImproving ? 'text-green-500' : 'text-red-500'}>
               {isPositive ? '+' : ''}{change.toFixed(1)}%
             </span>
-            <span className="text-muted-foreground ml-1">vs previous period</span>
+            <span className="text-muted-foreground ml-1">vs previous</span>
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            Previous: {prefix}{formatter(previousValue)}{suffix}
           </div>
         </CardContent>
       </Card>
@@ -750,9 +765,9 @@ const Dashboard = () => {
         hovertemplate: '<b>%{customdata[0]}</b><br><br>Date: %{x}<br>' + 
           (metricName === 'ctr' ? 'CTR' : metricName.charAt(0).toUpperCase() + metricName.slice(1)) + ': %{y}<br><br>' +
           'Campaign: %{customdata[1]}<br>Ad Set: %{customdata[2]}<br><br>' +
-          'Purchases: %{customdata[3]}<br>Spend: $%{customdata[4]}<br>Revenue: $%{customdata[5]}<br>' +
+          'Purchases: %{customdata[3]}<br>Spend: Rs.%{customdata[4]}<br>Revenue: Rs.%{customdata[5]}<br>' +
           'Clicks: %{customdata[6]}<br>Impressions: %{customdata[7]}<br>ROAS: %{customdata[8]}x<br>' +
-          'CPC: $%{customdata[9]}<br>CPM: $%{customdata[10]}<extra></extra>',
+          'CPC: Rs.%{customdata[9]}<br>CPM: Rs.%{customdata[10]}<extra></extra>',
         adId: adId,  // Store the ad ID for reference
         adName: displayName, // Store the ad name for reference
         campaignName: campaignName, // Store the campaign name
@@ -817,11 +832,11 @@ const Dashboard = () => {
     switch(metric) {
       case 'roas': return 'ROAS';
       case 'ctr': return 'CTR (%)';
-      case 'cpc': return 'CPC ($)';
-      case 'cpm': return 'CPM ($)';
+      case 'cpc': return 'CPC (Rs.)';
+      case 'cpm': return 'CPM (Rs.)';
       case 'conversions': return 'Conversions';
-      case 'revenue': return 'Revenue ($)';
-      case 'spend': return 'Spend ($)';
+      case 'revenue': return 'Revenue (Rs.)';
+      case 'spend': return 'Spend (Rs.)';
       default: return metric.toUpperCase();
     }
   };
@@ -1023,7 +1038,7 @@ const Dashboard = () => {
             {/* Account Performance Tab */}
             <TabsContent value="account" className="space-y-6">
               {/* KPI Cards */}
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 mb-6">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 mb-6">
                 <MetricCard 
                   title="ROAS" 
                   value={metrics?.current_period?.roas || 0} 
@@ -1045,7 +1060,7 @@ const Dashboard = () => {
                   value={metrics?.current_period?.cpc || 0} 
                   previousValue={metrics?.previous_period?.cpc || 0} 
                   icon={<MousePointerClick />} 
-                  prefix="$"
+                  prefix="Rs."
                   formatter={(n) => formatCurrency(n)}
                 />
                 <MetricCard 
@@ -1053,7 +1068,7 @@ const Dashboard = () => {
                   value={metrics?.current_period?.cpm || 0} 
                   previousValue={metrics?.previous_period?.cpm || 0} 
                   icon={<Eye />} 
-                  prefix="$"
+                  prefix="Rs."
                   formatter={(n) => formatCurrency(n)}
                 />
                 <MetricCard 
@@ -1062,6 +1077,36 @@ const Dashboard = () => {
                   previousValue={metrics?.previous_period?.conversions || 0} 
                   icon={<ShoppingCart />} 
                   formatter={(n) => n.toFixed(0)}
+                />
+                <MetricCard 
+                  title="Spend" 
+                  value={metrics?.current_period?.spend || 0} 
+                  previousValue={metrics?.previous_period?.spend || 0} 
+                  icon={<DollarSign />} 
+                  prefix="Rs."
+                  formatter={(n) => formatCurrency(n)}
+                />
+                <MetricCard 
+                  title="Revenue" 
+                  value={metrics?.current_period?.revenue || 0} 
+                  previousValue={metrics?.previous_period?.revenue || 0} 
+                  icon={<DollarSign />} 
+                  prefix="Rs."
+                  formatter={(n) => formatCurrency(n)}
+                />
+                <MetricCard 
+                  title="Clicks" 
+                  value={metrics?.current_period?.clicks || 0} 
+                  previousValue={metrics?.previous_period?.clicks || 0} 
+                  icon={<MousePointerClick />} 
+                  formatter={(n) => n.toLocaleString()}
+                />
+                <MetricCard 
+                  title="Impressions" 
+                  value={metrics?.current_period?.impressions || 0} 
+                  previousValue={metrics?.previous_period?.impressions || 0} 
+                  icon={<Eye />} 
+                  formatter={(n) => n.toLocaleString()}
                 />
               </div>
 
@@ -1078,7 +1123,7 @@ const Dashboard = () => {
                     <PlotlyBarChart 
                       data={spendRevenueData}
                       layout={{
-                        yaxis: { title: 'Amount ($)' }
+                        yaxis: { title: 'Amount (Rs.)' }
                       }}
                     />
                   </CardContent>
@@ -1120,289 +1165,341 @@ const Dashboard = () => {
               </div>
             </TabsContent>
             
-            {/* Ad Performance Tab - UPDATED WITH PAGINATION */}
-            <TabsContent value="ads">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-2xl font-bold">Ad Performance</h2>
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="metric-selector" className="text-sm">Metric</Label>
-                    <Select
-                      value={selectedMetric}
-                      onValueChange={(value) => {
-                        setSelectedMetric(value);
-                        setCurrentPage(1); // Reset to first page when metric changes
-                      }}
-                    >
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue placeholder="Select metric" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="roas">ROAS</SelectItem>
-                        <SelectItem value="ctr">CTR</SelectItem>
-                        <SelectItem value="cpc">CPC</SelectItem>
-                        <SelectItem value="cpm">CPM</SelectItem>
-                        <SelectItem value="conversions">Conversions</SelectItem>
-                        <SelectItem value="revenue">Revenue</SelectItem>
-                        <SelectItem value="spend">Spend</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => navigate('/app/ad-metrics')}
-                  >
-                    View Detailed Ad Metrics
-                  </Button>
-                </div>
-              </div>
+            {/* Ad Performance Tab - UPDATED WITH PAGINATION AND SUBTABS */}
+            <TabsContent value="ads">             
               
-              {(() => {
-                // First, get all ad_metrics
-                const allAdMetrics = metrics?.ad_metrics || [];
+              {/* Ad Performance Subtabs */}
+              <Tabs defaultValue="current" className="w-full">
+                <TabsList className="mb-4">
+                  <TabsTrigger value="current">Ad Performance</TabsTrigger>
+                  <TabsTrigger value="comparison">Metric Comparison</TabsTrigger>
+                </TabsList>
                 
-                // Create a map to collect data for each ad
-                const adDataMap = new Map();
-                
-                // Get unique ad IDs from the metrics
-                const uniqueAdIds = new Set();
-                allAdMetrics.forEach(metric => {
-                  if (metric.ad_id) {
-                    uniqueAdIds.add(metric.ad_id);
-                  }
-                });
-                
-                // Process each unique ad (remove the slice limit)
-                Array.from(uniqueAdIds).forEach(adId => {
-                  // Filter metrics for this ad
-                  const adMetrics = allAdMetrics.filter(m => m.ad_id === adId);
-                  
-                  // Skip if no metrics
-                  if (adMetrics.length === 0) return;
-                  
-                  // Get ad details
-                  const adDetails = metrics?.unique_ads?.find(a => a.ad_id === adId) || 
-                                   adMetrics[0] || 
-                                   { ad_id: adId as string, ad_name: `Ad ${adId}` };
-                  
-                  // Store in map
-                  adDataMap.set(adId, {
-                    adId: adId as string,
-                    adName: adDetails.ad_title || adDetails.ad_name || `Ad ${adId}`,
-                    metrics: adMetrics
-                  });
-                });
-                
-                // Convert map to array and filter valid ads
-                const allValidAds = Array.from(adDataMap.values()).filter(ad => {
-                  const { metrics: adMetrics } = ad;
-                  const formatter = getMetricFormatter(selectedMetric);
-                  
-                  // Early check for data points
-                  const hasData = adMetrics.some(m => {
-                    const dataField = getMetricDataField(selectedMetric);
-                    // For conversions, check purchases field specifically
-                    if (selectedMetric === 'conversions') {
-                      return m.purchases !== undefined && m.purchases !== null;
-                    }
-                    return m[dataField] !== undefined;
-                  });
-                  
-                  return hasData;
-                });
-                
-                // Calculate pagination
-                const totalAds = allValidAds.length;
-                const totalPages = Math.ceil(totalAds / adsPerPage);
-                const startIndex = (currentPage - 1) * adsPerPage;
-                const endIndex = startIndex + adsPerPage;
-                const currentAds = allValidAds.slice(startIndex, endIndex);
-                
-                // Debug logging
-                console.log(`Ad Performance Pagination: Total ads: ${totalAds}, Current page: ${currentPage}, Total pages: ${totalPages}, Showing: ${currentAds.length} ads`);
-                
-                // Reset to page 1 if current page is out of bounds
-                if (currentPage > totalPages && totalPages > 0) {
-                  setCurrentPage(1);
-                }
-                
-                return (
-                  <div className="space-y-6">
-                    {/* Stats and pagination info */}
-                    <div className="flex justify-between items-center">
-                      <p className="text-sm text-muted-foreground">
-                        Showing {startIndex + 1}-{Math.min(endIndex, totalAds)} of {totalAds} ads
-                      </p>
-                      {totalPages > 1 && (
-                        <div className="text-sm text-muted-foreground">
-                          Page {currentPage} of {totalPages}
+                                {/* Ad Performance Subtab */}
+                <TabsContent value="current">
+                  <div className="flex flex-wrap justify-between items-center mb-4">
+                    <div className="flex items-center gap-4 mb-2 sm:mb-0">
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="chart-type-toggle" className="text-sm">Chart Type</Label>
+                        <div className="flex items-center border rounded-md p-1">
+                          <Button
+                            variant={showDistribution ? "secondary" : "ghost"}
+                            size="sm"
+                            onClick={() => setShowDistribution(true)}
+                            className="text-xs h-8"
+                          >
+                            Distribution
+                          </Button>
+                          <Button
+                            variant={!showDistribution ? "secondary" : "ghost"}
+                            size="sm"
+                            onClick={() => setShowDistribution(false)}
+                            className="text-xs h-8"
+                          >
+                            Line Chart
+                          </Button>
                         </div>
-                      )}
+                      </div>
                     </div>
                     
-                    {/* Ad cards grid */}
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {currentAds.map(ad => {
-                        const { adId, adName, metrics: adMetrics } = ad;
-                        const formatter = getMetricFormatter(selectedMetric);
-                        
-                        // Sort by date (important!)
-                        const sortedMetrics = [...adMetrics].sort((a, b) => 
-                          new Date(a.date).getTime() - new Date(b.date).getTime()
-                        );
-                        
-                        // Create data points
-                        const dataPoints = sortedMetrics.map(m => {
-                          // Get the actual field name in the data
-                          const dataField = getMetricDataField(selectedMetric);
-                          
-                          // Get the value using the correct field
-                          let value;
-                          if (selectedMetric === 'conversions') {
-                            // Ensure purchases is treated as a number - Parse it explicitly
-                            const rawValue = m.purchases;
-                            
-                            // Convert to number if needed
-                            if (typeof rawValue === 'string') {
-                              value = parseFloat(rawValue);
-                            } else if (rawValue === null || rawValue === undefined) {
-                              value = 0;
-                            } else {
-                              value = Number(rawValue); // Ensure it's a number
-                            }
-                          } else {
-                            value = m[dataField] || 0;
-                          }
-                          
-                          // Ensure we never return NaN
-                          if (isNaN(value)) {
-                            value = 0;
-                          }
-                          
-                          return {
-                            x: format(new Date(m.date), 'MMM dd'),
-                            y: formatter ? formatter(value) : value
-                          };
-                        });
-                        
-                        // Create chart data
-                        const chartData = [{
-                          x: dataPoints.map(p => p.x),
-                          y: dataPoints.map(p => p.y),
-                          type: 'scatter',
-                          mode: 'lines+markers',
-                          name: getMetricTitle(selectedMetric),
-                          line: { 
-                            color: 'rgba(99, 102, 241, 0.7)', 
-                            width: 2,
-                            shape: 'linear'
-                          },
-                          marker: { size: 6 }
-                        }];
-                        
-                        return (
-                          <Card key={adId} className="cursor-pointer hover:shadow-md transition-shadow">
-                            <CardHeader className="pb-3">
-                              <CardTitle className="text-sm line-clamp-2">{adName}</CardTitle>
-                              <CardDescription className="text-xs">
-                                {getMetricDescription(selectedMetric)}
-                              </CardDescription>
-                            </CardHeader>
-                            <CardContent className="h-[200px]">
-                              <PlotlyLineChart 
-                                data={chartData}
-                                layout={{
-                                  yaxis: { 
-                                    title: getMetricTitle(selectedMetric),
-                                    autorange: true,
-                                    titlefont: { size: 10 }
-                                  },
-                                  xaxis: { 
-                                    titlefont: { size: 10 },
-                                    tickfont: { size: 8 }
-                                  },
-                                  margin: { l: 40, r: 20, t: 10, b: 30 },
-                                  showlegend: false
-                                }}
-                              />
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="metric-selector" className="text-sm">Metric</Label>
+                      <Select
+                        value={selectedMetric}
+                        onValueChange={(value) => {
+                          setSelectedMetric(value);
+                          setCurrentPage(1); // Reset to first page when metric changes
+                        }}
+                      >
+                        <SelectTrigger className="w-[180px]">
+                          <SelectValue placeholder="Select metric" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="roas">ROAS</SelectItem>
+                          <SelectItem value="ctr">CTR</SelectItem>
+                          <SelectItem value="cpc">CPC</SelectItem>
+                          <SelectItem value="cpm">CPM</SelectItem>
+                          <SelectItem value="conversions">Conversions</SelectItem>
+                          <SelectItem value="revenue">Revenue</SelectItem>
+                          <SelectItem value="spend">Spend</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
+                  </div>
+                
+                  {(() => {
+                    // First, get all ad_metrics
+                    const allAdMetrics = metrics?.ad_metrics || [];
                     
-                    {/* Pagination controls */}
-                    {totalPages > 1 && (
-                      <div className="flex justify-center mt-8">
-                        <Pagination>
-                          <PaginationContent>
-                            <PaginationItem>
-                              <PaginationPrevious 
-                                href="#" 
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  if (currentPage > 1) {
-                                    setCurrentPage(currentPage - 1);
-                                  }
-                                }}
-                                className={currentPage === 1 ? 'pointer-events-none opacity-50' : ''}
-                              />
-                            </PaginationItem>
+                    // Create a map to collect data for each ad
+                    const adDataMap = new Map();
+                    
+                    // Get unique ad IDs from the metrics
+                    const uniqueAdIds = new Set();
+                    allAdMetrics.forEach(metric => {
+                      if (metric.ad_id) {
+                        uniqueAdIds.add(metric.ad_id);
+                      }
+                    });
+                    
+                    // Process each unique ad (remove the slice limit)
+                    Array.from(uniqueAdIds).forEach(adId => {
+                      // Filter metrics for this ad
+                      const adMetrics = allAdMetrics.filter(m => m.ad_id === adId);
+                      
+                      // Skip if no metrics
+                      if (adMetrics.length === 0) return;
+                      
+                      // Get ad details
+                      const adDetails = metrics?.unique_ads?.find(a => a.ad_id === adId) || 
+                                      adMetrics[0] || 
+                                      { ad_id: adId as string, ad_name: `Ad ${adId}` };
+                      
+                      // Store in map
+                      adDataMap.set(adId, {
+                        adId: adId as string,
+                        adName: adDetails.ad_title || adDetails.ad_name || `Ad ${adId}`,
+                        metrics: adMetrics
+                      });
+                    });
+                    
+                    // Convert map to array and filter valid ads
+                    const allValidAds = Array.from(adDataMap.values()).filter(ad => {
+                      const { metrics: adMetrics } = ad;
+                      const formatter = getMetricFormatter(selectedMetric);
+                      
+                      // Early check for data points
+                      const hasData = adMetrics.some(m => {
+                        const dataField = getMetricDataField(selectedMetric);
+                        // For conversions, check purchases field specifically
+                        if (selectedMetric === 'conversions') {
+                          return m.purchases !== undefined && m.purchases !== null;
+                        }
+                        return m[dataField] !== undefined;
+                      });
+                      
+                      return hasData;
+                    });
+                    
+                    // Calculate pagination
+                    const totalAds = allValidAds.length;
+                    const totalPages = Math.ceil(totalAds / adsPerPage);
+                    const startIndex = (currentPage - 1) * adsPerPage;
+                    const endIndex = startIndex + adsPerPage;
+                    const currentAds = allValidAds.slice(startIndex, endIndex);
+                    
+                    // Debug logging
+                    console.log(`Ad Performance Pagination: Total ads: ${totalAds}, Current page: ${currentPage}, Total pages: ${totalPages}, Showing: ${currentAds.length} ads`);
+                    
+                    // Reset to page 1 if current page is out of bounds
+                    if (currentPage > totalPages && totalPages > 0) {
+                      setCurrentPage(1);
+                    }
+                    
+                    return (
+                      <div className="space-y-6">
+                        {/* Stats and pagination info */}
+                        <div className="flex justify-between items-center">
+                          <p className="text-sm text-muted-foreground">
+                            Showing {startIndex + 1}-{Math.min(endIndex, totalAds)} of {totalAds} ads
+                          </p>
+                          {totalPages > 1 && (
+                            <div className="text-sm text-muted-foreground">
+                              Page {currentPage} of {totalPages}
+                            </div>
+                          )}
+                        </div>
+                        
+                        {/* Ad cards grid */}
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                          {currentAds.map(ad => {
+                            const { adId, adName, metrics: adMetrics } = ad;
+                            const formatter = getMetricFormatter(selectedMetric);
                             
-                            {/* Page numbers */}
-                            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                              let pageNum;
-                              if (totalPages <= 5) {
-                                pageNum = i + 1;
-                              } else if (currentPage <= 3) {
-                                pageNum = i + 1;
-                              } else if (currentPage >= totalPages - 2) {
-                                pageNum = totalPages - 4 + i;
+                            // Sort by date (important!)
+                            const sortedMetrics = [...adMetrics].sort((a, b) => 
+                              new Date(a.date).getTime() - new Date(b.date).getTime()
+                            );
+                            
+                            // Create data points
+                            const dataPoints = sortedMetrics.map(m => {
+                              // Get the actual field name in the data
+                              const dataField = getMetricDataField(selectedMetric);
+                              
+                              // Get the value using the correct field
+                              let value;
+                              if (selectedMetric === 'conversions') {
+                                // Ensure purchases is treated as a number - Parse it explicitly
+                                const rawValue = m.purchases;
+                                
+                                // Convert to number if needed
+                                if (typeof rawValue === 'string') {
+                                  value = parseFloat(rawValue);
+                                } else if (rawValue === null || rawValue === undefined) {
+                                  value = 0;
+                                } else {
+                                  value = Number(rawValue); // Ensure it's a number
+                                }
                               } else {
-                                pageNum = currentPage - 2 + i;
+                                value = m[dataField] || 0;
                               }
                               
-                              return (
-                                <PaginationItem key={pageNum}>
-                                  <PaginationLink
-                                    href="#"
+                              // Ensure we never return NaN
+                              if (isNaN(value)) {
+                                value = 0;
+                              }
+                              
+                              return {
+                                x: format(new Date(m.date), 'MMM dd'),
+                                y: formatter ? formatter(value) : value
+                              };
+                            });
+                            
+                            // Create chart data based on selected chart type
+                            const chartData = showDistribution 
+                              ? [
+                                  {
+                                    x: dataPoints.map(p => p.y), // Use metric values on x-axis for distribution
+                                    type: 'histogram',
+                                    name: getMetricTitle(selectedMetric),
+                                    marker: { 
+                                      color: 'rgba(99, 102, 241, 0.7)'
+                                    },
+                                    autobinx: true, // Auto-calculate bin size
+                                    histnorm: 'count', // Show frequency count
+                                    opacity: 0.8
+                                  }
+                                ]
+                              : [
+                                  {
+                                    x: dataPoints.map(p => p.x),
+                                    y: dataPoints.map(p => p.y),
+                                    type: 'scatter',
+                                    mode: 'lines+markers',
+                                    name: getMetricTitle(selectedMetric),
+                                    line: { 
+                                      color: 'rgba(99, 102, 241, 0.7)', 
+                                      width: 2,
+                                      shape: 'linear'
+                                    },
+                                    marker: { size: 6 }
+                                  }
+                                ];
+                            
+                            return (
+                              <Card key={adId} className="cursor-pointer hover:shadow-md transition-shadow">
+                                <CardHeader className="pb-3">
+                                  <CardTitle className="text-sm line-clamp-2">{adName}</CardTitle>
+                                  <CardDescription className="text-xs">
+                                    {getMetricDescription(selectedMetric)}
+                                  </CardDescription>
+                                </CardHeader>
+                                <CardContent className="h-[200px]">
+                                  <PlotlyLineChart 
+                                    data={chartData}
+                                    layout={{
+                                      yaxis: { 
+                                        title: showDistribution ? 'Frequency' : getMetricTitle(selectedMetric),
+                                        autorange: true,
+                                        titlefont: { size: 10 }
+                                      },
+                                      xaxis: { 
+                                        title: showDistribution ? getMetricTitle(selectedMetric) : 'Date',
+                                        titlefont: { size: 10 },
+                                        tickfont: { size: 8 }
+                                      },
+                                      margin: { l: 40, r: 20, t: 10, b: 30 },
+                                      showlegend: false,
+                                      bargap: showDistribution ? 0.05 : 0.2 // Tighter spacing for histogram
+                                    }}
+                                  />
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
+                        </div>
+                        
+                        {/* Pagination controls */}
+                        {totalPages > 1 && (
+                          <div className="flex justify-center mt-8">
+                            <Pagination>
+                              <PaginationContent>
+                                <PaginationItem>
+                                  <PaginationPrevious 
+                                    href="#" 
                                     onClick={(e) => {
                                       e.preventDefault();
-                                      setCurrentPage(pageNum);
+                                      if (currentPage > 1) {
+                                        setCurrentPage(currentPage - 1);
+                                      }
                                     }}
-                                    isActive={currentPage === pageNum}
-                                  >
-                                    {pageNum}
-                                  </PaginationLink>
+                                    className={currentPage <= 1 ? "pointer-events-none opacity-50" : ""}
+                                  />
                                 </PaginationItem>
-                              );
-                            })}
-                            
-                            {totalPages > 5 && currentPage < totalPages - 2 && (
-                              <PaginationItem>
-                                <PaginationEllipsis />
-                              </PaginationItem>
-                            )}
-                            
-                            <PaginationItem>
-                              <PaginationNext 
-                                href="#" 
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  if (currentPage < totalPages) {
-                                    setCurrentPage(currentPage + 1);
+                                
+                                {/* Generate page numbers */}
+                                {Array.from({ length: Math.min(5, totalPages) }).map((_, i) => {
+                                  // Logic to show pages around current page
+                                  let pageNum;
+                                  if (totalPages <= 5) {
+                                    // If 5 or fewer pages, show all
+                                    pageNum = i + 1;
+                                  } else if (currentPage <= 3) {
+                                    // If near start, show first 5
+                                    pageNum = i + 1;
+                                  } else if (currentPage >= totalPages - 2) {
+                                    // If near end, show last 5
+                                    pageNum = totalPages - 4 + i;
+                                  } else {
+                                    // Otherwise show 2 before and 2 after current
+                                    pageNum = currentPage - 2 + i;
                                   }
-                                }}
-                                className={currentPage === totalPages ? 'pointer-events-none opacity-50' : ''}
-                              />
-                            </PaginationItem>
-                          </PaginationContent>
-                        </Pagination>
+                                  
+                                  return (
+                                    <PaginationItem key={pageNum}>
+                                      <PaginationLink 
+                                        href="#"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          setCurrentPage(pageNum);
+                                        }}
+                                        isActive={currentPage === pageNum}
+                                      >
+                                        {pageNum}
+                                      </PaginationLink>
+                                    </PaginationItem>
+                                  );
+                                })}
+                                
+                                <PaginationItem>
+                                  <PaginationNext 
+                                    href="#" 
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      if (currentPage < totalPages) {
+                                        setCurrentPage(currentPage + 1);
+                                      }
+                                    }}
+                                    className={currentPage >= totalPages ? "pointer-events-none opacity-50" : ""}
+                                  />
+                                </PaginationItem>
+                              </PaginationContent>
+                            </Pagination>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                );
-              })()}
+                    );
+                  })()}
+                </TabsContent>
+                
+                {/* Spend vs Revenue Comparison Subtab */}
+                <TabsContent value="comparison">
+                  <AdComparisonCharts 
+                    startDate={format(dateRange.from || new Date(), 'yyyy-MM-dd')}
+                    endDate={format(dateRange.to || new Date(), 'yyyy-MM-dd')}
+                  />
+                </TabsContent>
+              </Tabs>
             </TabsContent>
 
             {/* Best Ad Prediction Tab */}
@@ -1480,7 +1577,7 @@ const Dashboard = () => {
                         </div>
                         <Button 
                           variant="outline" 
-                          onClick={() => navigate(`/app/ad-metrics?ad_id=${bestAd.ad_id}`)}
+                          onClick={() => navigate(`/ad-detail/${bestAd.ad_id}`)}
                           className="shrink-0"
                         >
                           View Detailed Metrics
@@ -1558,7 +1655,7 @@ const Dashboard = () => {
                         <PlotlyLineChart 
                           data={getPredictionChartData('revenue')}
                           layout={{
-                            yaxis: { title: 'Revenue ($)' },
+                            yaxis: { title: 'Revenue (Rs.)' },
                             margin: { l: 50, r: 20, t: 10, b: 40 },
                             xaxis: { title: 'Date' },
                             legend: { orientation: 'h', y: 1.1, xanchor: 'center', x: 0.5 }

@@ -8,13 +8,13 @@ logger = logging.getLogger(__name__)
 
 async def get_ads_from_facebook(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Fetches ads and insights from Facebook API for analysis.
+    Fetches active ads and insights from Facebook API for analysis.
 
     Args:
         state (dict): Current LangGraph state containing access_token, account_id, and user_id.
 
     Returns:
-        dict: Updated state with ads and analyzed_video_ids.
+        dict: Updated state with active ads and analyzed_video_ids.
     """
     # Check for cancellation at the start (both mechanisms)
     cancellation_token = state.get("cancellation_token")
@@ -34,9 +34,9 @@ async def get_ads_from_facebook(state: Dict[str, Any]) -> Dict[str, Any]:
             return {"errors": [error_msg]}
 
         if progress_callback:
-            await progress_callback(35, "Fetching ads from Facebook...")
+            await progress_callback(35, "Fetching active ads from Facebook...")
 
-        logger.info(f"Fetching ads for account {account_id}")
+        logger.info(f"Fetching active ads for account {account_id}")
 
         # Initialize Facebook service
         fb_service = FacebookAdService(access_token=access_token, account_id=account_id)
@@ -49,39 +49,40 @@ async def get_ads_from_facebook(state: Dict[str, Any]) -> Dict[str, Any]:
             end_date = datetime.utcnow().strftime('%Y-%m-%d')
             start_date = (datetime.utcnow() - timedelta(days=1)).strftime('%Y-%m-%d')
             
-            params = {
-                "access_token": access_token,
-                "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name,targeting},creative{id,video_id,effective_object_story_id,object_story_spec},status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend,cpc,cpm,ctr,purchase_roas}",
-                "limit": 100
-            }
-
             # Check for cancellation before making API request (both mechanisms)
             if (cancellation_token and cancellation_token.get("cancelled", False)) or state.get("cancelled", False):
                 logger.info("Job cancelled before Facebook API request")
                 return {"errors": ["Job was cancelled"]}
 
             # Make the API request with cancellation token
-            data = await fb_service._make_api_request(f"act_{account_id}/ads", {
-                "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name,targeting},creative{id,video_id,effective_object_story_id,object_story_spec},status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend,cpc,cpm,ctr,purchase_roas}",
+            # Note: We'll filter for active ads in code since Facebook API doesn't support effective_status parameter directly
+            params = {
+                "fields": "id,name,campaign_id,campaign{name},adset_id,adset{name,targeting},creative{id,video_id,effective_object_story_id,object_story_spec},status,effective_status,insights.time_range({'since':'" + start_date + "','until':'" + end_date + "'}){actions,action_values,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,impressions,reach,clicks,spend,cpc,cpm,ctr,purchase_roas}",
                 "limit": 100
-            }, cancellation_token=cancellation_token)
+            }
+            
+            data = await fb_service._make_api_request(f"act_{account_id}/ads", params, cancellation_token=cancellation_token)
             
             if not data:
                 logger.warning("No data returned from Facebook API")
                 return {"ads": [], "analyzed_video_ids": []}
 
             ads = data.get("data", [])
-            logger.info(f"Retrieved {len(ads)} ads from Facebook API")
+            
+            # Additional filtering to ensure we only have active ads
+            active_ads = [ad for ad in ads if ad.get("effective_status") == "ACTIVE"]
+            
+            logger.info(f"Retrieved {len(ads)} ads from Facebook API, {len(active_ads)} are active")
 
             if progress_callback:
-                await progress_callback(40, f"Found {len(ads)} ads to analyze")
+                await progress_callback(40, f"Found {len(active_ads)} active ads to analyze")
 
             # Get previously analyzed video IDs for this user
             analyzed_video_ids = await get_analyzed_video_ids(user_id)
             logger.info(f"Found {len(analyzed_video_ids)} previously analyzed videos for user {user_id}")
 
             return {
-                "ads": ads,
+                "ads": active_ads,  # Return only active ads
                 "analyzed_video_ids": analyzed_video_ids
             }
         finally:

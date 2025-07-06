@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Path
 from fastapi.responses import JSONResponse
 import httpx
 from typing import List, Dict, Any, Optional
@@ -12,7 +12,7 @@ from app.core.database import get_database
 from app.core.deps import get_current_user
 from app.core.config import settings
 from app.models.user import User
-from app.models.ad_analysis import AdAnalysis, AdAnalysisResponse
+from app.models.ad_analysis import AdAnalysis, AdAnalysisResponse, InactiveAdAnalysis
 from app.models.job_status import BackgroundJobResponse, JobStartResponse, JobStatus, BackgroundJob, JobType
 from app.services.scheduler_service import SchedulerService
 from app.services.metrics_service import MetricsService
@@ -20,6 +20,7 @@ from app.services.user_service import UserService
 # Import the AI Agent service and background job service
 from app.services.ai_agent_service import AIAgentService
 from app.services.background_job_service import BackgroundJobService
+from app.services.inactive_ads_service import InactiveAdsService
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -499,6 +500,42 @@ async def get_unique_products(current_user: User = Depends(get_current_user)):
             detail=f"Error fetching products: {str(e)}"
         )
 
+@router.delete("/all")
+async def delete_all_ad_analyses(current_user: User = Depends(get_current_user)):
+    """
+    Delete all ad analyses for the current user.
+    """
+    try:
+        db = get_database()
+        
+        # Count how many analyses exist for the user before deletion
+        count_before = await db.ad_analyses.count_documents({"user_id": str(current_user.id)})
+        
+        if count_before == 0:
+            return {
+                "success": True,
+                "message": "No ad analyses found to delete",
+                "deleted_count": 0
+            }
+        
+        # Delete all analyses for the current user
+        result = await db.ad_analyses.delete_many({"user_id": str(current_user.id)})
+        
+        logger.info(f"Deleted {result.deleted_count} ad analyses for user {current_user.id}")
+        
+        return {
+            "success": True,
+            "message": f"Successfully deleted {result.deleted_count} ad analyses",
+            "deleted_count": result.deleted_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error deleting all ad analyses for user {current_user.id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error deleting all ad analyses"
+        )
+
 @router.delete("/{analysis_id}")
 async def delete_ad_analysis(analysis_id: str, current_user: User = Depends(get_current_user)):
     """
@@ -945,4 +982,126 @@ async def debug_database_operations(current_user: dict = Depends(get_current_use
             "success": False,
             "error": str(e),
             "details": "Database operations test failed"
-        } 
+        }
+
+@router.get("/inactive", response_model=List[AdAnalysisResponse])
+async def get_inactive_ads(
+    skip: int = 0,
+    limit: int = 20,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get inactive ads for the current user.
+    """
+    try:
+        inactive_ads_service = InactiveAdsService()
+        inactive_ads = await inactive_ads_service.get_inactive_ads(current_user.id, skip, limit)
+        return inactive_ads
+    except Exception as e:
+        logger.error(f"Error fetching inactive ads: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching inactive ads: {str(e)}"
+        )
+
+@router.get("/inactive/count", response_model=Dict[str, int])
+async def count_inactive_ads(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Count the number of inactive ads for the current user.
+    """
+    try:
+        inactive_ads_service = InactiveAdsService()
+        count = await inactive_ads_service.count_inactive_ads(current_user.id)
+        return {"count": count}
+    except Exception as e:
+        logger.error(f"Error counting inactive ads: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error counting inactive ads: {str(e)}"
+        )
+
+@router.get("/inactive/{ad_id}", response_model=AdAnalysisResponse)
+async def get_inactive_ad_by_id(
+    ad_id: str = Path(..., title="The ID of the inactive ad to get"),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get a specific inactive ad by ID.
+    """
+    try:
+        inactive_ads_service = InactiveAdsService()
+        inactive_ad = await inactive_ads_service.get_inactive_ad_by_id(current_user.id, ad_id)
+        
+        if not inactive_ad:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Inactive ad with ID {ad_id} not found"
+            )
+        
+        return inactive_ad
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching inactive ad by ID: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching inactive ad by ID: {str(e)}"
+        )
+
+@router.post("/inactive/{ad_id}/restore", response_model=Dict[str, bool])
+async def restore_inactive_ad(
+    ad_id: str = Path(..., title="The ID of the inactive ad to restore"),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Restore an inactive ad to the active ads collection.
+    """
+    try:
+        inactive_ads_service = InactiveAdsService()
+        success = await inactive_ads_service.restore_inactive_ad(current_user.id, ad_id)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Inactive ad with ID {ad_id} not found or could not be restored"
+            )
+        
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error restoring inactive ad: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error restoring inactive ad: {str(e)}"
+        )
+
+@router.delete("/inactive/{ad_id}", response_model=Dict[str, bool])
+async def delete_inactive_ad(
+    ad_id: str = Path(..., title="The ID of the inactive ad to delete"),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Permanently delete an inactive ad.
+    """
+    try:
+        inactive_ads_service = InactiveAdsService()
+        success = await inactive_ads_service.delete_inactive_ad(current_user.id, ad_id)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Inactive ad with ID {ad_id} not found or could not be deleted"
+            )
+        
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting inactive ad: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting inactive ad: {str(e)}"
+        ) 

@@ -90,7 +90,7 @@ class AIAgentService:
                 await progress_callback(20, "Starting AI Agent analysis...")
             
             # Run the AI Agent with analyzed video IDs to skip
-            analysis_results = await run_ad_analysis_graph(
+            graph_output = await run_ad_analysis_graph(
                 user_id=user_id,
                 access_token=access_token,
                 account_id=account_id,
@@ -99,16 +99,25 @@ class AIAgentService:
                 cancellation_token=cancellation_token  # Pass cancellation token
             )
             
-            if not analysis_results:
-                logger.warning(f"No new analysis results returned from AI Agent for user {user_id}")
+            if not graph_output or not isinstance(graph_output, dict):
+                logger.warning(f"AI Agent did not return expected output for user {user_id}")
                 if progress_callback:
                     await progress_callback(100, "No new ads found to analyze")
                 return []
             
+            analysis_results = graph_output.get("results", [])
+            active_ad_ids = graph_output.get("active_ad_ids", [])
+            
             logger.info(f"AI Agent returned {len(analysis_results)} new analysis results")
             
             if progress_callback:
-                await progress_callback(90, "Storing analysis results in database...")
+                await progress_callback(80, "Storing analysis results in database...")
+            
+            # Move inactive ads to inactive_ads_analyses collection
+            await self._move_inactive_ads(user_id, active_ad_ids, progress_callback)
+            
+            if progress_callback:
+                await progress_callback(90, "Storing new analysis results...")
             
             # Store new results in database
             stored_analyses = []
@@ -164,6 +173,62 @@ class AIAgentService:
             if progress_callback:
                 await progress_callback(0, f"Error in analysis: {str(e)}")
             raise
+    
+    async def _move_inactive_ads(self, user_id: str, active_ad_ids: List[str], progress_callback = None) -> int:
+        """
+        Move inactive ads to inactive_ads_analyses collection.
+        
+        Args:
+            user_id: The user ID
+            active_ad_ids: List of active ad IDs from Facebook
+            progress_callback: Optional callback function to report progress
+            
+        Returns:
+            Number of ads moved to inactive collection
+        """
+        try:
+            if progress_callback:
+                await progress_callback(85, "Identifying inactive ads...")
+            
+            # Find all ads in ad_analyses that are not in the active_ad_ids list
+            query = {
+                "user_id": user_id,
+                "ad_id": {"$nin": active_ad_ids}
+            }
+            
+            # Find inactive ads
+            inactive_ads_cursor = self.db.ad_analyses.find(query)
+            inactive_ads = await inactive_ads_cursor.to_list(length=None)
+            
+            if not inactive_ads:
+                logger.info(f"No inactive ads found for user {user_id}")
+                return 0
+            
+            logger.info(f"Found {len(inactive_ads)} inactive ads for user {user_id}")
+            
+            if progress_callback:
+                await progress_callback(87, f"Moving {len(inactive_ads)} inactive ads...")
+            
+            # Insert inactive ads into inactive_ads_analyses collection
+            if inactive_ads:
+                # Update each ad to mark it as inactive
+                for ad in inactive_ads:
+                    ad["moved_to_inactive_at"] = datetime.utcnow()
+                
+                # Insert all inactive ads into the inactive_ads_analyses collection
+                await self.db.inactive_ads_analyses.insert_many(inactive_ads)
+                
+                # Delete inactive ads from ad_analyses collection
+                delete_result = await self.db.ad_analyses.delete_many(query)
+                
+                logger.info(f"Moved {len(inactive_ads)} inactive ads to inactive_ads_analyses collection")
+                logger.info(f"Deleted {delete_result.deleted_count} inactive ads from ad_analyses collection")
+            
+            return len(inactive_ads)
+            
+        except Exception as e:
+            logger.error(f"Error moving inactive ads: {e}", exc_info=True)
+            return 0
     
     def _convert_ai_result_to_ad_analysis(self, ai_result: Dict[str, Any]) -> Dict[str, Any]:
         """

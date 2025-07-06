@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import logging
+import json
 
 from app.services.prediction_service import PredictionService
 from app.services.prediction_time_series import TimeSeriesPredictionService
 from app.core.deps import get_current_user
 from app.models.user import User
 from app.services.metrics_service import MetricsService
+from ..core.database import get_redis
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
 logger = logging.getLogger(__name__)
@@ -106,7 +108,8 @@ async def get_best_performing_ad(
     use_time_series: bool = Query(True, description="Whether to use time series forecasting"),
     force_refresh: bool = Query(False, description="Force refresh data from Facebook API"),
     use_only_analyzed_ads: bool = Query(False, description="Only use ads that have entries in ad_analyses collection"),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    redis_client: Any = Depends(get_redis)
 ):
     """
     Find the best performing ad based on predicted metrics.
@@ -128,8 +131,29 @@ async def get_best_performing_ad(
         datetime.strptime(start_date, "%Y-%m-%d")
         datetime.strptime(end_date, "%Y-%m-%d")
         
-        # Get user_id from current user
+        # Ensure redis_client is a valid instance (handle direct function invocation in tests)
+        if redis_client is None or not hasattr(redis_client, "get"):
+            try:
+                redis_client = get_redis()
+            except Exception:
+                redis_client = None  # Fallback to no-cache mode
+        
+        # Build cache key specific to user and parameters
         user_id = str(current_user.id)
+        cache_key = (
+            f"best_ad:{user_id}:{start_date}:{end_date}:"
+            f"{int(use_time_series)}:{int(use_only_analyzed_ads)}"
+        )
+
+        # Try serving from cache unless force_refresh is requested and redis is available
+        if redis_client and not force_refresh:
+            cached_value = redis_client.get(cache_key)
+            if cached_value:
+                try:
+                    return json.loads(cached_value)
+                except Exception:
+                    # Fall through to recompute if cache is corrupted
+                    pass
         
         # First ensure data completeness
         logger.info(f"Ensuring data completeness for prediction for user {user_id} for date range {start_date} to {end_date}")
@@ -184,12 +208,19 @@ async def get_best_performing_ad(
                     best_ad_historical = prediction.get("historical", [])
                     break
             
-            return {
+            response_data = {
                 "success": True,
                 "best_ad": result["best_ad"],
                 "predictions": [],  # Empty predictions when not using time series
                 "historical": best_ad_historical  # Include historical data even in frequency mode
             }
+            # Cache the response if redis available
+            if redis_client:
+                try:
+                    redis_client.setex(cache_key, 3600, json.dumps(response_data))
+                except Exception:
+                    pass
+            return response_data
         
         # If we have a successful result with a best_ad, return it
         if result["success"] and result["best_ad"]:
@@ -203,13 +234,19 @@ async def get_best_performing_ad(
                     best_ad_data = prediction
                     break
                     
-            # Return the best ad with its predictions and historical data
-            return {
+            response_data = {
                 "success": True,
                 "best_ad": result["best_ad"],
                 "predictions": best_ad_data["predictions"] if best_ad_data else [],
                 "historical": best_ad_data["historical"] if best_ad_data else []
             }
+            # Cache the response if redis available
+            if redis_client:
+                try:
+                    redis_client.setex(cache_key, 3600, json.dumps(response_data))
+                except Exception:
+                    pass
+            return response_data
         
         # If no best ad found but we have ads, try to generate a fallback best ad
         if result["success"] and result["predictions"] and len(result["predictions"]) > 0:
@@ -230,8 +267,7 @@ async def get_best_performing_ad(
                 # Get ad name from first prediction
                 ad_name = first_ad["predictions"][0].get("ad_name", "Unknown Ad")
                 
-                # Create a fallback best ad
-                return {
+                response_data = {
                     "success": True,
                     "best_ad": {
                         "ad_id": first_ad["ad_id"],
@@ -241,6 +277,13 @@ async def get_best_performing_ad(
                     "predictions": first_ad["predictions"],
                     "historical": first_ad["historical"] if "historical" in first_ad else []
                 }
+                # Cache the response if redis available
+                if redis_client:
+                    try:
+                        redis_client.setex(cache_key, 3600, json.dumps(response_data))
+                    except Exception:
+                        pass
+                return response_data
         
         # If we still don't have data, return an error message
         if not result["success"] or not result["best_ad"]:

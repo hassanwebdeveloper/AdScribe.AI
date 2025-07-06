@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Any
 from fastapi.responses import Response, JSONResponse
 from app.core.deps import get_current_user
 from app.models.user import User
-from ..core.database import get_database
+from ..core.database import get_database, get_redis
 from app.services.prediction_service import PredictionService
 import pandas as pd
 import numpy as np
@@ -30,11 +30,22 @@ async def get_ad_performance_segments(
     start_date: str = Query(..., description="Start date in format YYYY-MM-DD"),
     end_date: str = Query(..., description="End date in format YYYY-MM-DD"),
     current_user: User = Depends(get_current_user),
+    redis_client: Any = Depends(get_redis)
 ):
     """
     Generate a faceted scatter plot of ad performance segments
     """
     try:
+        # Attempt to serve from cache for the exact date range
+        cache_key = f"ad_perf_segments:{current_user.id}:{start_date}:{end_date}"
+
+        cached = redis_client.get(cache_key)
+        if cached:
+            try:
+                return json.loads(cached)
+            except Exception:
+                pass  # proceed to recompute if cache corrupted
+
         prediction_service = PredictionService()
         user_id = str(current_user.id)
         user_ads = await prediction_service._get_user_ads(user_id)
@@ -81,6 +92,8 @@ async def get_ad_performance_segments(
             bins=[0, 1.5, 3, float('inf')],
             labels=['Low', 'Moderate', 'High Fatigue Risk']
         )
+        # Fill any NaN values (which fall outside defined bins) with a default category to avoid "Fatigue Risk: nan" facet
+        df['fatigue_risk'] = df['fatigue_risk'].fillna('Low')
 
         high_ctr_threshold = 1.5
         high_cpc_threshold = 0.5
@@ -109,6 +122,11 @@ async def get_ad_performance_segments(
             labels=['Unprofitable', 'Breakeven', 'Profitable']
         )
 
+        # Ensure campaign_name column exists and sanitize ad_id type
+        if 'campaign_name' not in df.columns:
+            df['campaign_name'] = 'Unknown Campaign'
+        df['ad_id'] = df['ad_id'].astype(str)        
+
         # === Ensure All Facets Exist ===
         engagement_types = [
             'High Engagement, Low Cost',
@@ -124,6 +142,23 @@ async def get_ad_performance_segments(
             df['roas_classification'],
             categories=['Profitable', 'Breakeven', 'Unprofitable']
         )
+
+        #handle nan values of roas_classification
+        df['roas_classification'] = df['roas_classification'].fillna('Unprofitable')
+
+        # Prepare segment information to return (one entry per ad per day)
+        segment_data = df[
+            [
+                'ad_id', 'ad_name', 'campaign_name', 'date',
+                'engagement_type', 'fatigue_risk', 'roas_classification',
+                'revenue', 'ctr', 'roas', 'impressions', 'reach', 'cpc'
+            ]
+        ].copy()
+        # Ensure dates are JSON serialisable strings
+        segment_data['date'] = segment_data['date'].astype(str)
+        # Replace NaN with None for JSON serialisation
+        segment_data = segment_data.where(pd.notnull(segment_data), None)
+        segments = segment_data.to_dict(orient='records')
 
         facet_combinations = pd.DataFrame(
             list(itertools.product(engagement_types, fatigue_risks)),
@@ -180,7 +215,7 @@ async def get_ad_performance_segments(
             },
             labels={
                 "date": "Date",
-                "revenue": "Revenue ($)",
+                "revenue": "Revenue (Rs.)",
                 "ctr": "CTR (%)",
                 "roas_classification": "ROAS Classification"
             },
@@ -253,7 +288,7 @@ async def get_ad_performance_segments(
         
         # Add custom y-axis title in the middle left
         fig.add_annotation(
-            text="Revenue ($)",
+            text="Revenue (Rs.)",
             x=-0.08,  # Left of the leftmost column
             y=0.5,  # Middle of the figure
             xref="paper",
@@ -271,7 +306,15 @@ async def get_ad_performance_segments(
             'responsive': True
         }
 
-        return {"figure": fig.to_json(), "config": config}
+        response_payload = {"figure": fig.to_json(), "config": config, "segments": segments}
+
+        # Store in cache for 1 hour keyed by full date range
+        try:
+            redis_client.setex(cache_key, 3600, json.dumps(response_payload))
+        except Exception as e:
+            logger.warning(f"Failed to cache visualization data: {e}")
+
+        return response_payload
 
     except Exception as e:
         logger.error(f"Failed to generate visualization: {str(e)}")

@@ -328,7 +328,7 @@ class RecommendationService {
       case 'cpm':
       case 'spend':
       case 'revenue':
-        return `$${value.toFixed(2)}`;
+        return `Rs.${value.toFixed(2)}`;
       case 'clicks':
       case 'impressions':
       case 'purchases':

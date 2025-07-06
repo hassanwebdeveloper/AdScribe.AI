@@ -125,7 +125,7 @@ class MetricsService:
             logger.error(f"Error getting metrics by date range: {str(e)}")
             return []
     
-    async def has_complete_data_for_range(self, user_id: str, start_date: str, end_date: str) -> bool:
+    async def has_complete_data_for_range(self, user_id: str, start_date, end_date) -> bool:
         """
         Check if we have metrics data for each day in the specified date range.
         Returns True if we have complete data, False otherwise.
@@ -137,7 +137,7 @@ class MetricsService:
             
             # Calculate expected number of days in the date range
             expected_days = (end_date_obj - start_date_obj).days + 1
-            logger.info(f"Checking data completeness for user {user_id} from {start_date} to {end_date} ({expected_days} days)")
+            logger.info(f"Checking data completeness for user {user_id} from {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')} ({expected_days} days)")
             
             # Get the metrics collection
             collection = await get_metrics_collection()
@@ -193,7 +193,7 @@ class MetricsService:
             
             # If no results, we don't have any data
             if not result:
-                logger.info(f"No data found for user {user_id} from {start_date} to {end_date}, expected {expected_days} days")
+                logger.info(f"No data found for user {user_id} from {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')}, expected {expected_days} days")
                 return False
                 
             days_with_data = result[0].get("total_days", 0)
@@ -449,10 +449,14 @@ class MetricsService:
     async def calculate_aggregated_kpis(self, user_id: str, start_date: str, end_date: str) -> Dict[str, float]:
         """
         Calculate aggregated KPIs for the specified date range.
-        Returns a dict with KPI metrics using the highest values for each metric.
+        Only includes metrics for ads that are present in the ad_analyses collection.
+        Sums raw metrics across all ads and all days, then computes derived metrics manually.
         """
         # Get metrics for the date range
-        metrics = await self.get_metrics_by_date_range(user_id, start_date, end_date)
+        all_metrics = await self.get_metrics_by_date_range(user_id, start_date, end_date)
+        
+        # Filter metrics to only include analyzed ads
+        metrics = await self._filter_metrics_by_analyses(all_metrics, user_id)
         
         if not metrics:
             return {
@@ -462,31 +466,36 @@ class MetricsService:
                 "cpm": 0,
                 "conversions": 0,
                 "spend": 0,
-                "revenue": 0
+                "revenue": 0,
+                "clicks": 0,
+                "impressions": 0
             }
-        
-        # Initialize with minimum values
-        max_spend = 0
-        max_clicks = 0
-        max_impressions = 0
-        max_purchases = 0
-        max_revenue = 0
-        
-        # Group metrics by date to find the highest values for each day
-        metrics_by_date = {}
+
+        # Initialize total sums
+        total_spend = 0
+        total_clicks = 0
+        total_impressions = 0
+        total_purchases = 0
+        total_revenue = 0
+
+        metrics_by_date_and_ad = {}
+
         for metric in metrics:
             collected_at = metric.get("collected_at")
             date_str = collected_at.strftime("%Y-%m-%d") if isinstance(collected_at, datetime) else str(collected_at).split("T")[0]
-            
-            additional = metric.get("additional_metrics", {})
+            ad_id = metric.get("ad_id", "unknown")
+
+            key = f"{date_str}_{ad_id}"
+
+            additional = metric.get("additional_metrics", {}) or {}
             current_spend = float(additional.get("spend", 0))
             current_clicks = int(additional.get("clicks", 0))
             current_impressions = int(additional.get("impressions", 0))
             current_purchases = int(metric.get("purchases", 0))
             current_revenue = float(additional.get("purchases_value", 0))
-            
-            if date_str not in metrics_by_date:
-                metrics_by_date[date_str] = {
+
+            if key not in metrics_by_date_and_ad:
+                metrics_by_date_and_ad[key] = {
                     "spend": current_spend,
                     "clicks": current_clicks,
                     "impressions": current_impressions,
@@ -494,40 +503,42 @@ class MetricsService:
                     "revenue": current_revenue
                 }
             else:
-                # Update with max values
-                metrics_by_date[date_str]["spend"] = max(metrics_by_date[date_str]["spend"], current_spend)
-                metrics_by_date[date_str]["clicks"] = max(metrics_by_date[date_str]["clicks"], current_clicks)
-                metrics_by_date[date_str]["impressions"] = max(metrics_by_date[date_str]["impressions"], current_impressions)
-                metrics_by_date[date_str]["purchases"] = max(metrics_by_date[date_str]["purchases"], current_purchases)
-                metrics_by_date[date_str]["revenue"] = max(metrics_by_date[date_str]["revenue"], current_revenue)
-        
-        # Sum up the daily maximum values
-        for daily_max in metrics_by_date.values():
-            max_spend += daily_max["spend"]
-            max_clicks += daily_max["clicks"]
-            max_impressions += daily_max["impressions"]
-            max_purchases += daily_max["purchases"]
-            max_revenue += daily_max["revenue"]
-        
-        # Calculate KPIs
-        ctr = max_clicks / max_impressions if max_impressions > 0 else 0
-        cpc = max_spend / max_clicks if max_clicks > 0 else 0
-        cpm = (max_spend / max_impressions) * 1000 if max_impressions > 0 else 0
-        roas = max_revenue / max_spend if max_spend > 0 else 0
-        
+                metrics_by_date_and_ad[key]["spend"] = max(metrics_by_date_and_ad[key]["spend"], current_spend)
+                metrics_by_date_and_ad[key]["clicks"] = max(metrics_by_date_and_ad[key]["clicks"], current_clicks)
+                metrics_by_date_and_ad[key]["impressions"] = max(metrics_by_date_and_ad[key]["impressions"], current_impressions)
+                metrics_by_date_and_ad[key]["purchases"] = max(metrics_by_date_and_ad[key]["purchases"], current_purchases)
+                metrics_by_date_and_ad[key]["revenue"] = max(metrics_by_date_and_ad[key]["revenue"], current_revenue)
+
+        # Aggregate totals
+        for entry in metrics_by_date_and_ad.values():
+            total_spend += entry["spend"]
+            total_clicks += entry["clicks"]
+            total_impressions += entry["impressions"]
+            total_purchases += entry["purchases"]
+            total_revenue += entry["revenue"]
+
+        # Derived metrics
+        ctr = (total_clicks / total_impressions) * 100 if total_impressions else 0
+        roas = total_revenue / total_spend if total_spend else 0
+        cpc = total_spend / total_clicks if total_clicks else 0
+        cpm = (total_spend / total_impressions * 1000) if total_impressions else 0
+
         return {
             "roas": roas,
             "ctr": ctr,
             "cpc": cpc,
             "cpm": cpm,
-            "conversions": max_purchases,
-            "spend": max_spend,
-            "revenue": max_revenue
+            "conversions": total_purchases,
+            "spend": total_spend,
+            "revenue": total_revenue,
+            "clicks": total_clicks,
+            "impressions": total_impressions
         }
     
     async def get_daily_metrics(self, user_id: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
         """
         Get daily metrics for trend charts.
+        Only includes metrics for ads that are present in the ad_analyses collection.
         Returns a list of daily metrics with date, spend, revenue, ctr, and roas.
         Ensures all dates in the range have entries, even if there's no data.
         """
@@ -538,94 +549,17 @@ class MetricsService:
             
             # Include the full end day
             end_date_obj = end_date_obj.replace(hour=23, minute=59, second=59)
+
+            # Get valid ad/campaign IDs from ad_analyses
+            valid_ad_ids, valid_campaign_ids = await self._get_valid_ad_ids_from_analyses(user_id)
             
-            # Get metrics collection
-            collection = await get_metrics_collection()
-            
-            # Log the date range being queried
-            logger.info(f"Querying daily metrics from {start_date_obj} to {end_date_obj} for user {user_id}")
-            
-            # Aggregate metrics by day - use the actual collected_at field from the database
-            pipeline = [
-                {
-                    "$match": {
-                        "user_id": user_id,
-                        "collected_at": {
-                            "$gte": start_date_obj,
-                            "$lte": end_date_obj
-                        }
-                    }
-                },
-                {
-                    "$group": {
-                        "_id": {
-                            "$dateToString": {
-                                "format": "%Y-%m-%d", 
-                                "date": "$collected_at"
-                            }
-                        },
-                        "spend": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "spend", "input": "$additional_metrics"}}, 0]}}},
-                        "clicks": {"$max": {"$toInt": {"$ifNull": [{"$getField": {"field": "clicks", "input": "$additional_metrics"}}, 0]}}},
-                        "impressions": {"$max": {"$toInt": {"$ifNull": [{"$getField": {"field": "impressions", "input": "$additional_metrics"}}, 0]}}},
-                        "purchases": {"$max": {"$toInt": {"$ifNull": ["$purchases", 0]}}},
-                        "revenue": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "purchases_value", "input": "$additional_metrics"}}, 0]}}},
-                        "ctr": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "ctr", "input": "$additional_metrics"}}, 0]}}},
-                        "roas": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "roas", "input": "$additional_metrics"}}, 0]}}},
-                        "cpc": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "cpc", "input": "$additional_metrics"}}, 0]}}},
-                        "cpm": {"$max": {"$toDouble": {"$ifNull": [{"$getField": {"field": "cpm", "input": "$additional_metrics"}}, 0]}}},
-                    }
-                },
-                {
-                    "$project": {
-                        "_id": 0,
-                        "date": "$_id",
-                        "spend": 1,
-                        "revenue": 1,
-                        "clicks": 1,
-                        "impressions": 1,
-                        "purchases": 1,
-                        "ctr": 1,
-                        # {
-                        #     "$cond": [
-                        #         {"$gt": ["$impressions", 0]},
-                        #         {"$divide": ["$clicks", "$impressions"]},
-                        #         0
-                        #     ]
-                        # }
-                        
-                        "roas": 1
-                        # {
-                        #     "$cond": [
-                        #         {"$gt": ["$spend", 0]},
-                        #         {"$divide": ["$revenue", "$spend"]},
-                        #         0
-                        #     ]
-                        # }
-                    }
-                },
-                {
-                    "$sort": {"date": 1}
-                }
-            ]
-            
-            daily_metrics = await collection.aggregate(pipeline).to_list(length=None)
-            
-            # Log the number of days with data
-            logger.info(f"Found {len(daily_metrics)} days with data out of {(end_date_obj - start_date_obj).days + 1} days in range")
-            
-            # Generate entries for days with no data to ensure continuous date range
-            all_days = []
-            current_date = start_date_obj
-            while current_date <= end_date_obj:
-                date_str = current_date.strftime("%Y-%m-%d")
-                
-                # Find if we have data for this day
-                day_data = next((day for day in daily_metrics if day["date"] == date_str), None)
-                
-                if day_data:
-                    all_days.append(day_data)
-                else:
-                    # Add zero metrics for this day
+            # If no valid ads found, return empty data for all dates
+            if not valid_ad_ids and not valid_campaign_ids:
+                logger.info(f"No ads found in ad_analyses collection for user {user_id}, returning empty daily metrics")
+                all_days = []
+                current_date = start_date_obj
+                while current_date <= end_date_obj:
+                    date_str = current_date.strftime("%Y-%m-%d")
                     all_days.append({
                         "date": date_str,
                         "spend": 0,
@@ -636,10 +570,119 @@ class MetricsService:
                         "ctr": 0,
                         "roas": 0
                     })
+                    current_date += timedelta(days=1)
+                return all_days
+            
+            # Get metrics collection
+            collection = await get_metrics_collection()
+            
+            # Log the date range being queried
+            logger.info(f"Querying daily metrics from {start_date_obj} to {end_date_obj} for user {user_id}")
+            
+            # Create filter for valid ads - include metrics that match either ad_id or campaign_id
+            ad_filter = {"$or": []}
+            if valid_ad_ids:
+                ad_filter["$or"].append({"ad_id": {"$in": list(valid_ad_ids)}})
+            if valid_campaign_ids:
+                ad_filter["$or"].append({"campaign_id": {"$in": list(valid_campaign_ids)}})
+            
+            # Aggregate metrics by day - using $sum for raw metrics
+            pipeline = [
+                {
+                    "$match": {
+                        "user_id": user_id,
+                        "collected_at": {
+                            "$gte": start_date_obj,
+                            "$lte": end_date_obj
+                        },
+                        **ad_filter
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": {
+                            "$dateToString": {
+                                "format": "%Y-%m-%d", 
+                                "date": "$collected_at"
+                            }
+                        },
+                        "spend": {"$sum": {"$toDouble": {"$ifNull": [{"$getField": {"field": "spend", "input": "$additional_metrics"}}, 0]}}},
+                        "clicks": {"$sum": {"$toInt": {"$ifNull": [{"$getField": {"field": "clicks", "input": "$additional_metrics"}}, 0]}}},
+                        "impressions": {"$sum": {"$toInt": {"$ifNull": [{"$getField": {"field": "impressions", "input": "$additional_metrics"}}, 0]}}},
+                        "purchases": {"$sum": {"$toInt": {"$ifNull": ["$purchases", 0]}}},
+                        "revenue": {"$sum": {"$toDouble": {"$ifNull": [{"$getField": {"field": "purchases_value", "input": "$additional_metrics"}}, 0]}}}
+                    }
+                },
+                {
+                    "$project": {
+                        "_id": 0,
+                        "date": "$_id",
+                        "spend": 1,
+                        "revenue": 1,
+                        "clicks": 1,
+                        "impressions": 1,
+                        "purchases": 1
+                    }
+                },
+                {
+                    "$sort": {"date": 1}
+                }
+            ]
+            
+            raw_metrics = await collection.aggregate(pipeline).to_list(length=None)
+            
+            logger.info(f"Found {len(raw_metrics)} days with data out of {(end_date_obj - start_date_obj).days + 1} days in range")
+            
+            # Generate final metrics with derived values
+            all_days = []
+            current_date = start_date_obj
+            while current_date <= end_date_obj:
+                date_str = current_date.strftime("%Y-%m-%d")
+                
+                # Find data for this day
+                raw = next((day for day in raw_metrics if day["date"] == date_str), None)
+                
+                if raw:
+                    spend = raw["spend"]
+                    revenue = raw["revenue"]
+                    clicks = raw["clicks"]
+                    impressions = raw["impressions"]
+                    purchases = raw["purchases"]
+
+                    # Manual derived metrics
+                    ctr = (clicks / impressions) if impressions > 0 else 0
+                    roas = (revenue / spend) if spend > 0 else 0
+                    cpc = (spend / clicks) if clicks > 0 else 0
+                    cpm = (spend / (impressions / 1000)) if impressions > 0 else 0
+
+                    all_days.append({
+                        "date": date_str,
+                        "spend": spend,
+                        "revenue": revenue,
+                        "clicks": clicks,
+                        "impressions": impressions,
+                        "purchases": purchases,
+                        "ctr": ctr,
+                        "roas": roas,
+                        "cpc": cpc,
+                        "cpm": cpm
+                    })
+                else:
+                    all_days.append({
+                        "date": date_str,
+                        "spend": 0,
+                        "revenue": 0,
+                        "clicks": 0,
+                        "impressions": 0,
+                        "purchases": 0,
+                        "ctr": 0,
+                        "roas": 0,
+                        "cpc": 0,
+                        "cpm": 0
+                    })
                 
                 current_date += timedelta(days=1)
             
-            # Double check we have data for each day in the range
             if len(all_days) != (end_date_obj - start_date_obj).days + 1:
                 logger.warning(f"Generated {len(all_days)} days but expected {(end_date_obj - start_date_obj).days + 1} days")
             
@@ -733,8 +776,8 @@ class MetricsService:
     async def ensure_data_completeness(
         self,
         user_id: str,
-        start_date: str,
-        end_date: str,
+        start_date,
+        end_date,
         force_refresh: bool = False
     ) -> Dict[str, Any]:
         """
@@ -851,11 +894,15 @@ class MetricsService:
             if need_to_fetch and fb_credentials:
                 logger.info(f"Attempting to fetch metrics from Facebook for user {user_id}")
                 try:
+                    # Convert datetime objects to string format for fetch_metrics_from_facebook
+                    start_date_str = start_date_obj.strftime("%Y-%m-%d")
+                    end_date_str = end_date_obj.strftime("%Y-%m-%d")
+                    
                     # Fetch metrics for the date range
                     num_metrics = await self.fetch_metrics_from_facebook(
                         user_id=user_id,
-                        start_date=start_date_obj,
-                        end_date=end_date_obj,
+                        start_date=start_date_str,
+                        end_date=end_date_str,
                         credentials=fb_credentials
                     )
                     
@@ -863,11 +910,11 @@ class MetricsService:
                     if isinstance(num_metrics, list):
                         result["metrics_fetched"] = len(num_metrics) > 0
                         result["metrics_count"] = len(num_metrics)
-                        logger.info(f"Fetched {len(num_metrics)} metrics from Facebook for date range {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')}")
+                        logger.info(f"Fetched {len(num_metrics)} metrics from Facebook for date range {start_date_str} to {end_date_str}")
                     else:
                         result["metrics_fetched"] = num_metrics > 0
                         result["metrics_count"] = num_metrics
-                        logger.info(f"Fetched {num_metrics} metrics from Facebook for date range {start_date_obj.strftime('%Y-%m-%d')} to {end_date_obj.strftime('%Y-%m-%d')}")
+                        logger.info(f"Fetched {num_metrics} metrics from Facebook for date range {start_date_str} to {end_date_str}")
                     
                     # Check if we now have complete data
                     result["has_complete_data"] = await self.has_complete_data_for_range(user_id, start_date_obj, end_date_obj)
@@ -962,20 +1009,24 @@ class MetricsService:
                 current_date += timedelta(days=1)
             return all_dates 
 
-    async def has_any_data_for_range(self, user_id: str, start_date: datetime, end_date: datetime) -> bool:
+    async def has_any_data_for_range(self, user_id: str, start_date, end_date) -> bool:
         """
         Check if there is any data available for the specified date range.
         Less strict than has_complete_data_for_range - only checks if we have at least one data point.
         
         Args:
             user_id: The user ID
-            start_date: Start date as datetime
-            end_date: End date as datetime
+            start_date: Start date (string in format YYYY-MM-DD or datetime object)
+            end_date: End date (string in format YYYY-MM-DD or datetime object)
             
         Returns:
             True if there is at least one data point in the range, False otherwise
         """
         try:
+            # Convert string dates to datetime if needed
+            start_date_obj = start_date if isinstance(start_date, datetime) else datetime.strptime(start_date, "%Y-%m-%d")
+            end_date_obj = end_date if isinstance(end_date, datetime) else datetime.strptime(end_date, "%Y-%m-%d")
+            
             # Get metrics collection
             collection = await get_metrics_collection()
             
@@ -983,8 +1034,8 @@ class MetricsService:
             count = await collection.count_documents({
                 "user_id": user_id,
                 "collected_at": {
-                    "$gte": start_date,
-                    "$lte": end_date
+                    "$gte": start_date_obj,
+                    "$lte": end_date_obj
                 }
             })
             
@@ -993,3 +1044,55 @@ class MetricsService:
         except Exception as e:
             logger.error(f"Error checking if any data exists for range: {str(e)}")
             return False 
+
+    async def _get_valid_ad_ids_from_analyses(self, user_id: str) -> tuple[set, set]:
+        """
+        Helper method to get valid ad_ids and campaign_ids from ad_analyses collection.
+        Returns a tuple of (valid_ad_ids, valid_campaign_ids).
+        """
+        try:
+            db = get_database()
+            ad_analyses = await db.ad_analyses.find({"user_id": str(user_id)}).to_list(length=1000)
+            
+            valid_ad_ids = set()
+            valid_campaign_ids = set()
+            
+            for analysis in ad_analyses:
+                # Add ad_id if present
+                if "ad_id" in analysis and analysis["ad_id"]:
+                    valid_ad_ids.add(analysis["ad_id"])
+                
+                # Add campaign_id if present
+                if "campaign_id" in analysis and analysis["campaign_id"]:
+                    valid_campaign_ids.add(analysis["campaign_id"])
+            
+            logger.info(f"Found {len(valid_ad_ids)} valid ad IDs and {len(valid_campaign_ids)} valid campaign IDs from ad_analyses for user {user_id}")
+            return valid_ad_ids, valid_campaign_ids
+            
+        except Exception as e:
+            logger.error(f"Error getting valid ad IDs from ad_analyses: {str(e)}")
+            return set(), set()
+
+    async def _filter_metrics_by_analyses(self, metrics: List[Dict[str, Any]], user_id: str) -> List[Dict[str, Any]]:
+        """
+        Helper method to filter metrics to only include ads that are present in ad_analyses collection.
+        """
+        valid_ad_ids, valid_campaign_ids = await self._get_valid_ad_ids_from_analyses(user_id)
+        
+        # If no valid ads found, return empty list
+        if not valid_ad_ids and not valid_campaign_ids:
+            logger.info(f"No ads found in ad_analyses collection for user {user_id}, filtering all metrics")
+            return []
+        
+        # Filter metrics
+        filtered_metrics = []
+        for metric in metrics:
+            ad_id = metric.get("ad_id")
+            campaign_id = metric.get("campaign_id")
+            
+            # Include metric if either ad_id or campaign_id is in the valid sets
+            if (ad_id and ad_id in valid_ad_ids) or (campaign_id and campaign_id in valid_campaign_ids):
+                filtered_metrics.append(metric)
+        
+        logger.info(f"Filtered metrics from {len(metrics)} to {len(filtered_metrics)} based on ad_analyses collection for user {user_id}")
+        return filtered_metrics 

@@ -51,8 +51,8 @@ interface DateRange {
 const METRICS = [
   { id: 'roas', name: 'ROAS (Return on Ad Spend)', format: (val: number) => `${val.toFixed(2)}x` },
   { id: 'ctr', name: 'CTR (Click-Through Rate)', format: (val: number) => `${(val).toFixed(2)}%` },
-  { id: 'cpc', name: 'CPC (Cost Per Click)', format: (val: number) => `$${val.toFixed(2)}` },
-  { id: 'cpm', name: 'CPM (Cost Per 1000 Impressions)', format: (val: number) => `$${val.toFixed(2)}` },
+  { id: 'cpc', name: 'CPC (Cost Per Click)', format: (val: number) => `Rs.${val.toFixed(2)}` },
+  { id: 'cpm', name: 'CPM (Cost Per 1000 Impressions)', format: (val: number) => `Rs.${val.toFixed(2)}` },
   { id: 'purchases', name: 'Conversion Volume', format: (val: number) => val.toFixed(0) },
 ];
 
@@ -242,9 +242,9 @@ const AdMetricsPage = () => {
       case 'ctr':
         return 'CTR (%)';
       case 'cpc':
-        return 'Cost Per Click ($)';
+        return 'Cost Per Click (Rs.)';
       case 'cpm':
-        return 'Cost Per 1000 Impressions ($)';
+        return 'Cost Per 1000 Impressions (Rs.)';
       case 'purchases':
         return 'Conversion Volume (count)';
       default:

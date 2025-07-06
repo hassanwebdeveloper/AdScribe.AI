@@ -89,7 +89,7 @@ const BestAdNotification: React.FC<BestAdNotificationProps> = ({
           </div>
           <div className="flex flex-col">
             <span className="text-xs text-gray-500">CPC</span>
-            <span className="font-medium">{formatCurrency(metrics.cpc)}</span>
+            <span className="font-medium">Rs.{formatCurrency(metrics.cpc)}</span>
           </div>
           <div className="flex flex-col">
             <span className="text-xs text-gray-500">Conversions</span>
