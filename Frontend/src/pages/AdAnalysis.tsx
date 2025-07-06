@@ -50,6 +50,7 @@ interface AdAnalysis {
   ad_status?: string;
   video_url?: string;
   created_at: string;
+  ad_id?: string;
 }
 
 // Function to convert URLs in text to clickable links
@@ -1015,7 +1016,7 @@ const AdAnalysis = () => {
                     <div className="flex items-start justify-between">
                       <CardTitle className="pr-20">
                         <Link 
-                          to={`/ad-detail/${analysis._id}`} 
+                          to={`/ad-detail/${analysis.ad_id || analysis._id}`} 
                           className="hover:text-blue-600 hover:underline transition-colors"
                         >
                           {analysis.ad_title || 'Untitled Ad'}

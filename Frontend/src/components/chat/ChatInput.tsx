@@ -237,7 +237,7 @@ const ChatInput: React.FC = () => {
           console.log('Got response from webhook:', response.data);
           
           // Extract the response content
-          const responseContent = extractOutputFromResponse(response.data);
+          const { content: responseContent, ad: responseAd } = extractOutputFromResponse(response.data);
           
           // Create bot message
           const botMessage: Message = {
@@ -245,6 +245,7 @@ const ChatInput: React.FC = () => {
             content: responseContent,
             role: 'bot',
             timestamp: new Date(),
+            ad: responseAd,
           };
           
           // Add the response to our messages array
@@ -374,27 +375,53 @@ const ChatInput: React.FC = () => {
     }
   };
   
-  // Extract output from webhook response
-  const extractOutputFromResponse = (response: any): string => {
-    // Check for different response formats
+  // Extract output (content) and optional ad object from webhook response
+  const extractOutputFromResponse = (response: any): { content: string; ad?: any } => {
+    const result: { content: string; ad?: any } = { content: '' };
+
+    // Helper to safely attach ad
+    const attachAd = (adData: any) => {
+      if (adData !== undefined) {
+        try {
+          result.ad = typeof adData === 'string' ? JSON.parse(adData) : adData;
+        } catch {
+          result.ad = adData; // keep raw if JSON.parse fails
+        }
+      }
+    };
+
     if (typeof response === 'string') {
-      return response;
+      // Try parse JSON string
+      try {
+        const parsed = JSON.parse(response);
+        // Recursively process parsed object
+        return extractOutputFromResponse(parsed);
+      } catch {
+        result.content = response;
+        return result;
+      }
     }
-    
-    if (response && response.output) {
-      return response.output;
+
+    if (Array.isArray(response) && response.length > 0) {
+      const first = response[0];
+      if (first.output) result.content = first.output;
+      attachAd(first.ad);
+      return result;
     }
-    
-    if (response && response.result) {
-      return response.result;
+
+    if (response && typeof response === 'object') {
+      if (response.output) result.content = response.output;
+      else if (response.result) result.content = response.result;
+      else if (response.message) result.content = response.message;
+      else result.content = JSON.stringify(response);
+
+      attachAd(response.ad);
+      return result;
     }
-    
-    if (response && response.message) {
-      return response.message;
-    }
-    
+
     // Fallback
-    return JSON.stringify(response);
+    result.content = JSON.stringify(response);
+    return result;
   };
   
   return (

@@ -1577,7 +1577,7 @@ const Dashboard = () => {
                         </div>
                         <Button 
                           variant="outline" 
-                          onClick={() => navigate(`/app/ad-metrics?ad_id=${bestAd.ad_id}`)}
+                          onClick={() => navigate(`/ad-detail/${bestAd.ad_id}`)}
                           className="shrink-0"
                         >
                           View Detailed Metrics
