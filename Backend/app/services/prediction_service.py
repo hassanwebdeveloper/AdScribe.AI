@@ -619,6 +619,7 @@ class PredictionService:
                     daily_metrics[date_str] = {
                         "date": date_str,
                         "ad_id": ad_id,
+                        "campaign_name": metric.get("campaign_name", "Unknown Campaign"),
                         # Standard metrics
                         "roas": additional_metrics.get("roas", 0),
                         "ctr": additional_metrics.get("ctr", 0),
@@ -670,13 +671,26 @@ class PredictionService:
             return []
     
     async def _get_user_ads(self, user_id: str) -> List[Dict[str, str]]:
-        """Get all ads for a user."""
+        """Get all ads for a user that have analyses in the ad_analyses collection."""
         try:
-            # Use aggregation to get distinct ads
+            # First get all analyzed ad IDs for this user
+            analyzed_ads_cursor = self.db.ad_analyses.find({"user_id": user_id})
+            analyzed_ads = await analyzed_ads_cursor.to_list(length=None)
+            
+            # Create sets of analyzed ad IDs and video IDs
+            analyzed_ids = set()
+            for analysis in analyzed_ads:
+                if "ad_id" in analysis and analysis["ad_id"]:
+                    analyzed_ids.add(analysis["ad_id"])
+                if "video_id" in analysis and analysis["video_id"]:
+                    analyzed_ids.add(analysis["video_id"])
+
+            # Get metrics only for analyzed ads
             pipeline = [
                 {
                     "$match": {
-                        "user_id": user_id
+                        "user_id": user_id,
+                        "ad_id": {"$in": list(analyzed_ids)}
                     }
                 },
                 {
@@ -695,11 +709,12 @@ class PredictionService:
             ]
             
             result = await self.db.ad_metrics.aggregate(pipeline).to_list(length=None)
+            logger.info(f"Found {len(result)} analyzed ads for user {user_id}")
             return result
             
         except Exception as e:
-            logger.error(f"Error getting user ads: {str(e)}")
-            return [] 
+            logger.error(f"Error getting user analyzed ads: {str(e)}")
+            return []
     
     async def _get_ad_details(self, user_id: str, ad_id: str) -> Dict[str, Any]:
         """Get ad details including title."""
