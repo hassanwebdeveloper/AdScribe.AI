@@ -1131,9 +1131,9 @@ class MLOptimizationService:
             spend_insight = ""
             if spend_change:
                 if spend_change["change_direction"] == "decrease":
-                    spend_insight = f"Bonus: Spend can be reduced by {abs(spend_change['change_percent']):.1f}% (${spend_change['current']:.2f} → ${spend_change['optimized']:.2f}) while improving CTR"
+                    spend_insight = f"Bonus: Spend can be reduced by {abs(spend_change['change_percent']):.1f}% (Rs.{spend_change['current']:.2f} → Rs.{spend_change['optimized']:.2f}) while improving CTR"
                 else:
-                    spend_insight = f"Note: Achieving this CTR improvement may require increasing spend by {spend_change['change_percent']:.1f}% (${spend_change['current']:.2f} → ${spend_change['optimized']:.2f})"
+                    spend_insight = f"Note: Achieving this CTR improvement may require increasing spend by {spend_change['change_percent']:.1f}% (Rs.{spend_change['current']:.2f} → Rs.{spend_change['optimized']:.2f})"
             
             recommendations.append({
                 "ad_id": ad_result["ad_id"],
@@ -1221,8 +1221,8 @@ class MLOptimizationService:
                 "ad_id": ad_result["ad_id"],
                 "ad_name": ad_result["ad_name"],
                 "action": "Scale Up",
-                "current_daily_spend": f"${current_spend:.2f}",
-                "recommended_daily_spend": f"${target_spend:.2f}",
+                "current_daily_spend": f"Rs.{current_spend:.2f}",
+                "recommended_daily_spend": f"Rs.{target_spend:.2f}",
                 "increase_percentage": f"{spend_change['change_percent']:.1f}%",
                 "reasoning": f"High ROAS of {ad_result['current_roas']:.2f} indicates strong market demand",
                 "scaling_proof": scaling_proof,
@@ -1265,11 +1265,11 @@ class MLOptimizationService:
                 "ad_id": ad_result["ad_id"],
                 "ad_name": ad_result["ad_name"],
                 "action": "Scale Down",
-                "current_daily_spend": f"${current_spend:.2f}",
-                "recommended_daily_spend": f"${target_spend:.2f}",
+                "current_daily_spend": f"Rs.{current_spend:.2f}",
+                "recommended_daily_spend": f"Rs.{target_spend:.2f}",
                 "decrease_percentage": f"{abs(spend_change['change_percent']):.1f}%",
                 "reasoning": f"Reducing spend will improve efficiency while maintaining ROAS",
-                "expected_savings": f"${(current_spend - target_spend) * 30:.2f}/month",
+                "expected_savings": f"Rs.{(current_spend - target_spend) * 30:.2f}/month",
                 "benchmark_metrics": benchmark_data,
                 "current_roas": ad_result["current_roas"],
                 "predicted_roas": ad_result["predicted_roas"],
@@ -1360,8 +1360,8 @@ class MLOptimizationService:
                 "ad_id": ad_result["ad_id"],
                 "ad_name": ad_result["ad_name"],
                 "optimization_metric": metric_name,
-                "current_value": f"${change_data['current']:.2f}",
-                "target_value": f"${change_data['optimized']:.2f}",
+                "current_value": f"Rs.{change_data['current']:.2f}",
+                "target_value": f"Rs.{change_data['optimized']:.2f}",
                 "improvement_needed": f"{abs(change_data['change_percent']):.1f}%",
                 "current_spend": spend_change.get("current", 0),
                 "target_spend": spend_change.get("optimized", spend_change.get("current", 0)),
@@ -1719,7 +1719,7 @@ class MLOptimizationService:
         """Find proof/examples of successful scaling from user's account."""
         # This would analyze historical data to find similar scaling successes
         return {
-            "example": f"Similar ad scaled from ${current_spend:.0f} to ${target_spend:.0f} with 15% ROAS improvement",
+            "example": f"Similar ad scaled from Rs.{current_spend:.0f} to Rs.{target_spend:.0f} with 15% ROAS improvement",
             "confidence": "High",
             "historical_data": "Based on 3 similar scaling examples in your account"
         }
@@ -1742,7 +1742,7 @@ class MLOptimizationService:
                 metrics = bench_ad.get("additional_metrics", {})
                 targeting_summary = bench_ad.get("targeting_summary", "No targeting info")
                 
-                benchmark_info.append(f"- {creative.get('hook', 'Unknown')} (tone: {creative.get('tone', 'Unknown')}, {metric.upper()}: ${metrics.get(metric, 0):.2f}, targeting: {targeting_summary})")
+                benchmark_info.append(f"- {creative.get('hook', 'Unknown')} (tone: {creative.get('tone', 'Unknown')}, {metric.upper()}: Rs.{metrics.get(metric, 0):.2f}, targeting: {targeting_summary})")
             
             benchmark_context = "\n".join(benchmark_info) if benchmark_info else "No benchmark data available"
             
@@ -2188,7 +2188,7 @@ class MLOptimizationService:
             except KeyError as format_error:
                 logger.error(f"Spend suggestion prompt formatting failed with KeyError: {format_error}")
                 # Use a simplified prompt without problematic variables
-                formatted_prompt = f"Generate spend optimization suggestion for {action_type.replace('_', ' ')} ad spend. Current spend: ${spend_change['current']:.2f}, target: ${spend_change['optimized']:.2f}."
+                formatted_prompt = f"Generate spend optimization suggestion for {action_type.replace('_', ' ')} ad spend. Current spend: Rs.{spend_change['current']:.2f}, target: Rs.{spend_change['optimized']:.2f}."
             
             response = await openai_service.get_completion(
                 prompt=formatted_prompt,

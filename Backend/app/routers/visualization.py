@@ -215,7 +215,7 @@ async def get_ad_performance_segments(
             },
             labels={
                 "date": "Date",
-                "revenue": "Revenue ($)",
+                "revenue": "Revenue (Rs.)",
                 "ctr": "CTR (%)",
                 "roas_classification": "ROAS Classification"
             },
@@ -288,7 +288,7 @@ async def get_ad_performance_segments(
         
         # Add custom y-axis title in the middle left
         fig.add_annotation(
-            text="Revenue ($)",
+            text="Revenue (Rs.)",
             x=-0.08,  # Left of the leftmost column
             y=0.5,  # Middle of the figure
             xref="paper",

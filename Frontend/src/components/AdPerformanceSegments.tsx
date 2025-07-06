@@ -189,10 +189,10 @@ const AdPerformanceSegments: React.FC<AdPerformanceSegmentsProps> = ({
               ? segRaw.toString().replace(', ', '<br>') // split long engagement text into two lines
               : segRaw;
             return (
-              `Revenue: $${(d.revenue ?? 0).toFixed(2)}` +
+              `Revenue: Rs.${(d.revenue ?? 0).toFixed(2)}` +
               `<br>CTR: ${(d.ctr ?? 0).toFixed(2)}%` +
               `<br>ROAS: ${(d.roas ?? 0).toFixed(2)}` +
-              `<br>CPC: $${(d.cpc ?? 0).toFixed(2)}` +
+              `<br>CPC: Rs.${(d.cpc ?? 0).toFixed(2)}` +
               (segDisplay ? `<br>${segDisplay}` : '')
             );
           }),

@@ -94,14 +94,14 @@ const AdComparisonCharts: React.FC<AdComparisonChartsProps> = ({
   
   const getMetricTitle = (metric: string) => {
     const titleMap: Record<string, string> = {
-      'spend': 'Spend ($)',
-      'revenue': 'Revenue ($)',
+      'spend': 'Spend (Rs.)',
+      'revenue': 'Revenue (Rs.)',
       'clicks': 'Clicks',
       'impressions': 'Impressions',
       'purchases': 'Purchases',
       'ctr': 'CTR (%)',
-      'cpc': 'CPC ($)',
-      'cpm': 'CPM ($)',
+      'cpc': 'CPC (Rs.)',
+      'cpm': 'CPM (Rs.)',
       'roas': 'ROAS'
     };
     

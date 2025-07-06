@@ -765,9 +765,9 @@ const Dashboard = () => {
         hovertemplate: '<b>%{customdata[0]}</b><br><br>Date: %{x}<br>' + 
           (metricName === 'ctr' ? 'CTR' : metricName.charAt(0).toUpperCase() + metricName.slice(1)) + ': %{y}<br><br>' +
           'Campaign: %{customdata[1]}<br>Ad Set: %{customdata[2]}<br><br>' +
-          'Purchases: %{customdata[3]}<br>Spend: $%{customdata[4]}<br>Revenue: $%{customdata[5]}<br>' +
+          'Purchases: %{customdata[3]}<br>Spend: Rs.%{customdata[4]}<br>Revenue: Rs.%{customdata[5]}<br>' +
           'Clicks: %{customdata[6]}<br>Impressions: %{customdata[7]}<br>ROAS: %{customdata[8]}x<br>' +
-          'CPC: $%{customdata[9]}<br>CPM: $%{customdata[10]}<extra></extra>',
+          'CPC: Rs.%{customdata[9]}<br>CPM: Rs.%{customdata[10]}<extra></extra>',
         adId: adId,  // Store the ad ID for reference
         adName: displayName, // Store the ad name for reference
         campaignName: campaignName, // Store the campaign name
@@ -832,11 +832,11 @@ const Dashboard = () => {
     switch(metric) {
       case 'roas': return 'ROAS';
       case 'ctr': return 'CTR (%)';
-      case 'cpc': return 'CPC ($)';
-      case 'cpm': return 'CPM ($)';
+      case 'cpc': return 'CPC (Rs.)';
+      case 'cpm': return 'CPM (Rs.)';
       case 'conversions': return 'Conversions';
-      case 'revenue': return 'Revenue ($)';
-      case 'spend': return 'Spend ($)';
+      case 'revenue': return 'Revenue (Rs.)';
+      case 'spend': return 'Spend (Rs.)';
       default: return metric.toUpperCase();
     }
   };
@@ -1060,7 +1060,7 @@ const Dashboard = () => {
                   value={metrics?.current_period?.cpc || 0} 
                   previousValue={metrics?.previous_period?.cpc || 0} 
                   icon={<MousePointerClick />} 
-                  prefix="$"
+                  prefix="Rs."
                   formatter={(n) => formatCurrency(n)}
                 />
                 <MetricCard 
@@ -1068,7 +1068,7 @@ const Dashboard = () => {
                   value={metrics?.current_period?.cpm || 0} 
                   previousValue={metrics?.previous_period?.cpm || 0} 
                   icon={<Eye />} 
-                  prefix="$"
+                  prefix="Rs."
                   formatter={(n) => formatCurrency(n)}
                 />
                 <MetricCard 
@@ -1083,7 +1083,7 @@ const Dashboard = () => {
                   value={metrics?.current_period?.spend || 0} 
                   previousValue={metrics?.previous_period?.spend || 0} 
                   icon={<DollarSign />} 
-                  prefix="$"
+                  prefix="Rs."
                   formatter={(n) => formatCurrency(n)}
                 />
                 <MetricCard 
@@ -1091,7 +1091,7 @@ const Dashboard = () => {
                   value={metrics?.current_period?.revenue || 0} 
                   previousValue={metrics?.previous_period?.revenue || 0} 
                   icon={<DollarSign />} 
-                  prefix="$"
+                  prefix="Rs."
                   formatter={(n) => formatCurrency(n)}
                 />
                 <MetricCard 
@@ -1123,7 +1123,7 @@ const Dashboard = () => {
                     <PlotlyBarChart 
                       data={spendRevenueData}
                       layout={{
-                        yaxis: { title: 'Amount ($)' }
+                        yaxis: { title: 'Amount (Rs.)' }
                       }}
                     />
                   </CardContent>
@@ -1655,7 +1655,7 @@ const Dashboard = () => {
                         <PlotlyLineChart 
                           data={getPredictionChartData('revenue')}
                           layout={{
-                            yaxis: { title: 'Revenue ($)' },
+                            yaxis: { title: 'Revenue (Rs.)' },
                             margin: { l: 50, r: 20, t: 10, b: 40 },
                             xaxis: { title: 'Date' },
                             legend: { orientation: 'h', y: 1.1, xanchor: 'center', x: 0.5 }

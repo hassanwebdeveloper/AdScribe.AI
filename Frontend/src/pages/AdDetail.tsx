@@ -869,12 +869,10 @@ const AdDetail = () => {
 
   // Format values for charts
   const formatMoneyValue = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
+    return `Rs.${value.toLocaleString('en-PK', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2
-    }).format(value);
+    })}`;
   };
   
   const formatPercentage = (value: number) => {
@@ -895,11 +893,11 @@ const AdDetail = () => {
     
     switch (metric) {
       case 'spend':
-        yLabel = 'Ad Spend ($)';
+        yLabel = 'Ad Spend (Rs.)';
         valueFormatter = (val: number) => formatMoneyValue(val);
         break;
       case 'revenue':
-        yLabel = 'Revenue ($)';
+        yLabel = 'Revenue (Rs.)';
         valueFormatter = (val: number) => formatMoneyValue(val);
         break;
       case 'roas':
@@ -911,11 +909,11 @@ const AdDetail = () => {
         valueFormatter = (val: number) => `${val}%`;  // Display raw value with % sign
         break;
       case 'cpc':
-        yLabel = 'Cost per Click ($)';
+        yLabel = 'Cost per Click (Rs.)';
         valueFormatter = (val: number) => formatMoneyValue(val);
         break;
       case 'cpm':
-        yLabel = 'Cost per 1,000 Impressions ($)';
+        yLabel = 'Cost per 1,000 Impressions (Rs.)';
         valueFormatter = (val: number) => formatMoneyValue(val);
         break;
       case 'impressions':
