@@ -96,7 +96,7 @@ async def run_ad_analysis_graph(
     analyzed_video_ids: Optional[List[str]] = None,
     progress_callback = None,
     cancellation_token = None  # Add cancellation token parameter
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
     Run the ad analysis graph and return the results in the format expected by the database.
     
@@ -109,7 +109,7 @@ async def run_ad_analysis_graph(
         cancellation_token: Optional cancellation token to stop execution
         
     Returns:
-        List of ad analysis results in the format expected by the database
+        Dict containing processed database results and list of current active ad IDs
     """
     try:
         logger.info(f"[🚀] Starting Ad Analysis Graph for user {user_id}...")
@@ -308,7 +308,17 @@ async def run_ad_analysis_graph(
         if errors:
             logger.warning(f"[⚠️] {len(errors)} errors occurred during processing: {errors}")
         
-        return database_results
+        # Build list of current active ad IDs from ads_data
+        active_ad_ids = [ad.get("id") for ad in ads_data if ad.get("id")]
+
+        # Remove duplicates while preserving order
+        active_ad_ids = list(dict.fromkeys(active_ad_ids))
+
+        # Return both the processed database results and the full list of active ad IDs
+        return {
+            "results": database_results,
+            "active_ad_ids": active_ad_ids
+        }
 
     except CancellationError:
         logger.info(f"[❌] Ad analysis graph was cancelled for user {user_id}")

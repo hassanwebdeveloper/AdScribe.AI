@@ -74,6 +74,16 @@ class AdAnalysis(BaseModel):
     }
 
 
+class InactiveAdAnalysis(AdAnalysis):
+    moved_to_inactive_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    model_config = {
+        "populate_by_name": True,
+        "arbitrary_types_allowed": True,
+        "json_encoders": {ObjectId: str}
+    }
+
+
 class AdAnalysisResponse(BaseModel):
     id: str = Field(..., alias="_id")
     user_id: str
