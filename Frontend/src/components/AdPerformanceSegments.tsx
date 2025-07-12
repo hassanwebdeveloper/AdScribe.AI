@@ -33,11 +33,13 @@ const Plot = createPlotlyComponent(Plotly);
 interface AdPerformanceSegmentsProps {
   startDate: string;
   endDate: string;
+  useOnlyAnalyzedAds?: boolean;
 }
 
 const AdPerformanceSegments: React.FC<AdPerformanceSegmentsProps> = ({ 
   startDate,
-  endDate
+  endDate,
+  useOnlyAnalyzedAds = true
 }) => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +67,8 @@ const AdPerformanceSegments: React.FC<AdPerformanceSegmentsProps> = ({
         const response = await axios.get('/api/v1/visualization/ad-performance-segments', {
           params: {
             start_date: startDate,
-            end_date: endDate
+            end_date: endDate,
+            use_only_analyzed_ads: useOnlyAnalyzedAds
           },
           headers: {
             Authorization: `Bearer ${token}`
@@ -91,7 +94,7 @@ const AdPerformanceSegments: React.FC<AdPerformanceSegmentsProps> = ({
     if (startDate && endDate) {
       fetchPlotlyData();
     }
-  }, [startDate, endDate]);
+  }, [startDate, endDate, useOnlyAnalyzedAds]);
 
   // Memoized list of unique ads for select options
   const uniqueAds = useMemo(() => {

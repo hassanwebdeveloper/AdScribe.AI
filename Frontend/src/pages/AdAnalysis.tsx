@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, RefreshCw, History, Play, Trash2, Edit3, Check, X, AlertTriangle } from 'lucide-react';
+import { Loader2, RefreshCw, History, Play, Trash2, Edit3, Check, X, AlertTriangle, Link as LinkIcon } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { Switch } from '@/components/ui/switch';
@@ -255,6 +255,7 @@ const AdAnalysis = () => {
   const [error, setError] = useState<string | null>(null);
   const [isCollecting, setIsCollecting] = useState(false);
   const [deletingAll, setDeletingAll] = useState(false);
+  const [refreshingVideoLinks, setRefreshingVideoLinks] = useState(false);
   
   // Background job states
   const [currentJob, setCurrentJob] = useState<BackgroundJob | null>(null);
@@ -650,60 +651,64 @@ const AdAnalysis = () => {
     setDeletingAll(true);
     try {
       const response = await axios.delete('/api/v1/ad-analysis/all', {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-
-      // Clear the local state
-      setAdAnalyses([]);
-
-      toast({
-        title: "Success",
-        description: `${response.data.deleted_count || 'All'} ad analyses have been deleted successfully.`
+        headers: { Authorization: `Bearer ${token}` }
       });
       
-    } catch (error: any) {
-      console.error('Error deleting all ad analyses:', error);
-      
-      let errorMessage = "Failed to delete all ad analyses";
-      if (error.response?.status === 401) {
-        errorMessage = "Authentication failed. Please log in again.";
-      } else if (error.response?.data?.detail) {
-        errorMessage = error.response.data.detail;
+      if (response.data.success) {
+        setAdAnalyses([]);
+        toast({
+          title: "Success",
+          description: response.data.message
+        });
+      } else {
+        throw new Error(response.data.message || 'Failed to delete analyses');
       }
-      
+    } catch (error: any) {
+      console.error('Error deleting all analyses:', error);
       toast({
         variant: "destructive",
         title: "Error",
-        description: errorMessage
+        description: error.response?.data?.detail || error.message || "Failed to delete all analyses"
       });
     } finally {
       setDeletingAll(false);
     }
   };
 
-  const handleDeleteAllClick = () => {
-    if (adAnalyses.length === 0) {
-      toast({
-        title: "No Data",
-        description: "There are no ad analyses to delete."
+  const refreshVideoLinks = async () => {
+    setRefreshingVideoLinks(true);
+    try {
+      const response = await axios.post('/api/v1/ad-analysis/refresh-video-urls', {}, {
+        headers: { Authorization: `Bearer ${token}` }
       });
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Are you sure you want to delete ALL ${adAnalyses.length} ad analyses? This action cannot be undone and will permanently remove all your ad analysis data.`
-    );
-    
-    if (confirmed) {
-      const doubleConfirmed = window.confirm(
-        "This is your final warning. Are you absolutely sure you want to delete ALL ad analyses? This action is irreversible."
-      );
       
-      if (doubleConfirmed) {
-        deleteAllAdAnalyses();
+      if (response.data.success) {
+        // Refresh the ad analyses to get updated URLs
+        await fetchAdAnalyses();
+        
+        const details = response.data.details;
+        toast({
+          title: "Video Links Refreshed",
+          description: `Successfully refreshed ${details.refreshed} video links out of ${details.total} total links.`
+        });
+      } else {
+        throw new Error(response.data.message || 'Failed to refresh video links');
       }
+    } catch (error: any) {
+      console.error('Error refreshing video links:', error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: error.response?.data?.detail || error.message || "Failed to refresh video links"
+      });
+    } finally {
+      setRefreshingVideoLinks(false);
+    }
+  };
+
+  const handleDeleteAllClick = () => {
+    if (window.confirm('Are you sure you want to delete all ad analyses? This action cannot be undone.')) {
+      deleteAllAdAnalyses();
     }
   };
 
@@ -912,6 +917,22 @@ const AdAnalysis = () => {
               >
                 <History className="h-4 w-4" />
                 <span>History</span>
+              </Button>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={refreshVideoLinks}
+                disabled={refreshingVideoLinks || isJobRunning || adAnalyses.length === 0}
+                className="flex items-center space-x-2"
+                title={adAnalyses.length === 0 ? "No ad analyses available" : "Refresh expired video links for all ads"}
+              >
+                {refreshingVideoLinks ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <LinkIcon className="h-4 w-4" />
+                )}
+                <span>{refreshingVideoLinks ? "Refreshing..." : "Refresh Video Links"}</span>
               </Button>
               
               <Button

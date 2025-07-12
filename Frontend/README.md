@@ -1,73 +1,116 @@
-# Welcome to your Lovable project
+# AdScribe.AI Frontend
 
-## Project info
+This is the frontend application for AdScribe.AI, built with React, TypeScript, and Vite.
 
-**URL**: https://lovable.dev/projects/a955422f-3dc4-44a4-a10c-a6945eac25c7
+## Features
 
-## How can I edit this code?
+### Ad Analysis
+- View and analyze Facebook ad campaigns
+- AI-powered ad analysis with detailed insights
+- Background job processing for large datasets
+- Real-time job progress tracking
 
-There are several ways of editing your application.
+### Video Link Management
+- **Refresh Video Links**: Automatically refresh expired Facebook video URLs
+- Facebook video URLs expire after some time, so the system automatically checks and refreshes them
+- Bulk refresh functionality available via the "Refresh Video Links" button in the Ad Analysis tab
+- Automatic refresh when viewing individual ad analyses
 
-**Use Lovable**
+### Dashboard
+- Comprehensive metrics and KPI tracking
+- Interactive charts and visualizations
+- Date range selection with custom date picker
+- "Only Analyzed Ads" filter for focused analysis
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/a955422f-3dc4-44a4-a10c-a6945eac25c7) and start prompting.
+### User Management
+- Secure authentication with JWT tokens
+- Facebook OAuth integration
+- User settings and preferences
 
-Changes made via Lovable will be committed automatically to this repo.
+## Getting Started
 
-**Use your preferred IDE**
+### Prerequisites
+- Node.js (v18 or higher)
+- npm or yarn
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### Installation
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+1. Clone the repository
+2. Install dependencies:
+```bash
+npm install
+```
 
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+3. Start the development server:
+```bash
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+4. Open your browser and navigate to `http://localhost:5173`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Usage
 
-**Use GitHub Codespaces**
+### Refresh Video Links Feature
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+Facebook ad video URLs have expiration times and become invalid after a certain period. The application includes automatic and manual refresh capabilities:
 
-## What technologies are used for this project?
+**Automatic Refresh:**
+- Video URLs are automatically checked and refreshed when viewing ad analyses
+- No user intervention required - happens transparently
 
-This project is built with:
+**Manual Refresh:**
+- Use the "Refresh Video Links" button in the Ad Analysis tab
+- Refreshes all expired video URLs for all your ad analyses in one operation
+- Shows progress and results in a toast notification
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+**How it works:**
+1. Click the "Refresh Video Links" button
+2. The system checks all your ad analyses for expired video URLs
+3. Fetches fresh URLs from Facebook API for expired ones
+4. Updates the database with new URLs
+5. Refreshes the ad analyses display with updated URLs
 
-## How can I deploy this project?
+## Project Structure
 
-Simply open [Lovable](https://lovable.dev/projects/a955422f-3dc4-44a4-a10c-a6945eac25c7) and click on Share -> Publish.
+```
+src/
+├── components/          # Reusable UI components
+├── contexts/           # React contexts (Auth, Chat, etc.)
+├── hooks/              # Custom React hooks
+├── layouts/            # Layout components
+├── pages/              # Page components
+├── services/           # API services
+├── types/              # TypeScript type definitions
+└── utils/              # Utility functions
+```
 
-## Can I connect a custom domain to my Lovable project?
+## Available Scripts
 
-Yes, you can!
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run preview` - Preview production build
+- `npm run lint` - Run ESLint
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## Technologies Used
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+- **React 18** - UI framework
+- **TypeScript** - Type safety
+- **Vite** - Build tool and dev server
+- **Tailwind CSS** - Styling
+- **Shadcn/ui** - UI component library
+- **React Router** - Client-side routing
+- **Axios** - HTTP client
+- **Recharts** - Charts and visualizations
+- **Lucide React** - Icons
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## License
+
+This project is proprietary software. All rights reserved.

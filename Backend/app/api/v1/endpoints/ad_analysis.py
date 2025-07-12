@@ -7,6 +7,7 @@ import logging
 from pydantic import BaseModel
 from bson import ObjectId
 import redis
+from datetime import datetime
 
 from app.core.database import get_database
 from app.core.deps import get_current_user
@@ -21,6 +22,7 @@ from app.services.user_service import UserService
 from app.services.ai_agent_service import AIAgentService
 from app.services.background_job_service import BackgroundJobService
 from app.services.inactive_ads_service import InactiveAdsService
+from app.services.video_url_service import VideoUrlService
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -1076,6 +1078,30 @@ async def restore_inactive_ad(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error restoring inactive ad: {str(e)}"
+        )
+
+@router.post("/refresh-video-urls")
+async def refresh_video_urls(current_user: User = Depends(get_current_user)):
+    """
+    Manually refresh expired video URLs for the current user.
+    """
+    try:
+        video_url_service = VideoUrlService()
+        
+        # Refresh expired URLs for the user
+        result = await video_url_service.refresh_expired_urls_for_user(str(current_user.id))
+        
+        return {
+            "success": True,
+            "message": f"Refreshed {result['refreshed']} video URLs",
+            "details": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Error refreshing video URLs for user {current_user.id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error refreshing video URLs: {str(e)}"
         )
 
 @router.delete("/inactive/{ad_id}", response_model=Dict[str, bool])

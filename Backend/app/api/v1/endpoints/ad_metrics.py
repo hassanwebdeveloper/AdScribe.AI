@@ -98,6 +98,7 @@ async def get_dashboard_metrics(
     start_date: str = "2023-09-01",
     end_date: str = "2023-09-30",
     force_refresh: bool = False,
+    use_only_analyzed_ads: bool = False,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -155,6 +156,7 @@ async def get_dashboard_metrics(
             user_id=current_user.id,
             start_date=start_date_obj,
             end_date=end_date_obj,
+            use_only_analyzed_ads=use_only_analyzed_ads
         )
         
         # Previous period for comparison
@@ -162,6 +164,7 @@ async def get_dashboard_metrics(
             user_id=current_user.id,
             start_date=prev_start_date_obj,
             end_date=prev_end_date_obj,
+            use_only_analyzed_ads=use_only_analyzed_ads
         )
         
         # Get daily metrics for charts
@@ -169,6 +172,7 @@ async def get_dashboard_metrics(
             user_id=current_user.id,
             start_date=start_date_obj,
             end_date=end_date_obj,
+            use_only_analyzed_ads=use_only_analyzed_ads
         )
         
         # Get ad-level metrics for the period
@@ -176,6 +180,7 @@ async def get_dashboard_metrics(
             start_date=start_date,
             end_date=end_date,
             force_refresh=False,  # We already refreshed if needed
+            use_only_analyzed_ads=use_only_analyzed_ads,
             current_user=current_user
         )
         
@@ -267,6 +272,7 @@ async def get_metrics_by_ad(
     start_date: str,
     end_date: str,
     force_refresh: bool = False,
+    use_only_analyzed_ads: bool = False,
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -323,51 +329,58 @@ async def get_metrics_by_ad(
                 logger.error(f"Error fetching metrics from Facebook: {str(e)}")
                 # Continue with available data
         
-        # First, fetch ad_analyses collection to get valid ads
-        db = get_database()
-        ad_analyses = await db.ad_analyses.find({"user_id": str(current_user.id)}).to_list(length=1000)
+        # Get raw metrics for the date range - pass string dates
+        all_metrics = await metrics_service.get_metrics_by_date_range(current_user.id, start_date, end_date)
         
-        # Create a set of valid ad/campaign IDs and a map of ad_id to ad_title
+        # Initialize variables for filtering
         valid_ad_ids = set()
         valid_campaign_ids = set()
         ad_titles = {}
         
-        for analysis in ad_analyses:
-            # Add ad_id if present
-            if "ad_id" in analysis and analysis["ad_id"]:
-                valid_ad_ids.add(analysis["ad_id"])
-                ad_titles[analysis["ad_id"]] = analysis.get("ad_title", "")
+        # Apply filtering if use_only_analyzed_ads is True
+        if use_only_analyzed_ads:
+            # Fetch ad_analyses collection to get valid ads
+            db = get_database()
+            ad_analyses = await db.ad_analyses.find({"user_id": str(current_user.id)}).to_list(length=1000)
             
-            # Add campaign_id if present
-            if "campaign_id" in analysis and analysis["campaign_id"]:
-                valid_campaign_ids.add(analysis["campaign_id"])
-                ad_titles[analysis["campaign_id"]] = analysis.get("ad_title", "")
-        
-        logger.info(f"Found {len(valid_ad_ids)} valid ad IDs and {len(valid_campaign_ids)} valid campaign IDs from ad_analyses")
-        
-        # If no valid ads found in ad_analyses, return empty response
-        if not valid_ad_ids and not valid_campaign_ids:
-            logger.info("No ads found in ad_analyses collection, returning empty response")
-            return AdMetricsByAdResponse(
-                ad_metrics=[],
-                unique_ads=[],
-                date_range={"start_date": start_date, "end_date": end_date}
-            )
-        
-        # Get raw metrics for the date range - pass string dates
-        all_metrics = await metrics_service.get_metrics_by_date_range(current_user.id, start_date, end_date)
-        
-        # Filter metrics to only include ads that are present in ad_analyses collection
-        metrics = []
-        for metric in all_metrics:
-            ad_id = metric.get("ad_id")
-            campaign_id = metric.get("campaign_id")
+            # Create a set of valid ad/campaign IDs and a map of ad_id to ad_title
+            for analysis in ad_analyses:
+                # Add ad_id if present
+                if "ad_id" in analysis and analysis["ad_id"]:
+                    valid_ad_ids.add(analysis["ad_id"])
+                    ad_titles[analysis["ad_id"]] = analysis.get("ad_title", "")
+                
+                # Add campaign_id if present
+                if "campaign_id" in analysis and analysis["campaign_id"]:
+                    valid_campaign_ids.add(analysis["campaign_id"])
+                    ad_titles[analysis["campaign_id"]] = analysis.get("ad_title", "")
             
-            # Include metric if either ad_id or campaign_id is in the valid sets
-            if (ad_id and ad_id in valid_ad_ids) or (campaign_id and campaign_id in valid_campaign_ids):
-                metrics.append(metric)
-        
-        logger.info(f"Filtered metrics from {len(all_metrics)} to {len(metrics)} based on ad_analyses collection")
+            logger.info(f"Found {len(valid_ad_ids)} valid ad IDs and {len(valid_campaign_ids)} valid campaign IDs from ad_analyses")
+            
+            # If no valid ads found in ad_analyses, return empty response
+            if not valid_ad_ids and not valid_campaign_ids:
+                logger.info("No ads found in ad_analyses collection, returning empty response")
+                return AdMetricsByAdResponse(
+                    ad_metrics=[],
+                    unique_ads=[],
+                    date_range={"start_date": start_date, "end_date": end_date}
+                )
+            
+            # Filter metrics to only include ads that are present in ad_analyses collection
+            metrics = []
+            for metric in all_metrics:
+                ad_id = metric.get("ad_id")
+                campaign_id = metric.get("campaign_id")
+                
+                # Include metric if either ad_id or campaign_id is in the valid sets
+                if (ad_id and ad_id in valid_ad_ids) or (campaign_id and campaign_id in valid_campaign_ids):
+                    metrics.append(metric)
+            
+            logger.info(f"Filtered metrics from {len(all_metrics)} to {len(metrics)} based on ad_analyses collection")
+        else:
+            # Use all metrics without filtering
+            metrics = all_metrics
+            logger.info(f"Using all {len(metrics)} metrics without filtering")
         
         if not metrics:
             return AdMetricsByAdResponse(

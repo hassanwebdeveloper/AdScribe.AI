@@ -6,7 +6,7 @@ import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PlotlyBarChart, PlotlyLineChart } from '@/components/ui/plotly-chart';
-import { Loader2, TrendingUp, TrendingDown, DollarSign, MousePointerClick, Eye, ShoppingCart, RefreshCcw, Award, ChevronRight } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, DollarSign, MousePointerClick, Eye, ShoppingCart, RefreshCcw, Award, ChevronRight, Calendar } from 'lucide-react';
 import { formatCurrency, formatPercentage } from '@/lib/utils';
 import { addDays, format, subDays, parseISO } from 'date-fns';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,8 @@ import AdPerformanceSegments from '@/components/AdPerformanceSegments';
 import AdComparisonCharts from '@/components/AdComparisonCharts';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 
 interface DateRange {
   from: Date;
@@ -130,6 +132,11 @@ const Dashboard = () => {
   // Add state for chart type toggle
   const [showDistribution, setShowDistribution] = useState<boolean>(true); // Default to distribution chart
 
+  // Add state for custom date dialog
+  const [isDateDialogOpen, setIsDateDialogOpen] = useState<boolean>(false);
+  const [tempStartDate, setTempStartDate] = useState<string>('');
+  const [tempEndDate, setTempEndDate] = useState<string>('');
+
   // Calculate previous date range
   const getPreviousRange = (from: Date, to: Date) => {
     const rangeInDays = Math.ceil((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
@@ -156,8 +163,14 @@ const Dashboard = () => {
       case 'last30Days':
         newRange = { from: subDays(today, 30), to: today };
         break;
+      case 'custom':
+        // Open the custom date dialog
+        setTempStartDate(format(dateRange.from, 'yyyy-MM-dd'));
+        setTempEndDate(format(dateRange.to, 'yyyy-MM-dd'));
+        setIsDateDialogOpen(true);
+        return; // Don't update dates yet
       default:
-        return; // For custom range, don't update dates
+        return;
     }
     
     setDateRange(newRange);
@@ -165,23 +178,39 @@ const Dashboard = () => {
     setFetchAttempts(0);
   };
 
-  // Handle custom date range selection
-  const handleDateRangeChange = (range: DateRange) => {
-    setDateRange(range);
+  // Handle custom date range selection from dialog
+  const handleCustomDateSubmit = () => {
+    if (!tempStartDate || !tempEndDate) {
+      toast({
+        title: "Invalid Date Range",
+        description: "Please select both start and end dates.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const startDate = new Date(tempStartDate);
+    const endDate = new Date(tempEndDate);
+
+    if (startDate > endDate) {
+      toast({
+        title: "Invalid Date Range",
+        description: "Start date must be before end date.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const newRange: DateRange = {
+      from: startDate,
+      to: endDate
+    };
+
+    setDateRange(newRange);
     setTimeRange('custom');
+    setIsDateDialogOpen(false);
     // Reset fetch attempts when changing date range
     setFetchAttempts(0);
-  };
-
-  // Create a wrapper function to handle DateRangePicker onChange with proper typing
-  const handleDateRangePickerChange = (range: any) => {
-    if (range && range.from) {
-      const newRange: DateRange = {
-        from: range.from,
-        to: range.to || range.from
-      };
-      setDateRange(newRange);
-    }
   };
 
   // Fetch metrics data based on date range
@@ -210,14 +239,15 @@ const Dashboard = () => {
         return;
       }
       
-      console.log(`Fetching metrics from ${startDate} to ${endDate}, force_refresh: ${forceRefresh}`);
+      console.log(`Fetching metrics from ${startDate} to ${endDate}, force_refresh: ${forceRefresh}, use_only_analyzed_ads: ${useOnlyAnalyzedAds}`);
       
-      // Call API
+      // Call API with use_only_analyzed_ads parameter
       const response = await axios.get('/api/v1/ad-metrics/dashboard/', {
         params: {
           start_date: startDate,
           end_date: endDate,
-          force_refresh: forceRefresh
+          force_refresh: forceRefresh,
+          use_only_analyzed_ads: useOnlyAnalyzedAds
         },
         headers: {
           Authorization: `Bearer ${token}`
@@ -362,7 +392,8 @@ const Dashboard = () => {
     // Skip on initial render by checking the onlyAnalyzedAdsToggled flag
     if (onlyAnalyzedAdsToggled && user && !isLoading) {
       console.log(`useOnlyAnalyzedAds state changed to: ${useOnlyAnalyzedAds}`);
-      predictBestPerformingAd();
+      // Trigger both metrics and prediction refresh
+      fetchMetrics();
     }
   }, [useOnlyAnalyzedAds, onlyAnalyzedAdsToggled]);
 
@@ -986,11 +1017,20 @@ const Dashboard = () => {
                 <TabsTrigger value="custom" className="text-xs px-1">Custom</TabsTrigger>
               </TabsList>
             </Tabs>
-          <DateRangePicker 
-            value={dateRange}
-            onChange={handleDateRangePickerChange}
-              className="w-[220px]"
-          />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="analyzed-ads-toggle-header" className="text-sm whitespace-nowrap">Only Analyzed Ads</Label>
+            <Switch
+              id="analyzed-ads-toggle-header"
+              checked={useOnlyAnalyzedAds}
+              onCheckedChange={(checked) => {
+                console.log(`Only Analyzed Ads toggle changed to: ${checked}`);
+                setUseOnlyAnalyzedAds(checked);
+                setOnlyAnalyzedAdsToggled(true);
+                // Trigger both metrics and prediction refresh
+                setFetchAttempts(prev => prev + 1);
+              }}
+            />
           </div>
             <Button
             variant="ghost"
@@ -1011,6 +1051,59 @@ const Dashboard = () => {
             </Button>
         </div>
       </div>
+
+      {/* Selected Date Range Display */}
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-muted-foreground">
+          Selected Date Range: {format(dateRange.from, 'MMM dd, yyyy')} - {format(dateRange.to, 'MMM dd, yyyy')}
+        </div>
+      </div>
+
+      {/* Custom Date Selection Dialog */}
+      <Dialog open={isDateDialogOpen} onOpenChange={setIsDateDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Select Custom Date Range</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="start-date" className="text-right">
+                Start Date
+              </Label>
+              <Input
+                id="start-date"
+                type="date"
+                value={tempStartDate}
+                onChange={(e) => setTempStartDate(e.target.value)}
+                className="col-span-3"
+              />
+            </div>
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="end-date" className="text-right">
+                End Date
+              </Label>
+              <Input
+                id="end-date"
+                type="date"
+                value={tempEndDate}
+                onChange={(e) => setTempEndDate(e.target.value)}
+                className="col-span-3"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setIsDateDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleCustomDateSubmit}>
+              Update Date Range
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {isLoading ? (
         <div className="flex flex-col h-[calc(100vh-100px)] items-center justify-center">
@@ -1497,6 +1590,7 @@ const Dashboard = () => {
                   <AdComparisonCharts 
                     startDate={format(dateRange.from || new Date(), 'yyyy-MM-dd')}
                     endDate={format(dateRange.to || new Date(), 'yyyy-MM-dd')}
+                    useOnlyAnalyzedAds={useOnlyAnalyzedAds}
                   />
                 </TabsContent>
               </Tabs>
@@ -1507,19 +1601,6 @@ const Dashboard = () => {
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-2xl font-bold">Best Ad Prediction</h2>
                 <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="analyzed-ads-toggle" className="text-sm">Only Analyzed Ads</Label>
-                    <Switch
-                      id="analyzed-ads-toggle"
-                      checked={useOnlyAnalyzedAds}
-                      onCheckedChange={(checked) => {
-                        console.log(`Only Analyzed Ads toggle changed to: ${checked}`);
-                        setUseOnlyAnalyzedAds(checked);
-                        setOnlyAnalyzedAdsToggled(true);
-                        // The useEffect hook will handle the API call
-                      }}
-                    />
-                  </div>
                   <div className="flex items-center gap-2">
                     <Label htmlFor="time-series-toggle" className="text-sm">Use Forcasting</Label>
                     <Switch
@@ -1704,6 +1785,7 @@ const Dashboard = () => {
               <AdPerformanceSegments 
                 startDate={format(dateRange.from || new Date(), 'yyyy-MM-dd')}
                 endDate={format(dateRange.to || new Date(), 'yyyy-MM-dd')}
+                useOnlyAnalyzedAds={useOnlyAnalyzedAds}
               />
             </TabsContent>
           </Tabs>

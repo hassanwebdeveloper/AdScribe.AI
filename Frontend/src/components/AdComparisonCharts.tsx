@@ -15,11 +15,13 @@ const Plot = createPlotlyComponent(Plotly);
 interface AdComparisonChartsProps {
   startDate: string;
   endDate: string;
+  useOnlyAnalyzedAds?: boolean;
 }
 
 const AdComparisonCharts: React.FC<AdComparisonChartsProps> = ({ 
   startDate,
-  endDate
+  endDate,
+  useOnlyAnalyzedAds = true
 }) => {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +52,8 @@ const AdComparisonCharts: React.FC<AdComparisonChartsProps> = ({
         const response = await axios.get('/api/v1/ad-metrics/by-ad/', {
           params: {
             start_date: startDate,
-            end_date: endDate
+            end_date: endDate,
+            use_only_analyzed_ads: useOnlyAnalyzedAds
           },
           headers: {
             Authorization: `Bearer ${token}`
@@ -74,7 +77,7 @@ const AdComparisonCharts: React.FC<AdComparisonChartsProps> = ({
     if (startDate && endDate) {
       fetchAdMetricsData();
     }
-  }, [startDate, endDate]);
+  }, [startDate, endDate, useOnlyAnalyzedAds]);
 
   const getMetricColor = (metric: string) => {
     const colorMap: Record<string, string> = {
