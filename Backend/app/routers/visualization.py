@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 async def get_ad_performance_segments(
     start_date: str = Query(..., description="Start date in format YYYY-MM-DD"),
     end_date: str = Query(..., description="End date in format YYYY-MM-DD"),
+    use_only_analyzed_ads: bool = Query(False, description="Only use ads that have entries in ad_analyses collection"),
     current_user: User = Depends(get_current_user),
     redis_client: Any = Depends(get_redis)
 ):
@@ -48,7 +49,34 @@ async def get_ad_performance_segments(
 
         prediction_service = PredictionService()
         user_id = str(current_user.id)
-        user_ads = await prediction_service._get_user_ads(user_id)
+        
+        # Get user ads based on the use_only_analyzed_ads parameter
+        if use_only_analyzed_ads:
+            user_ads = await prediction_service._get_user_ads(user_id)
+        else:
+            # Get all ads from ad_metrics collection
+            db = get_database()
+            pipeline = [
+                {
+                    "$match": {
+                        "user_id": user_id
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$ad_id",
+                        "ad_name": {"$first": "$ad_name"}
+                    }
+                },
+                {
+                    "$project": {
+                        "_id": 0,
+                        "ad_id": "$_id",
+                        "ad_name": 1
+                    }
+                }
+            ]
+            user_ads = await db.ad_metrics.aggregate(pipeline).to_list(length=None)
 
         if not user_ads:
             return {"figure": None, "message": "No ads found for the selected date range"}

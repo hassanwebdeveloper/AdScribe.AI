@@ -146,7 +146,7 @@ class FacebookAdService:
             data = await self._make_api_request(video_id, {
                 "fields": "source,permalink_url"
             })
-            return data.get("permalink_url") or data.get("source")
+            return data.get("source")
         except Exception as e:
             logger.error(f"Error getting video URL for {video_id}: {str(e)}")
             return None

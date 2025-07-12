@@ -11,6 +11,8 @@ import { Loader2, RefreshCcw } from 'lucide-react';
 import { addDays, format, subDays } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { AdMetricsByAdResponse } from '@/types/adMetrics';
 
 // Types for API response
 interface AdMetric {
@@ -60,7 +62,7 @@ const AdMetricsPage = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [metrics, setMetrics] = useState<ApiResponse | null>(null);
+  const [metrics, setMetrics] = useState<AdMetricsByAdResponse | null>(null);
   const [selectedAds, setSelectedAds] = useState<string[]>([]);
   const [timeRange, setTimeRange] = useState<string>('last7Days');
   const [dateRange, setDateRange] = useState<DateRange>({
@@ -69,6 +71,7 @@ const AdMetricsPage = () => {
   });
   const [forceRefresh, setForceRefresh] = useState<boolean>(false);
   const [selectedMetric, setSelectedMetric] = useState<string>('roas');
+  const [useOnlyAnalyzedAds, setUseOnlyAnalyzedAds] = useState<boolean>(true);
 
   // Handle time range selection
   const handleTimeRangeChange = (value: string) => {
@@ -140,14 +143,15 @@ const AdMetricsPage = () => {
       const startDate = format(dateRange.from || new Date(), 'yyyy-MM-dd');
       const endDate = format(dateRange.to || new Date(), 'yyyy-MM-dd');
       
-      console.log(`Fetching ad metrics from ${startDate} to ${endDate}, force_refresh: ${forceRefresh}`);
+      console.log(`Fetching ad metrics from ${startDate} to ${endDate}, force_refresh: ${forceRefresh}, use_only_analyzed_ads: ${useOnlyAnalyzedAds}`);
       
       // Call API - use the right endpoint path
       const response = await axios.get('/api/v1/ad-metrics/by-ad/', {
         params: {
           start_date: startDate,
           end_date: endDate,
-          force_refresh: forceRefresh
+          force_refresh: forceRefresh,
+          use_only_analyzed_ads: useOnlyAnalyzedAds
         },
         headers: {
           Authorization: `Bearer ${localStorage.getItem('token')}`
@@ -189,7 +193,7 @@ const AdMetricsPage = () => {
   // Fetch metrics when date range changes
   useEffect(() => {
     fetchMetrics();
-  }, [dateRange, user, forceRefresh]);
+  }, [dateRange, user, forceRefresh, useOnlyAnalyzedAds]);
 
   // Prepare data for the selected metric
   const prepareChartData = () => {
@@ -265,37 +269,61 @@ const AdMetricsPage = () => {
 
   return (
     <div className="container mx-auto py-10 space-y-8 overflow-auto h-[calc(100vh-100px)]">
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Ad Performance Metrics</h1>
-        <div className="flex items-center gap-4">
-          <Tabs value={timeRange} onValueChange={handleTimeRangeChange} className="mr-4">
-            <TabsList>
-              <TabsTrigger value="today">Today</TabsTrigger>
-              <TabsTrigger value="last7Days">Last 7 Days</TabsTrigger>
-              <TabsTrigger value="last30Days">Last 30 Days</TabsTrigger>
-              <TabsTrigger value="custom">Custom</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <DateRangePicker
-            value={dateRange}
-            onChange={handleDateRangePickerChange}
-          />
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={() => {
-              setForceRefresh(true);
-              toast({
-                title: "Refreshing data",
-                description: "Fetching latest data from Facebook...",
-                variant: "default",
-              });
-            }}
-            disabled={isLoading}
-          >
-            <RefreshCcw className="mr-2 h-4 w-4" />
-            Refresh Data
-          </Button>
+      <div className="bg-background py-4 px-8 border-b shadow-sm">
+        <div className="container mx-auto">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h1 className="text-2xl md:text-3xl font-bold tracking-tight">Ad Metrics</h1>
+              <p className="text-muted-foreground">
+                Detailed performance metrics for your ads
+              </p>
+            </div>
+            <div className="flex items-center gap-4 w-full md:w-auto">
+              <div className="flex items-center gap-3 flex-1 md:flex-none">
+                <Tabs value={timeRange} onValueChange={handleTimeRangeChange} className="w-[360px]">
+                  <TabsList className="grid w-full grid-cols-4 h-9">
+                    <TabsTrigger value="today" className="text-xs px-1">Today</TabsTrigger>
+                    <TabsTrigger value="last7Days" className="text-xs px-1">Last 7 Days</TabsTrigger>
+                    <TabsTrigger value="last30Days" className="text-xs px-1">Last 30 Days</TabsTrigger>
+                    <TabsTrigger value="custom" className="text-xs px-1">Custom</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <DateRangePicker 
+                  value={dateRange}
+                  onChange={handleDateRangePickerChange}
+                  className="w-[220px]"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="analyzed-ads-toggle" className="text-sm whitespace-nowrap">Only Analyzed Ads</Label>
+                <Switch
+                  id="analyzed-ads-toggle"
+                  checked={useOnlyAnalyzedAds}
+                  onCheckedChange={(checked) => {
+                    console.log(`Only Analyzed Ads toggle changed to: ${checked}`);
+                    setUseOnlyAnalyzedAds(checked);
+                    // Trigger data refresh
+                    setForceRefresh(true);
+                  }}
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10"
+                onClick={() => {
+                  setForceRefresh(true);
+                }}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <RefreshCcw className="h-5 w-5" />
+                )}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
