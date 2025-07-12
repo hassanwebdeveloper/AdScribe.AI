@@ -189,28 +189,43 @@ const Dashboard = () => {
       return;
     }
 
-    const startDate = new Date(tempStartDate);
-    const endDate = new Date(tempEndDate);
+    try {
+      const startDate = new Date(tempStartDate);
+      const endDate = new Date(tempEndDate);
+      
+      // Check if dates are valid
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+        throw new Error("Invalid date format");
+      }
 
-    if (startDate > endDate) {
+      if (startDate > endDate) {
+        toast({
+          title: "Invalid Date Range",
+          description: "Start date must be before end date.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const newRange: DateRange = {
+        from: startDate,
+        to: endDate
+      };
+
+      setDateRange(newRange);
+      setTimeRange('custom');
+      setIsDateDialogOpen(false);
+      // Reset fetch attempts when changing date range
+      setFetchAttempts(0);
+      
+      console.log(`Custom date range set: ${format(startDate, 'yyyy-MM-dd')} to ${format(endDate, 'yyyy-MM-dd')}`);
+    } catch (error) {
       toast({
-        title: "Invalid Date Range",
-        description: "Start date must be before end date.",
+        title: "Date Error",
+        description: "There was a problem with the selected dates. Please try again.",
         variant: "destructive",
       });
-      return;
     }
-
-    const newRange: DateRange = {
-      from: startDate,
-      to: endDate
-    };
-
-    setDateRange(newRange);
-    setTimeRange('custom');
-    setIsDateDialogOpen(false);
-    // Reset fetch attempts when changing date range
-    setFetchAttempts(0);
   };
 
   // Fetch metrics data based on date range
@@ -1057,6 +1072,21 @@ const Dashboard = () => {
         <div className="text-sm text-muted-foreground">
           Selected Date Range: {format(dateRange.from, 'MMM dd, yyyy')} - {format(dateRange.to, 'MMM dd, yyyy')}
         </div>
+        {timeRange === 'custom' && (
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={() => {
+              setTempStartDate(format(dateRange.from, 'yyyy-MM-dd'));
+              setTempEndDate(format(dateRange.to, 'yyyy-MM-dd'));
+              setIsDateDialogOpen(true);
+            }}
+            className="flex items-center gap-1"
+          >
+            <Calendar className="h-3.5 w-3.5" />
+            <span>Change Dates</span>
+          </Button>
+        )}
       </div>
 
       {/* Custom Date Selection Dialog */}
@@ -1076,6 +1106,7 @@ const Dashboard = () => {
                 value={tempStartDate}
                 onChange={(e) => setTempStartDate(e.target.value)}
                 className="col-span-3"
+                max={tempEndDate || format(new Date(), 'yyyy-MM-dd')}
               />
             </div>
             <div className="grid grid-cols-4 items-center gap-4">
@@ -1088,7 +1119,12 @@ const Dashboard = () => {
                 value={tempEndDate}
                 onChange={(e) => setTempEndDate(e.target.value)}
                 className="col-span-3"
+                min={tempStartDate}
+                max={format(new Date(), 'yyyy-MM-dd')}
               />
+            </div>
+            <div className="text-xs text-muted-foreground col-span-4 text-center">
+              Select a date range to view your ad performance metrics
             </div>
           </div>
           <div className="flex justify-end gap-2">
@@ -1098,7 +1134,10 @@ const Dashboard = () => {
             >
               Cancel
             </Button>
-            <Button onClick={handleCustomDateSubmit}>
+            <Button 
+              onClick={handleCustomDateSubmit}
+              disabled={!tempStartDate || !tempEndDate}
+            >
               Update Date Range
             </Button>
           </div>
